@@ -17,6 +17,13 @@ namespace
 		TEXT("0: Analytic spheres in shader, 1: TraceRay against the scene TLAS"),
 		ECVF_RenderThreadSafe);
 
+	// 本の第8章（アンチエイリアス）の samples_per_pixel に相当
+	TAutoConsoleVariable<int32> CVarToonRayTracerSamplesPerPixel(
+		TEXT("r.ToonRayTracer.SamplesPerPixel"),
+		4,
+		TEXT("Number of jittered camera rays per pixel for anti-aliasing (1-64)"),
+		ECVF_RenderThreadSafe);
+
 	struct FToonSphere
 	{
 		FVector Center;	// ワールド座標（cm）
@@ -103,6 +110,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(Output.Texture);
 	PassParameters->TLAS = TLAS;
 	PassParameters->TraceMode = static_cast<uint32>(CVarToonRayTracerTraceMode.GetValueOnRenderThread());
+	PassParameters->SamplesPerPixel = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerSamplesPerPixel.GetValueOnRenderThread(), 1, 64));
 	PassParameters->ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
 	PassParameters->ViewRectMin = Output.ViewRect.Min;
 	PassParameters->ViewRectSize = Output.ViewRect.Size();

@@ -10,6 +10,9 @@ RaytracingAccelerationStructure TLAS;
 // 0: 解析的な球（本の第6章）、1: シーンの TLAS に TraceRay
 uint TraceMode;
 
+// 1ピクセルあたりのサンプル数（アンチエイリアス）
+uint SamplesPerPixel;
+
 // クリップ空間 → Translated World 空間への変換行列
 float4x4 ClipToTranslatedWorld;
 
@@ -20,6 +23,22 @@ int2 ViewRectSize;
 // 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 float4 Spheres[TOON_MAX_SPHERES];
 uint NumSpheres;
+
+// 乱数（本の random_double に相当）
+// PCG ハッシュで状態を進め、[0, 1) の float を返す
+uint ToonPcgHash(uint Value)
+{
+	uint State = Value * 747796405u + 2891336453u;
+	uint Word = ((State >> ((State >> 28u) + 4u)) ^ State) * 277803737u;
+	return (Word >> 22u) ^ Word;
+}
+
+float ToonRandomFloat(inout uint RandomState)
+{
+	RandomState = ToonPcgHash(RandomState);
+	// 上位24ビットだけを使い、1.0 に丸められないようにする
+	return (float)(RandomState >> 8) * (1.0f / 16777216.0f);
+}
 
 // 『Ray Tracing in One Weekend』の ray クラスに相当
 struct FToonRay
@@ -220,9 +239,17 @@ bool HitScene(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
 float3 RayColor(float2 UV, FToonRay Ray)
 {
 	FToonHitRecord Rec = (FToonHitRecord)0;
-	bool bHit = TraceMode == 0
-		? HitWorld(Ray, 0.0f, 1.0e8f, Rec)
-		: HitScene(UV, Ray, Rec);
+	// 三項演算子は両辺とも評価されるため、不要な TraceRay を避けるように if で分ける
+	bool bHit = false;
+	if (TraceMode == 0)
+	{
+		bHit = HitWorld(Ray, 0.0f, 1.0e8f, Rec);
+	}
+	else
+	{
+		bHit = HitScene(UV, Ray, Rec);
+	}
+
 	if (bHit)
 	{
 		// 法線（-1 ～ 1）を色（0 ～ 1）に変換
@@ -240,11 +267,21 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	// ディスパッチは ViewRect のサイズで行うため、ここで得られるのは ViewRect 内のローカル座標
 	uint2 LocalPixel = DispatchRaysIndex().xy;
 
-	// ピクセル中心の UV 座標（0.0 ～ 1.0）を計算
-	float2 UV = ((float2)LocalPixel + 0.5f) / (float2)ViewRectSize;
+	// ピクセルごとに異なる乱数の種（毎フレーム同じ値にしてちらつきを防ぐ）
+	uint RandomState = ToonPcgHash(LocalPixel.x + ToonPcgHash(LocalPixel.y));
 
-	FToonRay Ray = GenerateCameraRay(UV);
-	float3 Color = RayColor(UV, Ray);
+	// フェーズ5：ピクセル内のランダムな位置に複数のレイを飛ばして平均する（本の第8章）
+	float3 ColorSum = 0.0f;
+	for (uint SampleIndex = 0; SampleIndex < SamplesPerPixel; ++SampleIndex)
+	{
+		// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）
+		float2 Offset = float2(ToonRandomFloat(RandomState), ToonRandomFloat(RandomState)) - 0.5f;
+		float2 UV = ((float2)LocalPixel + 0.5f + Offset) / (float2)ViewRectSize;
+
+		FToonRay Ray = GenerateCameraRay(UV);
+		ColorSum += RayColor(UV, Ray);
+	}
+	float3 Color = ColorSum / (float)SamplesPerPixel;
 
 	// テクスチャに書き込み
 	OutputTexture[ViewRectMin + LocalPixel] = float4(Color, 1.0f);
