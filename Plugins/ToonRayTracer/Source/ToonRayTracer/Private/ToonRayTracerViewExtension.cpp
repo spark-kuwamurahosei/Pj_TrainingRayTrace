@@ -27,7 +27,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerShadingMode(
 		TEXT("r.ToonRayTracer.ShadingMode"),
 		1,
-		TEXT("0: Visualize normals, 1: Diffuse (Ray Tracing in One Weekend chapter 9)"),
+		TEXT("0: Visualize normals, 1: Materials (Ray Tracing in One Weekend chapters 9-10)"),
 		ECVF_RenderThreadSafe);
 
 	// 本の第9章の max_depth に相当
@@ -52,18 +52,36 @@ namespace
 	// この数のフレームで使われなかったビューの蓄積状態は破棄する
 	constexpr uint32 AccumulationStateTimeoutFrames = 300;
 
-	struct FToonSphere
+	// マテリアルの種類（シェーダー側の TOON_MATERIAL_* と一致させる）
+	enum class EToonMaterialType : uint32
 	{
-		FVector Center;	// ワールド座標（cm）
-		double Radius;	// 半径（cm）
+		Default = 0,	// 未設定（灰色のランバート反射）
+		Lambertian = 1,	// 拡散反射（本の lambertian）
+		Metal = 2,		// 金属（本の metal）
 	};
 
-	// 『Ray Tracing in One Weekend』第6章のシーンをUEの単位系（cm, Z-up）に置き換えたもの
-	// ワールド原点に半径50cmの球を置き、その下に地面代わりの巨大な球を置く
+	struct FToonSphere
+	{
+		FVector Center;				// ワールド座標（cm）
+		double Radius;				// 半径（cm）
+		EToonMaterialType Material;
+		FLinearColor Albedo;		// 反射率（本の albedo）
+		float Fuzz;					// 金属の反射のぼけ具合（0 ～ 1）
+	};
+
+	// 『Ray Tracing in One Weekend』第10章のシーンをUEの単位系（cm, Z-up）に置き換えたもの
+	// 本の座標（x: 右, y: 上, -z: 奥）を UE（+Y: 右, +Z: 上, +X: 奥）に対応させ、100倍して cm にする
+	// 本では球の中心が y=0、地面の上面が y=-0.5 のため、全体を 50cm 持ち上げて地面の上面を z=0 にしている
 	const FToonSphere GToonSpheres[] =
 	{
-		{ FVector(0.0, 0.0, 50.0), 50.0 },
-		{ FVector(0.0, 0.0, -10000.0), 10000.0 },
+		// 地面
+		{ FVector(0.0, 0.0, -10000.0), 10000.0, EToonMaterialType::Lambertian, FLinearColor(0.8f, 0.8f, 0.0f), 0.0f },
+		// 中央：青いランバート
+		{ FVector(120.0, 0.0, 50.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.2f, 0.5f), 0.0f },
+		// 左：ぼけの少ない銀色の金属
+		{ FVector(100.0, -100.0, 50.0), 50.0, EToonMaterialType::Metal, FLinearColor(0.8f, 0.8f, 0.8f), 0.3f },
+		// 右：ぼけの強い金色の金属
+		{ FVector(100.0, 100.0, 50.0), 50.0, EToonMaterialType::Metal, FLinearColor(0.8f, 0.6f, 0.2f), 1.0f },
 	};
 }
 
@@ -215,6 +233,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
 	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : 0;
 	PassParameters->TLAS = TLAS;
+	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
+	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);
+	PassParameters->Scene = UE::FXRenderingUtils::GetSceneUniformBuffer(GraphBuilder, SceneUniformBuffer);
 	PassParameters->TraceMode = TraceMode;
 	PassParameters->SamplesPerPixel = SamplesPerPixel;
 	PassParameters->ShadingMode = ShadingMode;
@@ -241,6 +262,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		const FToonSphere& Sphere = GToonSpheres[Index];
 		const FVector TranslatedCenter = Sphere.Center + PreViewTranslation;
 		PassParameters->Spheres[Index] = FVector4f(FVector3f(TranslatedCenter), static_cast<float>(Sphere.Radius));
+		PassParameters->SphereMaterialTypes[Index] = FUintVector4(static_cast<uint32>(Sphere.Material), 0, 0, 0);
+		PassParameters->SphereAlbedoAndFuzz[Index] = FVector4f(Sphere.Albedo.R, Sphere.Albedo.G, Sphere.Albedo.B, Sphere.Fuzz);
 	}
 	PassParameters->NumSpheres = UE_ARRAY_COUNT(GToonSpheres);
 

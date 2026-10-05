@@ -6,6 +6,7 @@
 #include "GlobalShader.h"
 #include "RayTracingPayloadType.h"
 #include "ShaderParameterStruct.h"
+#include "SceneUniformBuffer.h"
 
 class FToonRayGenShader : public FGlobalShader
 {
@@ -42,7 +43,12 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(FIntPoint, ViewRectSize)
 		// 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 		SHADER_PARAMETER_ARRAY(FVector4f, Spheres, [MaxSpheres])
+		// 球のマテリアル（x: 種類）と、反射率（rgb）・金属のぼけ具合（a）
+		SHADER_PARAMETER_ARRAY(FUintVector4, SphereMaterialTypes, [MaxSpheres])
+		SHADER_PARAMETER_ARRAY(FVector4f, SphereAlbedoAndFuzz, [MaxSpheres])
 		SHADER_PARAMETER(uint32, NumSpheres)
+		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
@@ -54,6 +60,9 @@ class FToonRayGenShader : public FGlobalShader
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_SPHERES"), MaxSpheres);
+		// GetPrimitiveData() を Primitive ユニフォームバッファではなく GPUScene のバッファから読むようにする
+		// （未定義だとメッシュ描画用の Primitive ユニフォームバッファを参照してしまい、グローバルシェーダーではバインドできない）
+		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
 	}
 
 	static ERayTracingPayloadType GetRayTracingPayloadType(const int32 /*PermutationId*/)

@@ -40,7 +40,64 @@ int2 ViewRectSize;
 
 // 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 float4 Spheres[TOON_MAX_SPHERES];
+// 球のマテリアル（x: 種類）と、反射率（rgb）・金属のぼけ具合（a）
+uint4 SphereMaterialTypes[TOON_MAX_SPHERES];
+float4 SphereAlbedoAndFuzz[TOON_MAX_SPHERES];
 uint NumSpheres;
+
+// マテリアルの種類（C++ 側の EToonMaterialType と一致させる）
+#define TOON_MATERIAL_DEFAULT		0	// 未設定（灰色のランバート反射）
+#define TOON_MATERIAL_LAMBERTIAN	1	// 拡散反射（本の lambertian）
+#define TOON_MATERIAL_METAL			2	// 金属（本の metal）
+
+// 本の material クラスに相当
+struct FToonMaterial
+{
+	uint Type;
+	float3 Albedo;
+	float Fuzz;
+};
+
+// 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
+FToonMaterial GetDefaultMaterial()
+{
+	FToonMaterial Material;
+	Material.Type = TOON_MATERIAL_DEFAULT;
+	Material.Albedo = 0.5f;
+	Material.Fuzz = 0.0f;
+	return Material;
+}
+
+// Custom Primitive Data の Index 番目の値を読む（4つずつ float4 に詰められている）
+float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
+{
+	return PrimitiveData.CustomPrimitiveData[Index / 4][Index % 4];
+}
+
+// シーンのメッシュのマテリアルを、メッシュに設定された Custom Primitive Data から読む
+//   [0]: 種類（0: 未設定, 1: ランバート, 2: 金属）
+//   [1][2][3]: 反射率 RGB
+//   [4]: 金属のぼけ具合（0 ～ 1）
+FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
+{
+	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+
+	uint Type = (uint)round(GetCustomPrimitiveDataFloat(PrimitiveData, 0));
+	if (Type != TOON_MATERIAL_LAMBERTIAN && Type != TOON_MATERIAL_METAL)
+	{
+		return GetDefaultMaterial();
+	}
+
+	FToonMaterial Material;
+	Material.Type = Type;
+	Material.Albedo = float3(
+		GetCustomPrimitiveDataFloat(PrimitiveData, 1),
+		GetCustomPrimitiveDataFloat(PrimitiveData, 2),
+		GetCustomPrimitiveDataFloat(PrimitiveData, 3));
+	Material.Fuzz = saturate(GetCustomPrimitiveDataFloat(PrimitiveData, 4));
+	return Material;
+}
 
 // 乱数（本の random_double に相当）
 // PCG ハッシュで状態を進め、[0, 1) の float を返す
@@ -94,6 +151,7 @@ struct FToonHitRecord
 	float3 Normal;		// 常にレイと逆向きになるように調整した法線
 	float T;
 	bool bFrontFace;	// レイが表面の外側から当たったか
+	FToonMaterial Material;
 
 	void SetFaceNormal(FToonRay Ray, float3 OutwardNormal)
 	{
@@ -151,6 +209,9 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 			bHitAnything = true;
 			ClosestSoFar = TempRec.T;
 			Rec = TempRec;
+			Rec.Material.Type = SphereMaterialTypes[Index].x;
+			Rec.Material.Albedo = SphereAlbedoAndFuzz[Index].rgb;
+			Rec.Material.Fuzz = SphereAlbedoAndFuzz[Index].a;
 		}
 	}
 
@@ -239,6 +300,7 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec)
 
 	Rec.T = CenterPayload.HitT;
 	Rec.Position = Ray.At(CenterPayload.HitT);
+	Rec.Material = GetSceneMaterial(CenterPayload.InstanceID);
 
 	// レイの向きに垂直な2方向を作る
 	float3 Up = abs(Ray.Direction.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
@@ -311,9 +373,36 @@ float3 RayColorNormal(FToonRay Ray)
 	return SkyColor(Ray);
 }
 
-// フェーズ6：拡散反射（本の第9章）
+// フェーズ8：マテリアルごとの散乱（本の第10章の material::scatter に相当）
+// 散乱したレイと減衰率を返す。光が吸収された場合は false を返す
+bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout uint RandomState, out float3 Attenuation, out FToonRay Scattered)
+{
+	Scattered.Origin = Rec.Position;
+	Attenuation = Material.Albedo;
+
+	if (Material.Type == TOON_MATERIAL_METAL)
+	{
+		// 鏡面反射の方向に、ぼけ具合に応じたランダムなずれを加える
+		float3 Reflected = normalize(reflect(InRay.Direction, Rec.Normal)) + Material.Fuzz * RandomUnitVector(RandomState);
+		Scattered.Direction = normalize(Reflected);
+		// ずらした結果、面の内側へ向かってしまったレイは吸収されたとみなす
+		return dot(Scattered.Direction, Rec.Normal) > 0.0f;
+	}
+
+	// ランバート反射（未設定のマテリアルも含む）：法線＋単位球上のランダムな点の方向へ反射する
+	float3 Direction = Rec.Normal + RandomUnitVector(RandomState);
+	// 法線とほぼ逆向きの乱数が出ると長さが 0 に近づくため、その場合は法線方向にする（本の near_zero）
+	if (dot(Direction, Direction) < 1.0e-8f)
+	{
+		Direction = Rec.Normal;
+	}
+	Scattered.Direction = normalize(Direction);
+	return true;
+}
+
+// フェーズ6〜8：マテリアルに応じてレイを反射させ、届いた光を求める（本の第9〜10章）
 // 本の ray_color は再帰だが、シェーダーでは再帰できないため、減衰率を掛け合わせるループで書く
-float3 RayColorDiffuse(FToonRay Ray, inout uint RandomState)
+float3 RayColorMaterial(FToonRay Ray, inout uint RandomState)
 {
 	float3 Attenuation = 1.0f;
 
@@ -326,19 +415,15 @@ float3 RayColorDiffuse(FToonRay Ray, inout uint RandomState)
 			return Attenuation * SkyColor(Ray);
 		}
 
-		// ランバート反射：法線＋単位球上のランダムな点の方向へ反射する
-		float3 Direction = Rec.Normal + RandomUnitVector(RandomState);
-		// 法線とほぼ逆向きの乱数が出ると長さが 0 に近づくため、その場合は法線方向にする（本の near_zero）
-		if (dot(Direction, Direction) < 1.0e-8f)
+		float3 ScatterAttenuation;
+		FToonRay Scattered;
+		if (!Scatter(Rec.Material, Ray, Rec, RandomState, ScatterAttenuation, Scattered))
 		{
-			Direction = Rec.Normal;
+			return 0.0f;
 		}
 
-		Ray.Origin = Rec.Position;
-		Ray.Direction = normalize(Direction);
-
-		// 本と同じく、反射のたびに 50% の光を吸収する灰色の素材とする
-		Attenuation *= 0.5f;
+		Attenuation *= ScatterAttenuation;
+		Ray = Scattered;
 	}
 
 	// 反射回数の上限に達したら、光は届かなかったものとみなす
@@ -351,7 +436,7 @@ float3 RayColor(FToonRay Ray, inout uint RandomState)
 	{
 		return RayColorNormal(Ray);
 	}
-	return RayColorDiffuse(Ray, RandomState);
+	return RayColorMaterial(Ray, RandomState);
 }
 
 // レイトレーシングのエントリーポイント
@@ -417,6 +502,8 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(ToonClosestHitMain,
 	Payload.HitT = RayTCurrent();
 	Payload.PrimitiveIndex = PrimitiveIndex();
 	Payload.InstanceIndex = InstanceIndex();
+	// インスタンスの UserData。UE では GPUScene のインスタンス番号が入っている（マテリアルの読み出しに使う）
+	Payload.InstanceID = InstanceID();
 	Payload.Barycentrics = Attributes.GetBarycentrics();
 }
 
