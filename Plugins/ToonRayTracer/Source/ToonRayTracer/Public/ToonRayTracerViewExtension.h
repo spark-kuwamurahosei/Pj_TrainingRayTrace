@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "SceneViewExtension.h"
+#include "RendererInterface.h"
 
 /**
  * 
@@ -31,4 +32,25 @@ private:
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
 		const FPostProcessMaterialInputs& Inputs);
+
+	// カメラが静止している間、フレームをまたいで結果を平均するための状態（ビューごと）
+	struct FAccumulationState
+	{
+		// これまでの平均値（線形色）を保持するテクスチャ
+		TRefCountPtr<IPooledRenderTarget> Texture;
+		// テクスチャに蓄積済みのフレーム数（上限で止まる）
+		uint32 AccumulatedFrames = 0;
+		// 乱数の種に使う、毎フレーム進むカウンタ（上限で止まらない）
+		uint32 RandomSeed = 0;
+		// 前フレームのカメラと設定（変化したらリセットする）
+		FMatrix WorldToView = FMatrix::Identity;
+		FMatrix ViewToClipNoAA = FMatrix::Identity;
+		FIntPoint ViewRectSize = FIntPoint::ZeroValue;
+		uint32 SettingsHash = 0;
+		// 最後に使われたフレーム番号（閉じたビューポートの状態を破棄するため）
+		uint32 LastUsedFrameNumber = 0;
+	};
+
+	// レンダースレッドからのみアクセスする。キーはビューの状態（FSceneViewStateInterface）のアドレス
+	TMap<const void*, TSharedPtr<FAccumulationState>> AccumulationStates;
 };

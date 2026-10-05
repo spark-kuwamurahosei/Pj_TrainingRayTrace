@@ -4,6 +4,18 @@
 // C++からバインドされる書き込み用テクスチャ
 RWTexture2D<float4> OutputTexture;
 
+// フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
+RWTexture2D<float4> AccumulationTexture;
+
+// AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）
+uint AccumulatedFrames;
+
+// 蓄積するフレーム数の上限（達したら蓄積済みの結果を表示し続ける）
+uint MaxAccumulatedFrames;
+
+// 乱数の種に混ぜる値（蓄積中は毎フレーム変わり、上限で止まらない）
+uint RandomSeed;
+
 // シーンの TLAS（Translated World 空間で構築されている）
 RaytracingAccelerationStructure TLAS;
 
@@ -12,6 +24,12 @@ uint TraceMode;
 
 // 1ピクセルあたりのサンプル数（アンチエイリアス）
 uint SamplesPerPixel;
+
+// 0: 法線の可視化、1: 拡散反射（本の第9章）
+uint ShadingMode;
+
+// レイが反射する最大回数（本の max_depth）
+uint MaxDepth;
 
 // クリップ空間 → Translated World 空間への変換行列
 float4x4 ClipToTranslatedWorld;
@@ -140,12 +158,12 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 }
 
 // シーンの TLAS に対してレイを1本飛ばす
-bool TraceScene(FToonRay Ray, out FDefaultPayload Payload)
+bool TraceScene(FToonRay Ray, float TMin, out FDefaultPayload Payload)
 {
 	RayDesc Desc;
 	Desc.Origin = Ray.Origin;
 	Desc.Direction = Ray.Direction;
-	Desc.TMin = 0.0f;
+	Desc.TMin = TMin;
 	Desc.TMax = RAY_DEFAULT_T_MAX;
 
 	Payload = (FDefaultPayload)0;
@@ -162,12 +180,14 @@ bool TraceScene(FToonRay Ray, out FDefaultPayload Payload)
 	return Payload.IsHit();
 }
 
-// 法線を求めるための補助レイを、ピクセルの何分の1ずらして飛ばすか
-#define TOON_NORMAL_PROBE_OFFSET_PIXELS 0.1f
+// 法線を求めるための補助レイを、ヒット位置でどれだけ離れた点に向けるか（cm）
+// ヒットまでの距離に比例させ、近すぎる場合は float 精度を考えて下限を設ける
+#define TOON_NORMAL_PROBE_RELATIVE_DISTANCE 1.0e-4f
+#define TOON_NORMAL_PROBE_MIN_DISTANCE 0.02f
 
-// 中心のヒット位置から、指定方向に少しずらしたレイのヒット位置までのベクトルを求める
+// 中心のヒット位置から、レイの向きを Tangent 方向に少し傾けたレイのヒット位置までのベクトルを求める
 // 同じ三角形に当たれば、そのベクトルは三角形の面上にある
-bool ProbeSurfaceEdge(float2 UV, float2 OffsetUV, FDefaultPayload CenterPayload, float3 CenterPosition, out float3 Edge)
+bool ProbeSurfaceEdge(FToonRay Ray, float3 Tangent, float ProbeSlope, float TMin, FDefaultPayload CenterPayload, float3 CenterPosition, out float3 Edge)
 {
 	Edge = 0.0f;
 	bool bFound = false;
@@ -175,9 +195,11 @@ bool ProbeSurfaceEdge(float2 UV, float2 OffsetUV, FDefaultPayload CenterPayload,
 	// まず + 方向、同じ三角形に当たらなければ - 方向を試す
 	for (int Sign = 1; Sign >= -1; Sign -= 2)
 	{
-		FToonRay ProbeRay = GenerateCameraRay(UV + Sign * OffsetUV);
+		FToonRay ProbeRay;
+		ProbeRay.Origin = Ray.Origin;
+		ProbeRay.Direction = normalize(Ray.Direction + Tangent * (ProbeSlope * Sign));
 		FDefaultPayload ProbePayload;
-		if (!TraceScene(ProbeRay, ProbePayload))
+		if (!TraceScene(ProbeRay, TMin, ProbePayload))
 		{
 			continue;
 		}
@@ -206,10 +228,11 @@ bool ProbeSurfaceEdge(float2 UV, float2 OffsetUV, FDefaultPayload CenterPayload,
 // シーンのメッシュとの交差判定
 // ClosestHit シェーダーからは頂点データを読めないため、ごく近い3本のレイのヒット位置から
 // 三角形の面の法線（フラットシェーディング相当）を求める
-bool HitScene(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
+// カメラレイだけでなく、反射後のレイにも使えるよう、補助レイはレイ自身の向きを傾けて作る
+bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec)
 {
 	FDefaultPayload CenterPayload;
-	if (!TraceScene(Ray, CenterPayload))
+	if (!TraceScene(Ray, TMin, CenterPayload))
 	{
 		return false;
 	}
@@ -217,11 +240,19 @@ bool HitScene(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
 	Rec.T = CenterPayload.HitT;
 	Rec.Position = Ray.At(CenterPayload.HitT);
 
-	float2 PixelSizeUV = 1.0f / (float2)ViewRectSize;
+	// レイの向きに垂直な2方向を作る
+	float3 Up = abs(Ray.Direction.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+	float3 TangentX = normalize(cross(Up, Ray.Direction));
+	float3 TangentY = cross(Ray.Direction, TangentX);
+
+	// ヒット位置で ProbeDistance だけ離れた点を狙う傾き
+	float ProbeDistance = max(Rec.T * TOON_NORMAL_PROBE_RELATIVE_DISTANCE, TOON_NORMAL_PROBE_MIN_DISTANCE);
+	float ProbeSlope = ProbeDistance / Rec.T;
+
 	float3 EdgeX;
 	float3 EdgeY;
-	bool bHasEdgeX = ProbeSurfaceEdge(UV, float2(PixelSizeUV.x * TOON_NORMAL_PROBE_OFFSET_PIXELS, 0.0f), CenterPayload, Rec.Position, EdgeX);
-	bool bHasEdgeY = ProbeSurfaceEdge(UV, float2(0.0f, PixelSizeUV.y * TOON_NORMAL_PROBE_OFFSET_PIXELS), CenterPayload, Rec.Position, EdgeY);
+	bool bHasEdgeX = ProbeSurfaceEdge(Ray, TangentX, ProbeSlope, TMin, CenterPayload, Rec.Position, EdgeX);
+	bool bHasEdgeY = ProbeSurfaceEdge(Ray, TangentY, ProbeSlope, TMin, CenterPayload, Rec.Position, EdgeY);
 
 	float3 Normal = -Ray.Direction;
 	float3 CrossEdge = cross(EdgeX, EdgeY);
@@ -235,30 +266,92 @@ bool HitScene(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
 	return true;
 }
 
-// フェーズ3：当たった面の法線を色として可視化し、外れたら空のグラデーションを返す
-float3 RayColor(float2 UV, FToonRay Ray)
+// 反射したレイが、出発した面自身に当たってしまう問題（shadow acne）を避けるための最小距離（cm）
+// 本の interval(0.001, infinity) に相当。本の 1 単位 ≒ 1m なので、cm に換算して少し余裕を持たせる
+#define TOON_RAY_TMIN 0.01f
+
+// 解析的な球またはシーンのメッシュとの交差判定（TraceMode で切り替え）
+bool HitAnything(FToonRay Ray, float TMin, inout FToonHitRecord Rec)
 {
-	FToonHitRecord Rec = (FToonHitRecord)0;
 	// 三項演算子は両辺とも評価されるため、不要な TraceRay を避けるように if で分ける
-	bool bHit = false;
 	if (TraceMode == 0)
 	{
-		bHit = HitWorld(Ray, 0.0f, 1.0e8f, Rec);
+		return HitWorld(Ray, TMin, 1.0e8f, Rec);
 	}
-	else
-	{
-		bHit = HitScene(UV, Ray, Rec);
-	}
+	return HitScene(Ray, TMin, Rec);
+}
 
-	if (bHit)
+// 空のグラデーション（本の第4章）
+float3 SkyColor(FToonRay Ray)
+{
+	// UEは Z-up のため、本の y 成分の代わりに z 成分を使う
+	float A = 0.5f * (Ray.Direction.z + 1.0f);
+	return lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), A);
+}
+
+// 単位球の表面上のランダムな点（本の random_unit_vector に相当）
+// 本の棄却法ではなく、一様分布を直接作る方法を使う（ループ回数が一定になる）
+float3 RandomUnitVector(inout uint RandomState)
+{
+	float Z = ToonRandomFloat(RandomState) * 2.0f - 1.0f;
+	float Phi = ToonRandomFloat(RandomState) * 2.0f * PI;
+	float R = sqrt(max(0.0f, 1.0f - Z * Z));
+	return float3(R * cos(Phi), R * sin(Phi), Z);
+}
+
+// フェーズ3〜4：当たった面の法線を色として可視化する
+float3 RayColorNormal(FToonRay Ray)
+{
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (HitAnything(Ray, 0.0f, Rec))
 	{
 		// 法線（-1 ～ 1）を色（0 ～ 1）に変換
 		return 0.5f * (Rec.Normal + 1.0f);
 	}
+	return SkyColor(Ray);
+}
 
-	// UEは Z-up のため、本の y 成分の代わりに z 成分を使う
-	float A = 0.5f * (Ray.Direction.z + 1.0f);
-	return lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), A);
+// フェーズ6：拡散反射（本の第9章）
+// 本の ray_color は再帰だが、シェーダーでは再帰できないため、減衰率を掛け合わせるループで書く
+float3 RayColorDiffuse(FToonRay Ray, inout uint RandomState)
+{
+	float3 Attenuation = 1.0f;
+
+	for (uint Depth = 0; Depth < MaxDepth; ++Depth)
+	{
+		FToonHitRecord Rec = (FToonHitRecord)0;
+		if (!HitAnything(Ray, TOON_RAY_TMIN, Rec))
+		{
+			// どこにも当たらなければ空の色が、ここまでの減衰を受けて届く
+			return Attenuation * SkyColor(Ray);
+		}
+
+		// ランバート反射：法線＋単位球上のランダムな点の方向へ反射する
+		float3 Direction = Rec.Normal + RandomUnitVector(RandomState);
+		// 法線とほぼ逆向きの乱数が出ると長さが 0 に近づくため、その場合は法線方向にする（本の near_zero）
+		if (dot(Direction, Direction) < 1.0e-8f)
+		{
+			Direction = Rec.Normal;
+		}
+
+		Ray.Origin = Rec.Position;
+		Ray.Direction = normalize(Direction);
+
+		// 本と同じく、反射のたびに 50% の光を吸収する灰色の素材とする
+		Attenuation *= 0.5f;
+	}
+
+	// 反射回数の上限に達したら、光は届かなかったものとみなす
+	return 0.0f;
+}
+
+float3 RayColor(FToonRay Ray, inout uint RandomState)
+{
+	if (ShadingMode == 0)
+	{
+		return RayColorNormal(Ray);
+	}
+	return RayColorDiffuse(Ray, RandomState);
 }
 
 // レイトレーシングのエントリーポイント
@@ -267,21 +360,49 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	// ディスパッチは ViewRect のサイズで行うため、ここで得られるのは ViewRect 内のローカル座標
 	uint2 LocalPixel = DispatchRaysIndex().xy;
 
-	// ピクセルごとに異なる乱数の種（毎フレーム同じ値にしてちらつきを防ぐ）
-	uint RandomState = ToonPcgHash(LocalPixel.x + ToonPcgHash(LocalPixel.y));
-
-	// フェーズ5：ピクセル内のランダムな位置に複数のレイを飛ばして平均する（本の第8章）
-	float3 ColorSum = 0.0f;
-	for (uint SampleIndex = 0; SampleIndex < SamplesPerPixel; ++SampleIndex)
+	float3 Color;
+	if (AccumulatedFrames >= MaxAccumulatedFrames)
 	{
-		// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）
-		float2 Offset = float2(ToonRandomFloat(RandomState), ToonRandomFloat(RandomState)) - 0.5f;
-		float2 UV = ((float2)LocalPixel + 0.5f + Offset) / (float2)ViewRectSize;
-
-		FToonRay Ray = GenerateCameraRay(UV);
-		ColorSum += RayColor(UV, Ray);
+		// 蓄積数の上限に達したら、それ以上レイを飛ばさず蓄積済みの平均をそのまま表示する
+		Color = AccumulationTexture[LocalPixel].rgb;
 	}
-	float3 Color = ColorSum / (float)SamplesPerPixel;
+	else
+	{
+		// ピクセルごとに異なる乱数の種
+		// 蓄積中はフレームごとに別のサンプルが必要なため、フレームごとに変わる RandomSeed も混ぜる
+		// （蓄積しない場合は常に 0 なので、毎フレーム同じ結果になりちらつかない）
+		uint RandomState = ToonPcgHash(LocalPixel.x + ToonPcgHash(LocalPixel.y + ToonPcgHash(RandomSeed)));
+
+		// フェーズ5：ピクセル内のランダムな位置に複数のレイを飛ばして平均する（本の第8章）
+		float3 ColorSum = 0.0f;
+		for (uint SampleIndex = 0; SampleIndex < SamplesPerPixel; ++SampleIndex)
+		{
+			// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）
+			float2 Offset = float2(ToonRandomFloat(RandomState), ToonRandomFloat(RandomState)) - 0.5f;
+			float2 UV = ((float2)LocalPixel + 0.5f + Offset) / (float2)ViewRectSize;
+
+			FToonRay Ray = GenerateCameraRay(UV);
+			ColorSum += RayColor(Ray, RandomState);
+		}
+		Color = ColorSum / (float)SamplesPerPixel;
+
+		// フェーズ7：カメラが静止している間、これまでのフレームの平均と混ぜる
+		// N フレーム分の平均に新しい1フレームを 1/(N+1) の重みで加えると、N+1 フレーム分の平均になる
+		if (AccumulatedFrames > 0)
+		{
+			float3 PreviousAverage = AccumulationTexture[LocalPixel].rgb;
+			Color = lerp(PreviousAverage, Color, 1.0f / (float)(AccumulatedFrames + 1));
+		}
+		AccumulationTexture[LocalPixel] = float4(Color, 1.0f);
+	}
+
+	// ガンマ補正（本の linear_to_gamma）
+	// このパスはトーンマップ後に実行され、出力はそのままディスプレイ向けの値として扱われるため、
+	// 線形の計算結果をガンマ2で変換してから書き込む
+	if (ShadingMode != 0)
+	{
+		Color = sqrt(max(Color, 0.0f));
+	}
 
 	// テクスチャに書き込み
 	OutputTexture[ViewRectMin + LocalPixel] = float4(Color, 1.0f);

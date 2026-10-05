@@ -17,12 +17,24 @@ class FToonRayGenShader : public FGlobalShader
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
+		// フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, AccumulationTexture)
+		// AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）
+		SHADER_PARAMETER(uint32, AccumulatedFrames)
+		// 蓄積するフレーム数の上限
+		SHADER_PARAMETER(uint32, MaxAccumulatedFrames)
+		// 乱数の種に混ぜる値（蓄積中は毎フレーム変わる）
+		SHADER_PARAMETER(uint32, RandomSeed)
 		// シーンの TLAS（Translated World 空間で構築されている）
 		SHADER_PARAMETER_RDG_BUFFER_SRV(RaytracingAccelerationStructure, TLAS)
 		// 0: 解析的な球、1: シーンの TLAS に TraceRay
 		SHADER_PARAMETER(uint32, TraceMode)
 		// 1ピクセルあたりのサンプル数（アンチエイリアス）
 		SHADER_PARAMETER(uint32, SamplesPerPixel)
+		// 0: 法線の可視化、1: 拡散反射
+		SHADER_PARAMETER(uint32, ShadingMode)
+		// レイが反射する最大回数
+		SHADER_PARAMETER(uint32, MaxDepth)
 		// クリップ空間 → Translated World 空間（カメラ位置が原点）への変換行列
 		SHADER_PARAMETER(FMatrix44f, ClipToTranslatedWorld)
 		// 出力テクスチャ内の描画範囲（ViewRect）

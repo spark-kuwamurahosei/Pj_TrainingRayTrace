@@ -24,6 +24,34 @@ namespace
 		TEXT("Number of jittered camera rays per pixel for anti-aliasing (1-64)"),
 		ECVF_RenderThreadSafe);
 
+	TAutoConsoleVariable<int32> CVarToonRayTracerShadingMode(
+		TEXT("r.ToonRayTracer.ShadingMode"),
+		1,
+		TEXT("0: Visualize normals, 1: Diffuse (Ray Tracing in One Weekend chapter 9)"),
+		ECVF_RenderThreadSafe);
+
+	// 本の第9章の max_depth に相当
+	TAutoConsoleVariable<int32> CVarToonRayTracerMaxDepth(
+		TEXT("r.ToonRayTracer.MaxDepth"),
+		5,
+		TEXT("Maximum number of ray bounces (1-50)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerAccumulate(
+		TEXT("r.ToonRayTracer.Accumulate"),
+		1,
+		TEXT("Accumulate samples across frames while the camera is still (0: off, 1: on). Toggle to reset."),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerMaxAccumulatedFrames(
+		TEXT("r.ToonRayTracer.MaxAccumulatedFrames"),
+		1024,
+		TEXT("Upper limit of accumulated frames. Further frames keep blending with this weight."),
+		ECVF_RenderThreadSafe);
+
+	// この数のフレームで使われなかったビューの蓄積状態は破棄する
+	constexpr uint32 AccumulationStateTimeoutFrames = 300;
+
 	struct FToonSphere
 	{
 		FVector Center;	// ワールド座標（cm）
@@ -106,14 +134,103 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	// 入力と同じ描画範囲（ViewRect）を持たせる。内部バッファが画面より大きい場合に対応するため
 	FScreenPassRenderTarget Output(OutputTexture, SceneColor.ViewRect, View.GetOverwriteLoadAction());
 
+	const uint32 TraceMode = static_cast<uint32>(CVarToonRayTracerTraceMode.GetValueOnRenderThread());
+	const uint32 SamplesPerPixel = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerSamplesPerPixel.GetValueOnRenderThread(), 1, 64));
+	const uint32 ShadingMode = static_cast<uint32>(CVarToonRayTracerShadingMode.GetValueOnRenderThread());
+	const uint32 MaxDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerMaxDepth.GetValueOnRenderThread(), 1, 50));
+	const bool bAccumulate = CVarToonRayTracerAccumulate.GetValueOnRenderThread() != 0;
+	const uint32 MaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
+	const FIntPoint ViewRectSize = Output.ViewRect.Size();
+
+	// TAA 用のジッターを含まない行列でレイを作る
+	// （ジッターは毎フレーム変わるため、含めると蓄積が毎フレームリセットされてしまう。AA は自前のサンプリングで行う）
+	const FMatrix& WorldToView = View.ViewMatrices.GetWorldToView();
+	const FMatrix& ViewToClipNoAA = View.ViewMatrices.GetViewToClipNoAA();
+	const FMatrix ClipToTranslatedWorldNoAA = (View.ViewMatrices.GetTranslatedViewMatrix() * ViewToClipNoAA).Inverse();
+
+	// フレームをまたいだ蓄積（カメラか設定が変わったらリセット）
+	// ビューの状態を持たないビュー（サムネイル描画など）では蓄積しない
+	const uint32 FrameNumber = View.Family->FrameNumber;
+	const uint32 SettingsHash = HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)),
+		HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth)));
+	FAccumulationState* AccumulationState = nullptr;
+	if (bAccumulate && View.State)
+	{
+		TSharedPtr<FAccumulationState>& StatePtr = AccumulationStates.FindOrAdd(View.State);
+		if (!StatePtr.IsValid())
+		{
+			StatePtr = MakeShared<FAccumulationState>();
+		}
+		AccumulationState = StatePtr.Get();
+
+		const bool bCameraOrSettingsChanged =
+			!AccumulationState->WorldToView.Equals(WorldToView, 0.0)
+			|| !AccumulationState->ViewToClipNoAA.Equals(ViewToClipNoAA, 0.0)
+			|| AccumulationState->ViewRectSize != ViewRectSize
+			|| AccumulationState->SettingsHash != SettingsHash
+			|| !AccumulationState->Texture.IsValid();
+		if (bCameraOrSettingsChanged)
+		{
+			AccumulationState->AccumulatedFrames = 0;
+			AccumulationState->WorldToView = WorldToView;
+			AccumulationState->ViewToClipNoAA = ViewToClipNoAA;
+			AccumulationState->ViewRectSize = ViewRectSize;
+			AccumulationState->SettingsHash = SettingsHash;
+		}
+		AccumulationState->LastUsedFrameNumber = FrameNumber;
+	}
+	else
+	{
+		// 蓄積を切ったらすべての状態を破棄し、次に有効にしたときは最初からやり直す
+		AccumulationStates.Reset();
+	}
+
+	// 閉じたビューポートなど、しばらく使われていない状態を破棄する
+	for (auto It = AccumulationStates.CreateIterator(); It; ++It)
+	{
+		if (FrameNumber - It.Value()->LastUsedFrameNumber > AccumulationStateTimeoutFrames)
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	// 蓄積用テクスチャ（ViewRect サイズ、線形色を高精度で保持）
+	FRDGTextureRef AccumulationTexture = nullptr;
+	if (AccumulationState && AccumulationState->Texture.IsValid() && AccumulationState->AccumulatedFrames > 0)
+	{
+		AccumulationTexture = GraphBuilder.RegisterExternalTexture(AccumulationState->Texture, TEXT("ToonRayTracerAccumulation"));
+	}
+	else
+	{
+		const FRDGTextureDesc AccumulationDesc = FRDGTextureDesc::Create2D(
+			ViewRectSize, PF_A32B32G32R32F, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+		AccumulationTexture = GraphBuilder.CreateTexture(AccumulationDesc, TEXT("ToonRayTracerAccumulation"));
+	}
+	const uint32 AccumulatedFrames = AccumulationState ? AccumulationState->AccumulatedFrames : 0;
+
 	FToonRayGenShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FToonRayGenShader::FParameters>();
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(Output.Texture);
+	PassParameters->AccumulationTexture = GraphBuilder.CreateUAV(AccumulationTexture);
+	PassParameters->AccumulatedFrames = AccumulatedFrames;
+	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
+	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : 0;
 	PassParameters->TLAS = TLAS;
-	PassParameters->TraceMode = static_cast<uint32>(CVarToonRayTracerTraceMode.GetValueOnRenderThread());
-	PassParameters->SamplesPerPixel = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerSamplesPerPixel.GetValueOnRenderThread(), 1, 64));
-	PassParameters->ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
+	PassParameters->TraceMode = TraceMode;
+	PassParameters->SamplesPerPixel = SamplesPerPixel;
+	PassParameters->ShadingMode = ShadingMode;
+	PassParameters->MaxDepth = MaxDepth;
+	PassParameters->ClipToTranslatedWorld = FMatrix44f(ClipToTranslatedWorldNoAA);
 	PassParameters->ViewRectMin = Output.ViewRect.Min;
-	PassParameters->ViewRectSize = Output.ViewRect.Size();
+	PassParameters->ViewRectSize = ViewRectSize;
+
+	// 次のフレームのために蓄積数を進める（上限に達したら、シェーダー側で蓄積済みの結果を表示し続ける）
+	// 乱数の種は上限と関係なく進める。上限で止めると毎フレーム同じサンプルになり、
+	// 平均がその1枚のノイズ画像に引き寄せられてしまうため
+	if (AccumulationState)
+	{
+		AccumulationState->AccumulatedFrames = FMath::Min(AccumulationState->AccumulatedFrames + 1, MaxAccumulatedFrames);
+		++AccumulationState->RandomSeed;
+	}
 
 	// 球の中心をワールド空間から Translated World 空間に変換して渡す
 	// （double で引き算してから float にすることで、カメラから遠い位置でも精度を保つ）
@@ -187,6 +304,13 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 			);
 		}
 	);
+
+	// 蓄積テクスチャを次のフレームまで保持する
+	// （RDG では、書き込むパスを登録した後でないと抽出を登録できない）
+	if (AccumulationState)
+	{
+		GraphBuilder.QueueTextureExtraction(AccumulationTexture, &AccumulationState->Texture);
+	}
 
 	// このパスがポストプロセスの最後の場合、エンジンが用意した出力先へ書き戻す必要がある
 	if (Inputs.OverrideOutput.IsValid())
