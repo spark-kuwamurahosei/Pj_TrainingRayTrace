@@ -4,24 +4,65 @@
 // C++からバインドされる書き込み用テクスチャ
 RWTexture2D<float4> OutputTexture;
 
+// クリップ空間 → Translated World 空間（カメラ位置が原点）への変換行列
+float4x4 ClipToTranslatedWorld;
+
+// 出力テクスチャ内の描画範囲（ViewRect）
+int2 ViewRectMin;
+int2 ViewRectSize;
+
+// 『Ray Tracing in One Weekend』の ray クラスに相当
+struct FToonRay
+{
+	float3 Origin;
+	float3 Direction;
+
+	float3 At(float T)
+	{
+		return Origin + T * Direction;
+	}
+};
+
+// UV座標からカメラのレイを生成する（Translated World 空間）
+FToonRay GenerateCameraRay(float2 UV)
+{
+	// UV（左上原点、下向き+）→ NDC（中心原点、上向き+）
+	float2 NDC = float2(UV.x * 2.0f - 1.0f, 1.0f - UV.y * 2.0f);
+
+	// UEは Reversed-Z のため z=1 がニアプレーン
+	float4 NearPoint = mul(float4(NDC, 1.0f, 1.0f), ClipToTranslatedWorld);
+
+	FToonRay Ray;
+	Ray.Origin = float3(0.0f, 0.0f, 0.0f);
+	Ray.Direction = normalize(NearPoint.xyz / NearPoint.w);
+	return Ray;
+}
+
+// フェーズ2：レイの向きに応じた空のグラデーション（白 → 水色）
+float3 RayColor(FToonRay Ray)
+{
+	// UEは Z-up のため、本の y 成分の代わりに z 成分を使う
+	float A = 0.5f * (Ray.Direction.z + 1.0f);
+	return lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), A);
+}
+
 // レイトレーシングのエントリーポイント
 RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 {
-	// 現在のピクセル座標と、画面全体の解像度を取得
-	uint2 PixelCoord = DispatchRaysIndex().xy;
-	uint2 Resolution = DispatchRaysDimensions().xy;
+	// ディスパッチは ViewRect のサイズで行うため、ここで得られるのは ViewRect 内のローカル座標
+	uint2 LocalPixel = DispatchRaysIndex().xy;
 
-	// UV座標（0.0 ～ 1.0）を計算
-	float2 UV = (float2)PixelCoord / (float2)Resolution;
+	// ピクセル中心の UV 座標（0.0 ～ 1.0）を計算
+	float2 UV = ((float2)LocalPixel + 0.5f) / (float2)ViewRectSize;
 
-	// フェーズ1：UV座標ベースのグラデーションを出力する
-	float4 OutputColor = float4(UV.x, UV.y, 0.0f, 1.0f);
+	FToonRay Ray = GenerateCameraRay(UV);
+	float3 Color = RayColor(Ray);
 
 	// テクスチャに書き込み
-	OutputTexture[PixelCoord] = OutputColor;
+	OutputTexture[ViewRectMin + LocalPixel] = float4(Color, 1.0f);
 }
 
-// パイプラインには最低1つのヒットシェーダーが必要なため用意する（フェーズ1ではTraceRayしないので呼ばれない）
+// パイプラインには最低1つのヒットシェーダーが必要なため用意する（まだTraceRayしないので呼ばれない）
 RAY_TRACING_ENTRY_CLOSEST_HIT(ToonClosestHitMain,
 	FDefaultPayload, Payload,
 	FRayTracingIntersectionAttributes, Attributes)

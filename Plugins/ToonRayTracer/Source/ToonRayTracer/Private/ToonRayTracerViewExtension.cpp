@@ -59,18 +59,22 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 
 	// 設定をもとにRDG上に新しいテクスチャを確保する
 	FRDGTextureRef OutputTexture = GraphBuilder.CreateTexture(OutputDesc, TEXT("ToonRayTracerOutput"));
-	FScreenPassRenderTarget Output(OutputTexture, View.GetOverwriteLoadAction());
-	
+	// 入力と同じ描画範囲（ViewRect）を持たせる。内部バッファが画面より大きい場合に対応するため
+	FScreenPassRenderTarget Output(OutputTexture, SceneColor.ViewRect, View.GetOverwriteLoadAction());
+
 	FToonRayGenShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FToonRayGenShader::FParameters>();
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(Output.Texture);
-	
+	PassParameters->ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetInvTranslatedViewProjectionMatrix());
+	PassParameters->ViewRectMin = Output.ViewRect.Min;
+	PassParameters->ViewRectSize = Output.ViewRect.Size();
+
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
 	TShaderMapRef<FToonRayGenShader> RayGenShader(ShaderMap);
 	TShaderMapRef<FToonClosestHitShader> ClosestHitShader(ShaderMap);
 	TShaderMapRef<FToonMissShader> MissShader(ShaderMap);
 	
-	// 画面サイズを事前に取得
-	FIntPoint Resolution(OutputTexture->Desc.Extent.X, OutputTexture->Desc.Extent.Y);
+	// ディスパッチは描画範囲（ViewRect）のサイズで行う
+	FIntPoint Resolution = Output.ViewRect.Size();
 
 	// レイトレーシングパイプライン（RTPSO）の構築
 	// RayGen / HitGroup / Miss をそれぞれ最低1つずつ登録する必要がある
@@ -124,6 +128,13 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 			);
 		}
 	);
+
+	// このパスがポストプロセスの最後の場合、エンジンが用意した出力先へ書き戻す必要がある
+	if (Inputs.OverrideOutput.IsValid())
+	{
+		AddDrawTexturePass(GraphBuilder, FScreenPassViewInfo(View), Output, Inputs.OverrideOutput);
+		return Inputs.OverrideOutput;
+	}
 
 	return MoveTemp(Output);
 }
