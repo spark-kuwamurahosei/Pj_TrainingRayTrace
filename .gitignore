@@ -1,0 +1,19 @@
+# Unreal Engine 生成物
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+
+# IDE / ソリューション（.uproject から再生成可能）
+.vs/
+.idea/
+*.sln
+*.slnx
+*.DotSettings.user
+*.suo
+*.user
+*.VC.db
+*.opensdf
+*.sdf

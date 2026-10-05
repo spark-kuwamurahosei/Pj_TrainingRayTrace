@@ -1,0 +1,37 @@
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/RayTracing/RayTracingCommon.ush"
+
+// C++からバインドされる書き込み用テクスチャ
+RWTexture2D<float4> OutputTexture;
+
+// レイトレーシングのエントリーポイント
+RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
+{
+	// 現在のピクセル座標と、画面全体の解像度を取得
+	uint2 PixelCoord = DispatchRaysIndex().xy;
+	uint2 Resolution = DispatchRaysDimensions().xy;
+
+	// UV座標（0.0 ～ 1.0）を計算
+	float2 UV = (float2)PixelCoord / (float2)Resolution;
+
+	// フェーズ1：UV座標ベースのグラデーションを出力する
+	float4 OutputColor = float4(UV.x, UV.y, 0.0f, 1.0f);
+
+	// テクスチャに書き込み
+	OutputTexture[PixelCoord] = OutputColor;
+}
+
+// パイプラインには最低1つのヒットシェーダーが必要なため用意する（フェーズ1ではTraceRayしないので呼ばれない）
+RAY_TRACING_ENTRY_CLOSEST_HIT(ToonClosestHitMain,
+	FDefaultPayload, Payload,
+	FRayTracingIntersectionAttributes, Attributes)
+{
+	Payload.HitT = RayTCurrent();
+}
+
+// SBTには最低1つのMissシェーダーが必要なため用意する
+RAY_TRACING_ENTRY_MISS(ToonMissMain,
+	FDefaultPayload, Payload)
+{
+	Payload.SetMiss();
+}
