@@ -11,6 +11,10 @@ float4x4 ClipToTranslatedWorld;
 int2 ViewRectMin;
 int2 ViewRectSize;
 
+// 球のリスト（xyz: Translated World 空間の中心、w: 半径）
+float4 Spheres[TOON_MAX_SPHERES];
+uint NumSpheres;
+
 // 『Ray Tracing in One Weekend』の ray クラスに相当
 struct FToonRay
 {
@@ -38,9 +42,86 @@ FToonRay GenerateCameraRay(float2 UV)
 	return Ray;
 }
 
-// フェーズ2：レイの向きに応じた空のグラデーション（白 → 水色）
+// 『Ray Tracing in One Weekend』の hit_record に相当
+struct FToonHitRecord
+{
+	float3 Position;
+	float3 Normal;		// 常にレイと逆向きになるように調整した法線
+	float T;
+	bool bFrontFace;	// レイが表面の外側から当たったか
+
+	void SetFaceNormal(FToonRay Ray, float3 OutwardNormal)
+	{
+		bFrontFace = dot(Ray.Direction, OutwardNormal) < 0.0f;
+		Normal = bFrontFace ? OutwardNormal : -OutwardNormal;
+	}
+};
+
+// レイと球の交差判定（本の hit_sphere / sphere::hit に相当）
+// Ray.Direction は正規化済みである前提
+bool HitSphere(float3 Center, float Radius, FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	float3 OC = Ray.Origin - Center;
+	float B = dot(OC, Ray.Direction);
+
+	// 判別式を本の「b^2 - c」ではなく「r^2 - |球の中心からレイへの垂線|^2」で計算する。
+	// 地面のような巨大な球でも float の桁落ちが起きにくい
+	float3 QC = OC - B * Ray.Direction;
+	float QCLength = length(QC);
+	float Discriminant = (Radius - QCLength) * (Radius + QCLength);
+	if (Discriminant < 0.0f)
+	{
+		return false;
+	}
+
+	// 許容範囲 (TMin, TMax) 内で最も近い解を探す
+	float SqrtD = sqrt(Discriminant);
+	float Root = -B - SqrtD;
+	if (Root <= TMin || TMax <= Root)
+	{
+		Root = -B + SqrtD;
+		if (Root <= TMin || TMax <= Root)
+		{
+			return false;
+		}
+	}
+
+	Rec.T = Root;
+	Rec.Position = Ray.At(Root);
+	Rec.SetFaceNormal(Ray, (Rec.Position - Center) / Radius);
+	return true;
+}
+
+// 全オブジェクトとの交差判定（本の hittable_list::hit に相当）
+bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	bool bHitAnything = false;
+	float ClosestSoFar = TMax;
+
+	for (uint Index = 0; Index < NumSpheres; ++Index)
+	{
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		if (HitSphere(Spheres[Index].xyz, Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+		}
+	}
+
+	return bHitAnything;
+}
+
+// フェーズ3：当たった面の法線を色として可視化し、外れたら空のグラデーションを返す
 float3 RayColor(FToonRay Ray)
 {
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (HitWorld(Ray, 0.0f, 1.0e8f, Rec))
+	{
+		// 法線（-1 ～ 1）を色（0 ～ 1）に変換
+		return 0.5f * (Rec.Normal + 1.0f);
+	}
+
 	// UEは Z-up のため、本の y 成分の代わりに z 成分を使う
 	float A = 0.5f * (Ray.Direction.z + 1.0f);
 	return lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), A);

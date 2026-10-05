@@ -7,6 +7,23 @@
 #include "RHI.h"
 #include "RHICommandList.h"
 
+namespace
+{
+	struct FToonSphere
+	{
+		FVector Center;	// ワールド座標（cm）
+		double Radius;	// 半径（cm）
+	};
+
+	// 『Ray Tracing in One Weekend』第6章のシーンをUEの単位系（cm, Z-up）に置き換えたもの
+	// ワールド原点に半径50cmの球を置き、その下に地面代わりの巨大な球を置く
+	const FToonSphere GToonSpheres[] =
+	{
+		{ FVector(0.0, 0.0, 50.0), 50.0 },
+		{ FVector(0.0, 0.0, -10000.0), 10000.0 },
+	};
+}
+
 ToonRayTracerViewExtension::ToonRayTracerViewExtension(const FAutoRegister& AutoRegister)
 	: FSceneViewExtensionBase(AutoRegister)
 {
@@ -64,9 +81,21 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 
 	FToonRayGenShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FToonRayGenShader::FParameters>();
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(Output.Texture);
-	PassParameters->ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetInvTranslatedViewProjectionMatrix());
+	PassParameters->ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
 	PassParameters->ViewRectMin = Output.ViewRect.Min;
 	PassParameters->ViewRectSize = Output.ViewRect.Size();
+
+	// 球の中心をワールド空間から Translated World 空間に変換して渡す
+	// （double で引き算してから float にすることで、カメラから遠い位置でも精度を保つ）
+	static_assert(UE_ARRAY_COUNT(GToonSpheres) <= FToonRayGenShader::MaxSpheres, "Too many spheres");
+	const FVector PreViewTranslation = View.ViewMatrices.GetPreViewTranslation();
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(GToonSpheres); ++Index)
+	{
+		const FToonSphere& Sphere = GToonSpheres[Index];
+		const FVector TranslatedCenter = Sphere.Center + PreViewTranslation;
+		PassParameters->Spheres[Index] = FVector4f(FVector3f(TranslatedCenter), static_cast<float>(Sphere.Radius));
+	}
+	PassParameters->NumSpheres = UE_ARRAY_COUNT(GToonSpheres);
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
 	TShaderMapRef<FToonRayGenShader> RayGenShader(ShaderMap);

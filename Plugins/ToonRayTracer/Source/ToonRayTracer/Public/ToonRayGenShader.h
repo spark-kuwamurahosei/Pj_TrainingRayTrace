@@ -12,6 +12,9 @@ class FToonRayGenShader : public FGlobalShader
 	DECLARE_GLOBAL_SHADER(FToonRayGenShader);
 	SHADER_USE_ROOT_PARAMETER_STRUCT(FToonRayGenShader, FGlobalShader);
 
+	// シェーダーに渡せる球の最大数
+	static constexpr int32 MaxSpheres = 8;
+
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
 		// クリップ空間 → Translated World 空間（カメラ位置が原点）への変換行列
@@ -19,11 +22,20 @@ class FToonRayGenShader : public FGlobalShader
 		// 出力テクスチャ内の描画範囲（ViewRect）
 		SHADER_PARAMETER(FIntPoint, ViewRectMin)
 		SHADER_PARAMETER(FIntPoint, ViewRectSize)
+		// 球のリスト（xyz: Translated World 空間の中心、w: 半径）
+		SHADER_PARAMETER_ARRAY(FVector4f, Spheres, [MaxSpheres])
+		SHADER_PARAMETER(uint32, NumSpheres)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
 		return ShouldCompileRayTracingShadersForProject(Parameters.Platform);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("TOON_MAX_SPHERES"), MaxSpheres);
 	}
 
 	static ERayTracingPayloadType GetRayTracingPayloadType(const int32 /*PermutationId*/)
