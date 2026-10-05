@@ -4,7 +4,13 @@
 // C++からバインドされる書き込み用テクスチャ
 RWTexture2D<float4> OutputTexture;
 
-// クリップ空間 → Translated World 空間（カメラ位置が原点）への変換行列
+// シーンの TLAS（Translated World 空間で構築されている）
+RaytracingAccelerationStructure TLAS;
+
+// 0: 解析的な球（本の第6章）、1: シーンの TLAS に TraceRay
+uint TraceMode;
+
+// クリップ空間 → Translated World 空間への変換行列
 float4x4 ClipToTranslatedWorld;
 
 // 出力テクスチャ内の描画範囲（ViewRect）
@@ -33,12 +39,14 @@ FToonRay GenerateCameraRay(float2 UV)
 	// UV（左上原点、下向き+）→ NDC（中心原点、上向き+）
 	float2 NDC = float2(UV.x * 2.0f - 1.0f, 1.0f - UV.y * 2.0f);
 
-	// UEは Reversed-Z のため z=1 がニアプレーン
+	// UEは Reversed-Z のため z=1 がニアプレーン、z=0 がファープレーン
+	// エンジンの CreatePrimaryRay と同じく、2点からレイを作る（平行投影でも正しく動く）
 	float4 NearPoint = mul(float4(NDC, 1.0f, 1.0f), ClipToTranslatedWorld);
+	float4 FarPoint = mul(float4(NDC, 0.0f, 1.0f), ClipToTranslatedWorld);
 
 	FToonRay Ray;
-	Ray.Origin = float3(0.0f, 0.0f, 0.0f);
-	Ray.Direction = normalize(NearPoint.xyz / NearPoint.w);
+	Ray.Origin = NearPoint.xyz / NearPoint.w;
+	Ray.Direction = normalize(NearPoint.w * FarPoint.xyz - FarPoint.w * NearPoint.xyz);
 	return Ray;
 }
 
@@ -112,11 +120,110 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 	return bHitAnything;
 }
 
+// シーンの TLAS に対してレイを1本飛ばす
+bool TraceScene(FToonRay Ray, out FDefaultPayload Payload)
+{
+	RayDesc Desc;
+	Desc.Origin = Ray.Origin;
+	Desc.Direction = Ray.Direction;
+	Desc.TMin = 0.0f;
+	Desc.TMax = RAY_DEFAULT_T_MAX;
+
+	Payload = (FDefaultPayload)0;
+	TraceRay(
+		TLAS,
+		RAY_FLAG_FORCE_OPAQUE,				// AnyHit シェーダーを使わない（すべて不透明として扱う）
+		RAY_TRACING_MASK_ALL,				// InstanceInclusionMask
+		RAY_TRACING_SHADER_SLOT_MATERIAL,	// RayContributionToHitGroupIndex
+		RAY_TRACING_NUM_SHADER_SLOTS,		// MultiplierForGeometryContributionToHitGroupIndex
+		0,									// MissShaderIndex
+		Desc,
+		Payload);
+
+	return Payload.IsHit();
+}
+
+// 法線を求めるための補助レイを、ピクセルの何分の1ずらして飛ばすか
+#define TOON_NORMAL_PROBE_OFFSET_PIXELS 0.1f
+
+// 中心のヒット位置から、指定方向に少しずらしたレイのヒット位置までのベクトルを求める
+// 同じ三角形に当たれば、そのベクトルは三角形の面上にある
+bool ProbeSurfaceEdge(float2 UV, float2 OffsetUV, FDefaultPayload CenterPayload, float3 CenterPosition, out float3 Edge)
+{
+	Edge = 0.0f;
+	bool bFound = false;
+
+	// まず + 方向、同じ三角形に当たらなければ - 方向を試す
+	for (int Sign = 1; Sign >= -1; Sign -= 2)
+	{
+		FToonRay ProbeRay = GenerateCameraRay(UV + Sign * OffsetUV);
+		FDefaultPayload ProbePayload;
+		if (!TraceScene(ProbeRay, ProbePayload))
+		{
+			continue;
+		}
+
+		float3 ProbeEdge = (ProbeRay.At(ProbePayload.HitT) - CenterPosition) * Sign;
+		bool bSameTriangle = ProbePayload.InstanceIndex == CenterPayload.InstanceIndex
+			&& ProbePayload.PrimitiveIndex == CenterPayload.PrimitiveIndex;
+
+		if (bSameTriangle)
+		{
+			Edge = ProbeEdge;
+			return true;
+		}
+
+		// 別の三角形でも、見つからないよりは近似として使う
+		if (!bFound)
+		{
+			Edge = ProbeEdge;
+			bFound = true;
+		}
+	}
+
+	return bFound;
+}
+
+// シーンのメッシュとの交差判定
+// ClosestHit シェーダーからは頂点データを読めないため、ごく近い3本のレイのヒット位置から
+// 三角形の面の法線（フラットシェーディング相当）を求める
+bool HitScene(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
+{
+	FDefaultPayload CenterPayload;
+	if (!TraceScene(Ray, CenterPayload))
+	{
+		return false;
+	}
+
+	Rec.T = CenterPayload.HitT;
+	Rec.Position = Ray.At(CenterPayload.HitT);
+
+	float2 PixelSizeUV = 1.0f / (float2)ViewRectSize;
+	float3 EdgeX;
+	float3 EdgeY;
+	bool bHasEdgeX = ProbeSurfaceEdge(UV, float2(PixelSizeUV.x * TOON_NORMAL_PROBE_OFFSET_PIXELS, 0.0f), CenterPayload, Rec.Position, EdgeX);
+	bool bHasEdgeY = ProbeSurfaceEdge(UV, float2(0.0f, PixelSizeUV.y * TOON_NORMAL_PROBE_OFFSET_PIXELS), CenterPayload, Rec.Position, EdgeY);
+
+	float3 Normal = -Ray.Direction;
+	float3 CrossEdge = cross(EdgeX, EdgeY);
+	if (bHasEdgeX && bHasEdgeY && dot(CrossEdge, CrossEdge) > 0.0f)
+	{
+		Normal = normalize(CrossEdge);
+	}
+
+	// 外向き法線は分からないため、レイと向かい合う側を表とみなす
+	Rec.SetFaceNormal(Ray, dot(Normal, Ray.Direction) < 0.0f ? Normal : -Normal);
+	return true;
+}
+
 // フェーズ3：当たった面の法線を色として可視化し、外れたら空のグラデーションを返す
-float3 RayColor(FToonRay Ray)
+float3 RayColor(float2 UV, FToonRay Ray)
 {
 	FToonHitRecord Rec = (FToonHitRecord)0;
-	if (HitWorld(Ray, 0.0f, 1.0e8f, Rec))
+	bool bHit = TraceMode == 0
+		? HitWorld(Ray, 0.0f, 1.0e8f, Rec)
+		: HitScene(UV, Ray, Rec);
+	if (bHit)
 	{
 		// 法線（-1 ～ 1）を色（0 ～ 1）に変換
 		return 0.5f * (Rec.Normal + 1.0f);
@@ -137,18 +244,22 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	float2 UV = ((float2)LocalPixel + 0.5f) / (float2)ViewRectSize;
 
 	FToonRay Ray = GenerateCameraRay(UV);
-	float3 Color = RayColor(Ray);
+	float3 Color = RayColor(UV, Ray);
 
 	// テクスチャに書き込み
 	OutputTexture[ViewRectMin + LocalPixel] = float4(Color, 1.0f);
 }
 
-// パイプラインには最低1つのヒットシェーダーが必要なため用意する（まだTraceRayしないので呼ばれない）
+// シーンのメッシュに当たったときに呼ばれる（SBT は Disallow モードのため全メッシュ共通）
+// どの三角形に当たったかを RayGen 側に返す
 RAY_TRACING_ENTRY_CLOSEST_HIT(ToonClosestHitMain,
 	FDefaultPayload, Payload,
 	FRayTracingIntersectionAttributes, Attributes)
 {
 	Payload.HitT = RayTCurrent();
+	Payload.PrimitiveIndex = PrimitiveIndex();
+	Payload.InstanceIndex = InstanceIndex();
+	Payload.Barycentrics = Attributes.GetBarycentrics();
 }
 
 // SBTには最低1つのMissシェーダーが必要なため用意する

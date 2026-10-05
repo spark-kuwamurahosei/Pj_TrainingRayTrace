@@ -6,9 +6,17 @@
 #include "RenderUtils.h"
 #include "RHI.h"
 #include "RHICommandList.h"
+#include "FXRenderingUtils.h"
 
 namespace
 {
+	// 0: シェーダー内の解析的な球（本の第6章）、1: UEシーンの TLAS に TraceRay
+	TAutoConsoleVariable<int32> CVarToonRayTracerTraceMode(
+		TEXT("r.ToonRayTracer.TraceMode"),
+		1,
+		TEXT("0: Analytic spheres in shader, 1: TraceRay against the scene TLAS"),
+		ECVF_RenderThreadSafe);
+
 	struct FToonSphere
 	{
 		FVector Center;	// ワールド座標（cm）
@@ -68,6 +76,18 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		return Inputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 	}
 
+	// シーンの TLAS（レイトレーシング用の加速構造）を Public API 経由で取得する
+	// まだ構築されていないフレームでは何もせず元の画像を返す
+	if (!UE::FXRenderingUtils::RayTracing::HasRayTracingScene(*View.Family->Scene))
+	{
+		return Inputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
+	}
+	FRDGBufferSRVRef TLAS = UE::FXRenderingUtils::RayTracing::GetRayTracingSceneViewRDG(*View.Family->Scene, View);
+	if (!TLAS)
+	{
+		return Inputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
+	}
+
 	// 現在の画面の情報を取得
 	FScreenPassTexture SceneColor = (FScreenPassTexture)Inputs.GetInput(EPostProcessMaterialInput::SceneColor);
 
@@ -81,6 +101,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 
 	FToonRayGenShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FToonRayGenShader::FParameters>();
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(Output.Texture);
+	PassParameters->TLAS = TLAS;
+	PassParameters->TraceMode = static_cast<uint32>(CVarToonRayTracerTraceMode.GetValueOnRenderThread());
 	PassParameters->ClipToTranslatedWorld = FMatrix44f(View.ViewMatrices.GetClipToTranslatedWorld());
 	PassParameters->ViewRectMin = Output.ViewRect.Min;
 	PassParameters->ViewRectSize = Output.ViewRect.Size();
