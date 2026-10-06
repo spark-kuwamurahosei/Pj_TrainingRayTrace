@@ -40,15 +40,16 @@ int2 ViewRectSize;
 
 // 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 float4 Spheres[TOON_MAX_SPHERES];
-// 球のマテリアル（x: 種類）と、反射率（rgb）・金属のぼけ具合（a）
-uint4 SphereMaterialTypes[TOON_MAX_SPHERES];
-float4 SphereAlbedoAndFuzz[TOON_MAX_SPHERES];
+// 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率）と反射率（rgb）
+float4 SphereMaterialParams[TOON_MAX_SPHERES];
+float4 SphereAlbedo[TOON_MAX_SPHERES];
 uint NumSpheres;
 
 // マテリアルの種類（C++ 側の EToonMaterialType と一致させる）
 #define TOON_MATERIAL_DEFAULT		0	// 未設定（灰色のランバート反射）
 #define TOON_MATERIAL_LAMBERTIAN	1	// 拡散反射（本の lambertian）
 #define TOON_MATERIAL_METAL			2	// 金属（本の metal）
+#define TOON_MATERIAL_DIELECTRIC	3	// ガラスなどの誘電体（本の dielectric）
 
 // 本の material クラスに相当
 struct FToonMaterial
@@ -56,6 +57,7 @@ struct FToonMaterial
 	uint Type;
 	float3 Albedo;
 	float Fuzz;
+	float RefractionIndex;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -65,6 +67,7 @@ FToonMaterial GetDefaultMaterial()
 	Material.Type = TOON_MATERIAL_DEFAULT;
 	Material.Albedo = 0.5f;
 	Material.Fuzz = 0.0f;
+	Material.RefractionIndex = 1.0f;
 	return Material;
 }
 
@@ -75,19 +78,22 @@ float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
 }
 
 // シーンのメッシュのマテリアルを、メッシュに設定された Custom Primitive Data から読む
-//   [0]: 種類（0: 未設定, 1: ランバート, 2: 金属）
-//   [1][2][3]: 反射率 RGB
+//   [0]: 種類（0: 未設定, 1: ランバート, 2: 金属, 3: 誘電体）
+//   [1][2][3]: 反射率 RGB（誘電体では使わない）
 //   [4]: 金属のぼけ具合（0 ～ 1）
+//   [5]: 誘電体の屈折率（未設定や 0 以下ならガラスの 1.5）
 FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 {
 	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
 
 	uint Type = (uint)round(GetCustomPrimitiveDataFloat(PrimitiveData, 0));
-	if (Type != TOON_MATERIAL_LAMBERTIAN && Type != TOON_MATERIAL_METAL)
+	if (Type != TOON_MATERIAL_LAMBERTIAN && Type != TOON_MATERIAL_METAL && Type != TOON_MATERIAL_DIELECTRIC)
 	{
 		return GetDefaultMaterial();
 	}
+
+	float RefractionIndex = GetCustomPrimitiveDataFloat(PrimitiveData, 5);
 
 	FToonMaterial Material;
 	Material.Type = Type;
@@ -96,6 +102,7 @@ FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 		GetCustomPrimitiveDataFloat(PrimitiveData, 2),
 		GetCustomPrimitiveDataFloat(PrimitiveData, 3));
 	Material.Fuzz = saturate(GetCustomPrimitiveDataFloat(PrimitiveData, 4));
+	Material.RefractionIndex = RefractionIndex > 0.0f ? RefractionIndex : 1.5f;
 	return Material;
 }
 
@@ -209,13 +216,23 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 			bHitAnything = true;
 			ClosestSoFar = TempRec.T;
 			Rec = TempRec;
-			Rec.Material.Type = SphereMaterialTypes[Index].x;
-			Rec.Material.Albedo = SphereAlbedoAndFuzz[Index].rgb;
-			Rec.Material.Fuzz = SphereAlbedoAndFuzz[Index].a;
+			Rec.Material.Type = (uint)round(SphereMaterialParams[Index].x);
+			Rec.Material.Albedo = SphereAlbedo[Index].rgb;
+			Rec.Material.Fuzz = SphereMaterialParams[Index].y;
+			Rec.Material.RefractionIndex = SphereMaterialParams[Index].z;
 		}
 	}
 
 	return bHitAnything;
+}
+
+// ペイロードはエンジン定義の FDefaultPayload で、表裏を入れる欄がないため、
+// InstanceIndex の最上位ビットに「裏面に当たった」フラグを入れる（DXR のインスタンス番号は 24 ビットまでなので衝突しない）
+#define TOON_PAYLOAD_BACK_FACE_BIT 0x80000000u
+
+bool IsPayloadBackFace(FDefaultPayload Payload)
+{
+	return (Payload.InstanceIndex & TOON_PAYLOAD_BACK_FACE_BIT) != 0;
 }
 
 // シーンの TLAS に対してレイを1本飛ばす
@@ -323,8 +340,11 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec)
 		Normal = normalize(CrossEdge);
 	}
 
-	// 外向き法線は分からないため、レイと向かい合う側を表とみなす
-	Rec.SetFaceNormal(Ray, dot(Normal, Ray.Direction) < 0.0f ? Normal : -Normal);
+	// 補助レイから求めた法線の向き（外向きか内向きか）は、辺の取り方次第で決まらないため、
+	// 法線はレイと向かい合う側に揃え、表裏は ClosestHit で得た HitKind から判定する
+	// （本の set_face_normal と同じく、Normal は常にレイと逆向き、bFrontFace は外側から当たったか）
+	Rec.Normal = dot(Normal, Ray.Direction) < 0.0f ? Normal : -Normal;
+	Rec.bFrontFace = !IsPayloadBackFace(CenterPayload);
 	return true;
 }
 
@@ -373,18 +393,63 @@ float3 RayColorNormal(FToonRay Ray)
 	return SkyColor(Ray);
 }
 
-// フェーズ8：マテリアルごとの散乱（本の第10章の material::scatter に相当）
+// 長さがほぼ 0 のベクトルを normalize すると NaN になるため、その場合は Fallback を返す
+// （NaN が1回でも出ると、フレーム間の蓄積でそのピクセルが黒いまま残ってしまう）
+float3 SafeNormalize(float3 Vector, float3 Fallback)
+{
+	float LengthSquared = dot(Vector, Vector);
+	return LengthSquared > 1.0e-12f ? Vector * rsqrt(LengthSquared) : Fallback;
+}
+
+// 見る角度による反射率の変化（シュリックの近似、本の dielectric::reflectance）
+float Reflectance(float Cosine, float RefractionIndexRatio)
+{
+	float R0 = (1.0f - RefractionIndexRatio) / (1.0f + RefractionIndexRatio);
+	R0 = R0 * R0;
+	return R0 + (1.0f - R0) * pow(1.0f - Cosine, 5.0f);
+}
+
+// フェーズ8〜9：マテリアルごとの散乱（本の第10〜11章の material::scatter に相当）
 // 散乱したレイと減衰率を返す。光が吸収された場合は false を返す
 bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout uint RandomState, out float3 Attenuation, out FToonRay Scattered)
 {
 	Scattered.Origin = Rec.Position;
 	Attenuation = Material.Albedo;
 
+	if (Material.Type == TOON_MATERIAL_DIELECTRIC)
+	{
+		// ガラスは光を吸収しない
+		Attenuation = 1.0f;
+
+		// 外から入るときは 空気→物体、中から出るときは 物体→空気 の屈折率の比になる
+		float Ri = Rec.bFrontFace ? (1.0f / Material.RefractionIndex) : Material.RefractionIndex;
+
+		float CosTheta = min(dot(-InRay.Direction, Rec.Normal), 1.0f);
+		float SinTheta = sqrt(max(0.0f, 1.0f - CosTheta * CosTheta));
+
+		// 全反射（スネルの法則で解が存在しない）か、フレネル反射の確率に当たったら反射、それ以外は屈折
+		bool bCannotRefract = Ri * SinTheta > 1.0f;
+		float3 Direction;
+		if (bCannotRefract || Reflectance(CosTheta, Ri) > ToonRandomFloat(RandomState))
+		{
+			Direction = reflect(InRay.Direction, Rec.Normal);
+		}
+		else
+		{
+			Direction = refract(InRay.Direction, Rec.Normal, Ri);
+		}
+
+		// 全反射の境目では refract が 0 ベクトルを返すことがあるため、その場合は反射方向にする
+		Scattered.Direction = SafeNormalize(Direction, reflect(InRay.Direction, Rec.Normal));
+		return true;
+	}
+
 	if (Material.Type == TOON_MATERIAL_METAL)
 	{
 		// 鏡面反射の方向に、ぼけ具合に応じたランダムなずれを加える
 		float3 Reflected = normalize(reflect(InRay.Direction, Rec.Normal)) + Material.Fuzz * RandomUnitVector(RandomState);
-		Scattered.Direction = normalize(Reflected);
+		// ずれが反射方向をちょうど打ち消すと長さが 0 になるため、その場合は法線方向にする
+		Scattered.Direction = SafeNormalize(Reflected, Rec.Normal);
 		// ずらした結果、面の内側へ向かってしまったレイは吸収されたとみなす
 		return dot(Scattered.Direction, Rec.Normal) > 0.0f;
 	}
@@ -460,6 +525,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 
 		// フェーズ5：ピクセル内のランダムな位置に複数のレイを飛ばして平均する（本の第8章）
 		float3 ColorSum = 0.0f;
+		uint ValidSamples = 0;
 		for (uint SampleIndex = 0; SampleIndex < SamplesPerPixel; ++SampleIndex)
 		{
 			// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）
@@ -467,16 +533,26 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			float2 UV = ((float2)LocalPixel + 0.5f + Offset) / (float2)ViewRectSize;
 
 			FToonRay Ray = GenerateCameraRay(UV);
-			ColorSum += RayColor(Ray, RandomState);
+			float3 SampleColor = RayColor(Ray, RandomState);
+
+			// NaN や無限大になったサンプルは平均に入れない（蓄積に残ると黒い点になる）
+			if (all(isfinite(SampleColor)))
+			{
+				ColorSum += SampleColor;
+				++ValidSamples;
+			}
 		}
-		Color = ColorSum / (float)SamplesPerPixel;
+		Color = ValidSamples > 0 ? ColorSum / (float)ValidSamples : 0.0f;
 
 		// フェーズ7：カメラが静止している間、これまでのフレームの平均と混ぜる
 		// N フレーム分の平均に新しい1フレームを 1/(N+1) の重みで加えると、N+1 フレーム分の平均になる
 		if (AccumulatedFrames > 0)
 		{
 			float3 PreviousAverage = AccumulationTexture[LocalPixel].rgb;
-			Color = lerp(PreviousAverage, Color, 1.0f / (float)(AccumulatedFrames + 1));
+			// このフレームに有効なサンプルがなければ、これまでの平均をそのまま使う
+			Color = ValidSamples > 0
+				? lerp(PreviousAverage, Color, 1.0f / (float)(AccumulatedFrames + 1))
+				: PreviousAverage;
 		}
 		AccumulationTexture[LocalPixel] = float4(Color, 1.0f);
 	}
@@ -501,7 +577,8 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(ToonClosestHitMain,
 {
 	Payload.HitT = RayTCurrent();
 	Payload.PrimitiveIndex = PrimitiveIndex();
-	Payload.InstanceIndex = InstanceIndex();
+	// 裏面に当たった場合は最上位ビットを立てる（屈折で、物体に入るのか出るのかを判定するため）
+	Payload.InstanceIndex = InstanceIndex() | (HitKind() == HIT_KIND_TRIANGLE_BACK_FACE ? TOON_PAYLOAD_BACK_FACE_BIT : 0u);
 	// インスタンスの UserData。UE では GPUScene のインスタンス番号が入っている（マテリアルの読み出しに使う）
 	Payload.InstanceID = InstanceID();
 	Payload.Barycentrics = Attributes.GetBarycentrics();

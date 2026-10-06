@@ -43,9 +43,9 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(FIntPoint, ViewRectSize)
 		// 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 		SHADER_PARAMETER_ARRAY(FVector4f, Spheres, [MaxSpheres])
-		// 球のマテリアル（x: 種類）と、反射率（rgb）・金属のぼけ具合（a）
-		SHADER_PARAMETER_ARRAY(FUintVector4, SphereMaterialTypes, [MaxSpheres])
-		SHADER_PARAMETER_ARRAY(FVector4f, SphereAlbedoAndFuzz, [MaxSpheres])
+		// 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率）と反射率（rgb）
+		SHADER_PARAMETER_ARRAY(FVector4f, SphereMaterialParams, [MaxSpheres])
+		SHADER_PARAMETER_ARRAY(FVector4f, SphereAlbedo, [MaxSpheres])
 		SHADER_PARAMETER(uint32, NumSpheres)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)

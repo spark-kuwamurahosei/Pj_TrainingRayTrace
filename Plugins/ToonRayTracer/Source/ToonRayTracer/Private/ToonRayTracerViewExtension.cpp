@@ -33,7 +33,7 @@ namespace
 	// 本の第9章の max_depth に相当
 	TAutoConsoleVariable<int32> CVarToonRayTracerMaxDepth(
 		TEXT("r.ToonRayTracer.MaxDepth"),
-		5,
+		10,
 		TEXT("Maximum number of ray bounces (1-50)"),
 		ECVF_RenderThreadSafe);
 
@@ -58,6 +58,7 @@ namespace
 		Default = 0,	// 未設定（灰色のランバート反射）
 		Lambertian = 1,	// 拡散反射（本の lambertian）
 		Metal = 2,		// 金属（本の metal）
+		Dielectric = 3,	// ガラスなどの誘電体（本の dielectric）
 	};
 
 	struct FToonSphere
@@ -67,21 +68,23 @@ namespace
 		EToonMaterialType Material;
 		FLinearColor Albedo;		// 反射率（本の albedo）
 		float Fuzz;					// 金属の反射のぼけ具合（0 ～ 1）
+		float RefractionIndex;		// 誘電体の屈折率（本の refraction_index）
 	};
 
-	// 『Ray Tracing in One Weekend』第10章のシーンをUEの単位系（cm, Z-up）に置き換えたもの
+	// 『Ray Tracing in One Weekend』第11章のシーンをUEの単位系（cm, Z-up）に置き換えたもの
 	// 本の座標（x: 右, y: 上, -z: 奥）を UE（+Y: 右, +Z: 上, +X: 奥）に対応させ、100倍して cm にする
 	// 本では球の中心が y=0、地面の上面が y=-0.5 のため、全体を 50cm 持ち上げて地面の上面を z=0 にしている
 	const FToonSphere GToonSpheres[] =
 	{
 		// 地面
-		{ FVector(0.0, 0.0, -10000.0), 10000.0, EToonMaterialType::Lambertian, FLinearColor(0.8f, 0.8f, 0.0f), 0.0f },
+		{ FVector(0.0, 0.0, -10000.0), 10000.0, EToonMaterialType::Lambertian, FLinearColor(0.8f, 0.8f, 0.0f), 0.0f, 1.0f },
 		// 中央：青いランバート
-		{ FVector(120.0, 0.0, 50.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.2f, 0.5f), 0.0f },
-		// 左：ぼけの少ない銀色の金属
-		{ FVector(100.0, -100.0, 50.0), 50.0, EToonMaterialType::Metal, FLinearColor(0.8f, 0.8f, 0.8f), 0.3f },
+		{ FVector(120.0, 0.0, 50.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.2f, 0.5f), 0.0f, 1.0f },
+		// 左：中空のガラス球（外側はガラス、内側の一回り小さい球は「ガラスの中の空気」）
+		{ FVector(100.0, -100.0, 50.0), 50.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.5f },
+		{ FVector(100.0, -100.0, 50.0), 40.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.0f / 1.5f },
 		// 右：ぼけの強い金色の金属
-		{ FVector(100.0, 100.0, 50.0), 50.0, EToonMaterialType::Metal, FLinearColor(0.8f, 0.6f, 0.2f), 1.0f },
+		{ FVector(100.0, 100.0, 50.0), 50.0, EToonMaterialType::Metal, FLinearColor(0.8f, 0.6f, 0.2f), 1.0f, 1.0f },
 	};
 }
 
@@ -262,8 +265,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		const FToonSphere& Sphere = GToonSpheres[Index];
 		const FVector TranslatedCenter = Sphere.Center + PreViewTranslation;
 		PassParameters->Spheres[Index] = FVector4f(FVector3f(TranslatedCenter), static_cast<float>(Sphere.Radius));
-		PassParameters->SphereMaterialTypes[Index] = FUintVector4(static_cast<uint32>(Sphere.Material), 0, 0, 0);
-		PassParameters->SphereAlbedoAndFuzz[Index] = FVector4f(Sphere.Albedo.R, Sphere.Albedo.G, Sphere.Albedo.B, Sphere.Fuzz);
+		PassParameters->SphereMaterialParams[Index] = FVector4f(static_cast<float>(Sphere.Material), Sphere.Fuzz, Sphere.RefractionIndex, 0.0f);
+		PassParameters->SphereAlbedo[Index] = FVector4f(Sphere.Albedo.R, Sphere.Albedo.G, Sphere.Albedo.B, 0.0f);
 	}
 	PassParameters->NumSpheres = UE_ARRAY_COUNT(GToonSpheres);
 
