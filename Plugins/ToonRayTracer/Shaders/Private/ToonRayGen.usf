@@ -83,6 +83,9 @@ struct FToonMaterial
 	float3 Albedo;
 	float Fuzz;
 	float RefractionIndex;
+	// トゥーン T4：メッシュごとの影色（bHasShadowColor が 0 なら全体の影色を使う）
+	float3 ShadowColor;
+	uint bHasShadowColor;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -93,6 +96,8 @@ FToonMaterial GetDefaultMaterial()
 	Material.Albedo = 0.5f;
 	Material.Fuzz = 0.0f;
 	Material.RefractionIndex = 1.0f;
+	Material.ShadowColor = 0.0f;
+	Material.bHasShadowColor = 0;
 	return Material;
 }
 
@@ -107,27 +112,39 @@ float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
 //   [1][2][3]: 反射率 RGB（誘電体では使わない）
 //   [4]: 金属のぼけ具合（0 ～ 1）
 //   [5]: 誘電体の屈折率（未設定や 0 以下ならガラスの 1.5）
+//   [6][7][8]: トゥーンの影色 RGB（すべて 0 なら全体の影色 r.ToonRayTracer.Toon.ShadowColor を使う）
 FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 {
 	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
 
+	FToonMaterial Material = GetDefaultMaterial();
+
 	uint Type = (uint)round(GetCustomPrimitiveDataFloat(PrimitiveData, 0));
-	if (Type != TOON_MATERIAL_LAMBERTIAN && Type != TOON_MATERIAL_METAL && Type != TOON_MATERIAL_DIELECTRIC)
+	if (Type == TOON_MATERIAL_LAMBERTIAN || Type == TOON_MATERIAL_METAL || Type == TOON_MATERIAL_DIELECTRIC)
 	{
-		return GetDefaultMaterial();
+		float RefractionIndex = GetCustomPrimitiveDataFloat(PrimitiveData, 5);
+
+		Material.Type = Type;
+		Material.Albedo = float3(
+			GetCustomPrimitiveDataFloat(PrimitiveData, 1),
+			GetCustomPrimitiveDataFloat(PrimitiveData, 2),
+			GetCustomPrimitiveDataFloat(PrimitiveData, 3));
+		Material.Fuzz = saturate(GetCustomPrimitiveDataFloat(PrimitiveData, 4));
+		Material.RefractionIndex = RefractionIndex > 0.0f ? RefractionIndex : 1.5f;
 	}
 
-	float RefractionIndex = GetCustomPrimitiveDataFloat(PrimitiveData, 5);
+	// 影色はマテリアルの種類を設定していないメッシュでも指定できる
+	float3 ShadowColor = float3(
+		GetCustomPrimitiveDataFloat(PrimitiveData, 6),
+		GetCustomPrimitiveDataFloat(PrimitiveData, 7),
+		GetCustomPrimitiveDataFloat(PrimitiveData, 8));
+	if (any(ShadowColor > 0.0f))
+	{
+		Material.ShadowColor = ShadowColor;
+		Material.bHasShadowColor = 1;
+	}
 
-	FToonMaterial Material;
-	Material.Type = Type;
-	Material.Albedo = float3(
-		GetCustomPrimitiveDataFloat(PrimitiveData, 1),
-		GetCustomPrimitiveDataFloat(PrimitiveData, 2),
-		GetCustomPrimitiveDataFloat(PrimitiveData, 3));
-	Material.Fuzz = saturate(GetCustomPrimitiveDataFloat(PrimitiveData, 4));
-	Material.RefractionIndex = RefractionIndex > 0.0f ? RefractionIndex : 1.5f;
 	return Material;
 }
 
@@ -676,7 +693,9 @@ float3 RayColorToon(float2 UV, FToonRay Ray)
 	ApplyGBufferNormal(UV, Ray, Rec);
 
 	float3 Albedo = Rec.Material.Albedo;
-	float3 ShadowColor = Albedo * ToonShadowColor;
+	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
+	float3 ShadowTint = Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : ToonShadowColor;
+	float3 ShadowColor = Albedo * ShadowTint;
 	if (bHasDirectionalLight == 0)
 	{
 		return ShadowColor;
