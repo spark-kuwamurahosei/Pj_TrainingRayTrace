@@ -29,17 +29,18 @@ namespace
 		TEXT("Number of jittered camera rays per pixel for anti-aliasing (1-64)"),
 		ECVF_RenderThreadSafe);
 
+	// 3（トゥーン）が本来の表示。0 ～ 2 は実装の確認用
 	TAutoConsoleVariable<int32> CVarToonRayTracerShadingMode(
 		TEXT("r.ToonRayTracer.ShadingMode"),
-		1,
-		TEXT("0: Visualize normals, 1: Materials (Ray Tracing in One Weekend chapters 9-11), 2: Directional light N dot L (toon T1), 3: Toon shading"),
+		3,
+		TEXT("3: Toon shading (default). Debug views: 0: Visualize normals, 1: Path traced materials (Ray Tracing in One Weekend chapters 9-11), 2: Directional light N dot L"),
 		ECVF_RenderThreadSafe);
 
 	// 本の第9章の max_depth に相当
 	TAutoConsoleVariable<int32> CVarToonRayTracerMaxDepth(
 		TEXT("r.ToonRayTracer.MaxDepth"),
 		10,
-		TEXT("Maximum number of ray bounces (1-50)"),
+		TEXT("Maximum number of ray bounces (1-50) for ShadingMode 1. Toon shading uses r.ToonRayTracer.Toon.ReflectionDepth instead"),
 		ECVF_RenderThreadSafe);
 
 	// トゥーン T2：段階的な陰影の設定
@@ -186,10 +187,18 @@ namespace
 		TEXT("Accumulate samples across frames while the camera is still (0: off, 1: on). Toggle to reset."),
 		ECVF_RenderThreadSafe);
 
+	// 値が変わると蓄積をリセットする（エディタパネルの「蓄積をリセット」ボタンが 1 ずつ増やす）
+	// レベル上のオブジェクトを動かしただけでは自動でリセットされないため、その場合に使う
+	TAutoConsoleVariable<int32> CVarToonRayTracerResetAccumulation(
+		TEXT("r.ToonRayTracer.ResetAccumulation"),
+		0,
+		TEXT("Changing this value resets the accumulation (e.g. after moving objects in the level)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerMaxAccumulatedFrames(
 		TEXT("r.ToonRayTracer.MaxAccumulatedFrames"),
 		1024,
-		TEXT("Upper limit of accumulated frames. Further frames keep blending with this weight."),
+		TEXT("Upper limit of accumulated frames. After reaching it, the accumulated result is shown without tracing new rays"),
 		ECVF_RenderThreadSafe);
 
 	// この数のフレームで使われなかったビューの蓄積状態は破棄する
@@ -415,7 +424,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		GetTypeHash(bUseGBufferNormal)), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash));
+		GetTypeHash(bUseGBufferNormal)), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
+		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
 	{
