@@ -32,7 +32,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerShadingMode(
 		TEXT("r.ToonRayTracer.ShadingMode"),
 		1,
-		TEXT("0: Visualize normals, 1: Materials (Ray Tracing in One Weekend chapters 9-11), 2: Directional light N dot L (toon T1)"),
+		TEXT("0: Visualize normals, 1: Materials (Ray Tracing in One Weekend chapters 9-11), 2: Directional light N dot L (toon T1), 3: Toon shading"),
 		ECVF_RenderThreadSafe);
 
 	// 本の第9章の max_depth に相当
@@ -41,6 +41,59 @@ namespace
 		10,
 		TEXT("Maximum number of ray bounces (1-50)"),
 		ECVF_RenderThreadSafe);
+
+	// トゥーン T2：段階的な陰影の設定
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonBands(
+		TEXT("r.ToonRayTracer.Toon.Bands"),
+		2,
+		TEXT("Number of shading bands for toon shading (2: shadow / lit, 3: shadow / mid / lit)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowThreshold(
+		TEXT("r.ToonRayTracer.Toon.ShadowThreshold"),
+		0.0f,
+		TEXT("N dot L threshold (-1 to 1) between the shadow band and the next band"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonLitThreshold(
+		TEXT("r.ToonRayTracer.Toon.LitThreshold"),
+		0.5f,
+		TEXT("N dot L threshold (-1 to 1) between the mid band and the lit band (used when Bands is 3)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonEdgeSoftness(
+		TEXT("r.ToonRayTracer.Toon.EdgeSoftness"),
+		0.02f,
+		TEXT("Half width (in N dot L) of the smooth transition at band edges"),
+		ECVF_RenderThreadSafe);
+
+	// 文字列型のコンソール変数は ECVF_RenderThreadSafe を付けられない（付けるとモジュールの読み込み時にアサートする）ため、
+	// ゲームスレッドの BeginRenderViewFamily で読み、レンダーコマンドでレンダースレッドへ渡す
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonShadowColor(
+		TEXT("r.ToonRayTracer.Toon.ShadowColor"),
+		TEXT("0.35,0.4,0.6"),
+		TEXT("Linear RGB tint multiplied with the material color in shadow bands, as \"R,G,B\""),
+		ECVF_Default);
+
+	const FLinearColor DefaultToonShadowColor(0.35f, 0.4f, 0.6f);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonLightScale(
+		TEXT("r.ToonRayTracer.Toon.LightScale"),
+		1.0f,
+		TEXT("Multiplier for the directional light color in the lit band (the light's lux intensity is not used)"),
+		ECVF_RenderThreadSafe);
+
+	// "R,G,B" 形式の文字列を色に変換する（読めなければ Default を返す）
+	FLinearColor ParseLinearColor(const FString& Text, const FLinearColor& Default)
+	{
+		TArray<FString> Parts;
+		Text.ParseIntoArray(Parts, TEXT(","), true);
+		if (Parts.Num() != 3)
+		{
+			return Default;
+		}
+		return FLinearColor(FCString::Atof(*Parts[0]), FCString::Atof(*Parts[1]), FCString::Atof(*Parts[2]));
+	}
 
 	TAutoConsoleVariable<int32> CVarToonRayTracerUseGBufferNormal(
 		TEXT("r.ToonRayTracer.UseGBufferNormal"),
@@ -155,10 +208,13 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	// ライトの情報はゲームスレッド側にしかないため、ここで取得してレンダースレッドへ渡す
 	// レンダーコマンドは順番に実行されるので、このビューファミリーの描画より前に反映される
 	FToonDirectionalLight Light = FindDirectionalLight(InViewFamily);
-	ENQUEUE_RENDER_COMMAND(ToonRayTracerUpdateDirectionalLight)(
-		[this, Light](FRHICommandListImmediate&)
+	// 文字列型のコンソール変数もゲームスレッドでしか読めないため、ここで色に変換して一緒に渡す
+	const FLinearColor ShadowColor = ParseLinearColor(CVarToonRayTracerToonShadowColor.GetValueOnGameThread(), DefaultToonShadowColor);
+	ENQUEUE_RENDER_COMMAND(ToonRayTracerUpdateGameThreadState)(
+		[this, Light, ShadowColor](FRHICommandListImmediate&)
 		{
 			DirectionalLight_RenderThread = Light;
+			ToonShadowColor_RenderThread = ShadowColor;
 		});
 }
 
@@ -243,13 +299,24 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	// フレームをまたいだ蓄積（カメラか設定が変わったらリセット）
 	// ビューの状態を持たないビュー（サムネイル描画など）では蓄積しない
 	const uint32 FrameNumber = View.Family->FrameNumber;
-	// ライトの向きや色が変わったときも蓄積をリセットする
+	// トゥーンの設定
+	const uint32 ToonBands = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonBands.GetValueOnRenderThread(), 2, 3));
+	const float ToonShadowThreshold = CVarToonRayTracerToonShadowThreshold.GetValueOnRenderThread();
+	const float ToonLitThreshold = CVarToonRayTracerToonLitThreshold.GetValueOnRenderThread();
+	const float ToonEdgeSoftness = FMath::Max(CVarToonRayTracerToonEdgeSoftness.GetValueOnRenderThread(), 0.0f);
+	const FLinearColor ToonShadowColor = ToonShadowColor_RenderThread;
+	const float ToonLightScale = FMath::Max(CVarToonRayTracerToonLightScale.GetValueOnRenderThread(), 0.0f);
+
+	// ライトの向きや色、トゥーンの設定が変わったときも蓄積をリセットする
 	const FToonDirectionalLight& DirectionalLight = DirectionalLight_RenderThread;
 	const uint32 LightHash = HashCombine(HashCombine(GetTypeHash(DirectionalLight.ToLightDirection), GetTypeHash(DirectionalLight.Color)),
 		HashCombine(GetTypeHash(DirectionalLight.Intensity), GetTypeHash(DirectionalLight.bValid)));
-	const uint32 SettingsHash = HashCombine(HashCombine(
+	const uint32 ToonHash = HashCombine(
+		HashCombine(HashCombine(GetTypeHash(ToonBands), GetTypeHash(ToonShadowThreshold)), HashCombine(GetTypeHash(ToonLitThreshold), GetTypeHash(ToonEdgeSoftness))),
+		HashCombine(GetTypeHash(ToonShadowColor), GetTypeHash(ToonLightScale)));
+	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		GetTypeHash(bUseGBufferNormal)), LightHash);
+		GetTypeHash(bUseGBufferNormal)), LightHash), ToonHash);
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
 	{
@@ -332,6 +399,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->ToLightDirection = DirectionalLight.ToLightDirection;
 	PassParameters->LightColor = FVector3f(DirectionalLight.Color.R, DirectionalLight.Color.G, DirectionalLight.Color.B);
 	PassParameters->bHasDirectionalLight = DirectionalLight.bValid ? 1u : 0u;
+	PassParameters->ToonBands = ToonBands;
+	PassParameters->ToonShadowThreshold = ToonShadowThreshold;
+	PassParameters->ToonLitThreshold = ToonLitThreshold;
+	PassParameters->ToonEdgeSoftness = ToonEdgeSoftness;
+	PassParameters->ToonShadowColor = FVector3f(ToonShadowColor.R, ToonShadowColor.G, ToonShadowColor.B);
+	PassParameters->ToonLightColor = PassParameters->LightColor * ToonLightScale;
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
 	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);
 	PassParameters->Scene = UE::FXRenderingUtils::GetSceneUniformBuffer(GraphBuilder, SceneUniformBuffer);

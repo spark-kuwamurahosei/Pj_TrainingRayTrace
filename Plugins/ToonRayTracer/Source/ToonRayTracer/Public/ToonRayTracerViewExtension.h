@@ -50,6 +50,8 @@ private:
 
 	// レンダースレッドからのみアクセスする。BeginRenderViewFamily でレンダーコマンド経由で更新される
 	FToonDirectionalLight DirectionalLight_RenderThread;
+	// トゥーンの影色（文字列のコンソール変数をゲームスレッドで変換したもの）
+	FLinearColor ToonShadowColor_RenderThread = FLinearColor(0.35f, 0.4f, 0.6f);
 
 	// カメラが静止している間、フレームをまたいで結果を平均するための状態（ビューごと）
 	struct FAccumulationState

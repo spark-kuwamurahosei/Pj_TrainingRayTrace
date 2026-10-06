@@ -59,6 +59,13 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(FVector3f, ToLightDirection)
 		SHADER_PARAMETER(FVector3f, LightColor)
 		SHADER_PARAMETER(uint32, bHasDirectionalLight)
+		// トゥーン：段階数（2 or 3）、NdotL のしきい値、境目のぼかし幅、影色、明るい面のライト色
+		SHADER_PARAMETER(uint32, ToonBands)
+		SHADER_PARAMETER(float, ToonShadowThreshold)
+		SHADER_PARAMETER(float, ToonLitThreshold)
+		SHADER_PARAMETER(float, ToonEdgeSoftness)
+		SHADER_PARAMETER(FVector3f, ToonShadowColor)
+		SHADER_PARAMETER(FVector3f, ToonLightColor)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 	END_SHADER_PARAMETER_STRUCT()
