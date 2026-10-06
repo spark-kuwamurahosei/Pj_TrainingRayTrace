@@ -75,6 +75,11 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonRimThreshold)
 		SHADER_PARAMETER(float, ToonRimStrength)
 		SHADER_PARAMETER(uint32, bToonRimLitSideOnly)
+		// トゥーン T6：アウトラインを引くか、線の太さ（ピクセル）、線を引く距離の差のしきい値（補助レイをずらした量の何倍か）、線の色
+		SHADER_PARAMETER(uint32, bToonOutline)
+		SHADER_PARAMETER(float, ToonOutlineWidth)
+		SHADER_PARAMETER(float, ToonOutlineThreshold)
+		SHADER_PARAMETER(FVector3f, ToonOutlineColor)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 	END_SHADER_PARAMETER_STRUCT()

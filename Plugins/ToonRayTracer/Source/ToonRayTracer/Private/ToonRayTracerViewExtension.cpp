@@ -127,6 +127,34 @@ namespace
 		TEXT("Show the rim light only on the lit side (0: everywhere, 1: lit side only)"),
 		ECVF_RenderThreadSafe);
 
+	// トゥーン T6：アウトライン
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonOutline(
+		TEXT("r.ToonRayTracer.Toon.Outline"),
+		1,
+		TEXT("Draw toon outlines at silhouettes, depth gaps and creases (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineWidth(
+		TEXT("r.ToonRayTracer.Toon.OutlineWidth"),
+		1.5f,
+		TEXT("Outline width in pixels (offset of the neighbor rays)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineThreshold(
+		TEXT("r.ToonRayTracer.Toon.OutlineThreshold"),
+		1.0f,
+		TEXT("Outline is drawn where the neighbor ray hits farther than this multiple of the ray offset from the extended center plane. Smaller draws lines at gentler creases"),
+		ECVF_RenderThreadSafe);
+
+	// 文字列型のため ECVF_RenderThreadSafe は付けられない。ゲームスレッドで読んでレンダースレッドへ渡す
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonOutlineColor(
+		TEXT("r.ToonRayTracer.Toon.OutlineColor"),
+		TEXT("0.02,0.02,0.04"),
+		TEXT("Linear RGB color of the toon outline, as \"R,G,B\""),
+		ECVF_Default);
+
+	const FLinearColor DefaultToonOutlineColor(0.02f, 0.02f, 0.04f);
+
 	// "R,G,B" 形式の文字列を色に変換する（読めなければ Default を返す）
 	FLinearColor ParseLinearColor(const FString& Text, const FLinearColor& Default)
 	{
@@ -254,11 +282,13 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	FToonDirectionalLight Light = FindDirectionalLight(InViewFamily);
 	// 文字列型のコンソール変数もゲームスレッドでしか読めないため、ここで色に変換して一緒に渡す
 	const FLinearColor ShadowColor = ParseLinearColor(CVarToonRayTracerToonShadowColor.GetValueOnGameThread(), DefaultToonShadowColor);
+	const FLinearColor OutlineColor = ParseLinearColor(CVarToonRayTracerToonOutlineColor.GetValueOnGameThread(), DefaultToonOutlineColor);
 	ENQUEUE_RENDER_COMMAND(ToonRayTracerUpdateGameThreadState)(
-		[this, Light, ShadowColor](FRHICommandListImmediate&)
+		[this, Light, ShadowColor, OutlineColor](FRHICommandListImmediate&)
 		{
 			DirectionalLight_RenderThread = Light;
 			ToonShadowColor_RenderThread = ShadowColor;
+			ToonOutlineColor_RenderThread = OutlineColor;
 		});
 }
 
@@ -357,6 +387,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const float ToonRimThreshold = CVarToonRayTracerToonRimThreshold.GetValueOnRenderThread();
 	const float ToonRimStrength = FMath::Max(CVarToonRayTracerToonRimStrength.GetValueOnRenderThread(), 0.0f);
 	const bool bToonRimLitSideOnly = CVarToonRayTracerToonRimLitSideOnly.GetValueOnRenderThread() != 0;
+	const bool bToonOutline = CVarToonRayTracerToonOutline.GetValueOnRenderThread() != 0;
+	const float ToonOutlineWidth = FMath::Max(CVarToonRayTracerToonOutlineWidth.GetValueOnRenderThread(), 0.0f);
+	const float ToonOutlineThreshold = FMath::Max(CVarToonRayTracerToonOutlineThreshold.GetValueOnRenderThread(), 0.0f);
+	const FLinearColor ToonOutlineColor = ToonOutlineColor_RenderThread;
 
 	// ライトの向きや色、トゥーンの設定が変わったときも蓄積をリセットする
 	const FToonDirectionalLight& DirectionalLight = DirectionalLight_RenderThread;
@@ -368,9 +402,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const uint32 ToonHighlightHash = HashCombine(
 		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
+	const uint32 ToonOutlineHash = HashCombine(
+		HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)),
+		HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		GetTypeHash(bUseGBufferNormal)), LightHash), HashCombine(ToonHash, ToonHighlightHash));
+		GetTypeHash(bUseGBufferNormal)), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash));
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
 	{
@@ -466,6 +503,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->ToonRimThreshold = ToonRimThreshold;
 	PassParameters->ToonRimStrength = ToonRimStrength;
 	PassParameters->bToonRimLitSideOnly = bToonRimLitSideOnly ? 1u : 0u;
+	PassParameters->bToonOutline = bToonOutline ? 1u : 0u;
+	PassParameters->ToonOutlineWidth = ToonOutlineWidth;
+	PassParameters->ToonOutlineThreshold = ToonOutlineThreshold;
+	PassParameters->ToonOutlineColor = FVector3f(ToonOutlineColor.R, ToonOutlineColor.G, ToonOutlineColor.B);
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
 	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);
 	PassParameters->Scene = UE::FXRenderingUtils::GetSceneUniformBuffer(GraphBuilder, SceneUniformBuffer);

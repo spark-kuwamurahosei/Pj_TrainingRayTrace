@@ -72,6 +72,21 @@ uint bToonRimLitSideOnly;
 // ハイライトの境目のぼかし幅（NdotH は 1 付近で変化が小さいため、陰影の境目より狭くする）
 #define TOON_HIGHLIGHT_SOFTNESS 0.005f
 
+// トゥーン T6：アウトラインを引くか、線の太さ（ピクセル）、線を引く距離の差のしきい値（補助レイをずらした量の何倍か）、線の色
+uint bToonOutline;
+float ToonOutlineWidth;
+float ToonOutlineThreshold;
+float3 ToonOutlineColor;
+
+// 別の物体が「遠く手前にある（遮っている）」とみなす距離の差（補助レイをずらした量の何倍か）
+#define TOON_OUTLINE_OCCLUDER_GAP 4.0f
+
+// 面の折れ目とみなす法線の角度差（cos 35°）。球の隣り合うポリゴン（10° 前後）では線を引かない
+#define TOON_OUTLINE_CREASE_COS 0.82f
+
+// 同じ物体どうしの段差の判定で、許容量を何倍に広げるか
+#define TOON_OUTLINE_SAME_OBJECT_SCALE 3.0f
+
 // 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 float4 Spheres[TOON_MAX_SPHERES];
 // 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率, w: トゥーンのハイライトとリムライトの強さ）と反射率（rgb）
@@ -226,6 +241,8 @@ struct FToonHitRecord
 	float T;
 	bool bFrontFace;	// レイが表面の外側から当たったか
 	FToonMaterial Material;
+	// 当たった物体の識別番号（シーンでは GPUScene のインスタンス番号、解析的な球では球の番号）。アウトラインの判定に使う
+	uint ObjectId;
 
 	void SetFaceNormal(FToonRay Ray, float3 OutwardNormal)
 	{
@@ -290,6 +307,7 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 			// w：トゥーンのハイライトとリムライトの強さ（地面は 0）
 			Rec.Material.HighlightStrength = SphereMaterialParams[Index].w;
 			Rec.Material.RimStrength = SphereMaterialParams[Index].w;
+			Rec.ObjectId = Index;
 		}
 	}
 
@@ -388,6 +406,7 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec)
 	Rec.T = CenterPayload.HitT;
 	Rec.Position = Ray.At(CenterPayload.HitT);
 	Rec.Material = GetSceneMaterial(CenterPayload.InstanceID);
+	Rec.ObjectId = CenterPayload.InstanceID;
 
 	// レイの向きに垂直な2方向を作る
 	float3 Up = abs(Ray.Direction.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
@@ -700,6 +719,68 @@ bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
 	return Payload.IsMiss();
 }
 
+// トゥーン T6：アウトライン
+// カメラレイの上下左右に、線の太さ分だけずらした補助レイを飛ばし、次の場合に線を引く（1 なら線、0 なら線なし）
+//   ・補助レイが空に抜けた（物体の輪郭）
+//   ・中心と補助レイの点で、面の向き（法線）の角度差が大きい（面の折れ目。球の隣り合うポリゴン程度の差では引かない）
+//   ・補助レイの点が中心の平面から、または中心の点が補助レイの平面から離れている（物体の輪郭、奥行きの段差）
+//     距離は面に垂直な方向で測り、許容量は「補助レイをずらした量（ヒット位置での距離）」の何倍かで決める
+//     （視線方向で測ると、浅い角度で見たポリゴンの境目でも差が増幅され、輪郭の内側にかすれた線が出るため）
+// 遠く手前にある別の物体に当たった場合は、その物体の側で線が引かれるのでここでは引かない（線が背景側に太らない）
+// 同じ平面上にぴったり並んだ別のメッシュの継ぎ目は、どちらの平面からも距離 0 なので線を引かない
+float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
+{
+	float2 OffsetUV = ToonOutlineWidth / (float2)ViewRectSize;
+	float2 Directions[4] = { float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f) };
+
+	// 中心の点の法線は、GBuffer の滑らかな法線（ApplyGBufferNormal 済み）を使う
+	// ポリゴンごとの法線だと、浅い角度で見た輪郭付近でばらつき、輪郭の内側にかすれた線が出るため
+	float3 CenterNormal = Rec.Normal;
+
+	for (uint Index = 0; Index < 4; ++Index)
+	{
+		float2 NeighborUV = UV + Directions[Index] * OffsetUV;
+		FToonRay NeighborRay = GenerateCameraRay(NeighborUV);
+
+		// 補助レイでも面の向きが必要なため、法線まで求める交差判定を使い、カメラから直接見える点なので GBuffer の法線に置き換える
+		FToonHitRecord NeighborRec = (FToonHitRecord)0;
+		if (!HitAnything(NeighborRay, 0.0f, NeighborRec))
+		{
+			return 1.0f;
+		}
+		ApplyGBufferNormal(NeighborUV, NeighborRay, NeighborRec);
+
+		// 補助レイをずらした量を、中心のヒット位置での距離（cm）に換算したもの
+		float OffsetDistance = max(Rec.T * length(NeighborRay.Direction - Ray.Direction), 1.0e-3f);
+
+		// 遠く手前にある別の物体（遮っている物体）に当たった場合は、その物体の側で線が引かれるのでここでは引かない
+		// 角で接している面同士は距離の差がずらした量と同程度なので、ここでは除外しない
+		if (NeighborRec.ObjectId != Rec.ObjectId && Rec.T - NeighborRec.T > TOON_OUTLINE_OCCLUDER_GAP * OffsetDistance)
+		{
+			continue;
+		}
+
+		// 面の折れ目
+		if (dot(CenterNormal, NeighborRec.Normal) < TOON_OUTLINE_CREASE_COS)
+		{
+			return 1.0f;
+		}
+
+		// 物体の輪郭や奥行きの段差：お互いの平面からの距離（面に垂直な方向）
+		// 同じ物体どうしは、ポリゴンの凹凸程度で線が出ないよう許容量を広げる（自分自身に隠れる部分などの本当の段差は十分大きい）
+		float3 ToNeighbor = NeighborRec.Position - Rec.Position;
+		float NeighborFromCenterPlane = abs(dot(ToNeighbor, CenterNormal));
+		float CenterFromNeighborPlane = abs(dot(ToNeighbor, NeighborRec.Normal));
+		float Tolerance = ToonOutlineThreshold * OffsetDistance * (NeighborRec.ObjectId == Rec.ObjectId ? TOON_OUTLINE_SAME_OBJECT_SCALE : 1.0f);
+		if (max(NeighborFromCenterPlane, CenterFromNeighborPlane) > Tolerance)
+		{
+			return 1.0f;
+		}
+	}
+
+	return 0.0f;
+}
+
 // トゥーン T2〜T3：段階的な陰影とくっきりした影
 // 明るい面は「素材の色 × ライトの色」、影の面は「素材の色 × 影色」で塗る
 // 光源との間が遮られている点は、面の向きに関係なく影の色にする
@@ -721,7 +802,7 @@ float3 RayColorToon(float2 UV, FToonRay Ray)
 	float3 ShadowColor = Albedo * ShadowTint;
 	if (bHasDirectionalLight == 0)
 	{
-		return ShadowColor;
+		return bToonOutline != 0 ? lerp(ShadowColor, ToonOutlineColor, ToonOutline(UV, Ray, Rec)) : ShadowColor;
 	}
 
 	float3 LitColor = Albedo * ToonLightColor;
@@ -776,6 +857,12 @@ float3 RayColorToon(float2 UV, FToonRay Ray)
 			RimLevel *= LightLevel;
 		}
 		Color += ToonLightColor * RimLevel * RimStrength;
+	}
+
+	// トゥーン T6：アウトライン（陰影やハイライトの上に描く）
+	if (bToonOutline != 0)
+	{
+		Color = lerp(Color, ToonOutlineColor, ToonOutline(UV, Ray, Rec));
 	}
 
 	return Color;
