@@ -66,6 +66,9 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonEdgeSoftness)
 		SHADER_PARAMETER(FVector3f, ToonShadowColor)
 		SHADER_PARAMETER(FVector3f, ToonLightColor)
+		// トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
+		SHADER_PARAMETER(uint32, bToonCastShadows)
+		SHADER_PARAMETER(float, ToonShadowBias)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 	END_SHADER_PARAMETER_STRUCT()

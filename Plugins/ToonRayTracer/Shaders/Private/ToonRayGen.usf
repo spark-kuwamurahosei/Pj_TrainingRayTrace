@@ -59,6 +59,9 @@ float ToonLitThreshold;
 float ToonEdgeSoftness;
 float3 ToonShadowColor;
 float3 ToonLightColor;
+// トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
+uint bToonCastShadows;
+float ToonShadowBias;
 
 // 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 float4 Spheres[TOON_MAX_SPHERES];
@@ -615,8 +618,51 @@ float ToonLightLevel(float NdotL)
 	return 0.5f * (ShadowToNext + MidToLit);
 }
 
-// トゥーン T2：段階的な陰影
+// トゥーン T3：Origin から光源の方向へシャドウレイを飛ばし、光が届くかどうかを返す
+// 「何かに当たったか」だけ分かればよいので、最初の交差で打ち切り、ClosestHit も呼ばない
+// bIgnoreBackFaces が true なら、裏から当たった面を無視する（シャドウターミネーター問題の対策）
+bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
+{
+	FToonRay ShadowRay;
+	ShadowRay.Origin = Origin;
+	ShadowRay.Direction = ToLightDirection;
+
+	if (TraceMode == 0)
+	{
+		FToonHitRecord Rec = (FToonHitRecord)0;
+		return !HitWorld(ShadowRay, TOON_RAY_TMIN, 1.0e8f, Rec);
+	}
+
+	RayDesc Desc;
+	Desc.Origin = ShadowRay.Origin;
+	Desc.Direction = ShadowRay.Direction;
+	Desc.TMin = TOON_RAY_TMIN;
+	Desc.TMax = RAY_DEFAULT_T_MAX;
+
+	// ClosestHit を呼ばないため、ペイロードは「当たった」で初期化しておき、Miss シェーダーが呼ばれたときだけ書き換わる
+	FDefaultPayload Payload = (FDefaultPayload)0;
+	Payload.HitT = 1.0f;
+	uint RayFlags = RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER;
+	if (bIgnoreBackFaces)
+	{
+		RayFlags |= RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
+	}
+	TraceRay(
+		TLAS,
+		RayFlags,
+		RAY_TRACING_MASK_ALL,
+		RAY_TRACING_SHADER_SLOT_MATERIAL,
+		RAY_TRACING_NUM_SHADER_SLOTS,
+		0,
+		Desc,
+		Payload);
+
+	return Payload.IsMiss();
+}
+
+// トゥーン T2〜T3：段階的な陰影とくっきりした影
 // 明るい面は「素材の色 × ライトの色」、影の面は「素材の色 × 影色」で塗る
+// 光源との間が遮られている点は、面の向きに関係なく影の色にする
 float3 RayColorToon(float2 UV, FToonRay Ray)
 {
 	FToonHitRecord Rec = (FToonHitRecord)0;
@@ -624,6 +670,9 @@ float3 RayColorToon(float2 UV, FToonRay Ray)
 	{
 		return SkyColor(Ray);
 	}
+
+	// GBuffer の滑らかな法線に置き換える前の、実際の三角形（または球）の向き
+	float3 GeometricNormal = Rec.Normal;
 	ApplyGBufferNormal(UV, Ray, Rec);
 
 	float3 Albedo = Rec.Material.Albedo;
@@ -635,7 +684,27 @@ float3 RayColorToon(float2 UV, FToonRay Ray)
 
 	float3 LitColor = Albedo * ToonLightColor;
 	float NdotL = dot(Rec.Normal, ToLightDirection);
-	return lerp(ShadowColor, LitColor, ToonLightLevel(NdotL));
+	float LightLevel = ToonLightLevel(NdotL);
+
+	// 明るく塗られる点だけシャドウレイを飛ばす
+	// 始点を実際の面の向きへ少し浮かせ、滑らかな法線とポリゴンの向きのずれによる自己遮蔽（黒い斑点）を防ぐ
+	if (bToonCastShadows != 0 && LightLevel > 0.0f)
+	{
+		float3 ShadowOrigin = Rec.Position + GeometricNormal * ToonShadowBias;
+
+		// シャドウターミネーター問題の対策：
+		// 滑らかな法線では光を向いていても、ポリゴン自体は光と反対を向いている点（明暗の境目付近）では、
+		// シャドウレイが自分のメッシュの内側に入り、反対側の面に裏から当たって階段状の影になる。
+		// そういう点だけ裏面を無視し、自分のメッシュを通り抜けさせる（表から当たる本当の自己影は残る）
+		bool bGeometryFacesAwayFromLight = dot(GeometricNormal, ToLightDirection) <= 0.0f;
+
+		if (!IsLightVisible(ShadowOrigin, bGeometryFacesAwayFromLight))
+		{
+			LightLevel = 0.0f;
+		}
+	}
+
+	return lerp(ShadowColor, LitColor, LightLevel);
 }
 
 float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
