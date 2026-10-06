@@ -84,6 +84,9 @@ float3 ToonOutlineColor;
 // 面の折れ目とみなす法線の角度差（cos 35°）。球の隣り合うポリゴン（10° 前後）では線を引かない
 #define TOON_OUTLINE_CREASE_COS 0.82f
 
+// トゥーン T7：金属・ガラスで反射・屈折を追いかける回数の上限
+uint ToonReflectionDepth;
+
 // 同じ物体どうしの段差の判定で、許容量を何倍に広げるか
 #define TOON_OUTLINE_SAME_OBJECT_SCALE 3.0f
 
@@ -781,35 +784,18 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 	return 0.0f;
 }
 
-// トゥーン T2〜T3：段階的な陰影とくっきりした影
-// 明るい面は「素材の色 × ライトの色」、影の面は「素材の色 × 影色」で塗る
-// 光源との間が遮られている点は、面の向きに関係なく影の色にする
-float3 RayColorToon(float2 UV, FToonRay Ray)
+// トゥーン T2〜T3：明るさの段階（0：影 ～ 1：明るい面）
+// 面の向き（NdotL）で段階を決め、明るく塗られる点だけシャドウレイを飛ばして、遮られていれば影にする
+float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal)
 {
-	FToonHitRecord Rec = (FToonHitRecord)0;
-	if (!HitAnything(Ray, 0.0f, Rec))
-	{
-		return SkyColor(Ray);
-	}
-
-	// GBuffer の滑らかな法線に置き換える前の、実際の三角形（または球）の向き
-	float3 GeometricNormal = Rec.Normal;
-	ApplyGBufferNormal(UV, Ray, Rec);
-
-	float3 Albedo = Rec.Material.Albedo;
-	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
-	float3 ShadowTint = Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : ToonShadowColor;
-	float3 ShadowColor = Albedo * ShadowTint;
 	if (bHasDirectionalLight == 0)
 	{
-		return bToonOutline != 0 ? lerp(ShadowColor, ToonOutlineColor, ToonOutline(UV, Ray, Rec)) : ShadowColor;
+		return 0.0f;
 	}
 
-	float3 LitColor = Albedo * ToonLightColor;
 	float NdotL = dot(Rec.Normal, ToLightDirection);
 	float LightLevel = ToonLightLevel(NdotL);
 
-	// 明るく塗られる点だけシャドウレイを飛ばす
 	// 始点を実際の面の向きへ少し浮かせ、滑らかな法線とポリゴンの向きのずれによる自己遮蔽（黒い斑点）を防ぐ
 	if (bToonCastShadows != 0 && LightLevel > 0.0f)
 	{
@@ -827,45 +813,174 @@ float3 RayColorToon(float2 UV, FToonRay Ray)
 		}
 	}
 
-	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
+	return LightLevel;
+}
 
-	// トゥーン T5：ハイライトとリムライト
-	float3 ToCamera = -Ray.Direction;
-
-	// ハイライト：光源とカメラの中間の向き（ハーフベクトル）に法線が近い部分を、ライトの色でくっきり塗る
-	// LightLevel を掛けるので、影の面やシャドウレイで遮られた部分には出ない
+// トゥーン T5：ハイライトの段階（0 ～ 1）
+// 光源とカメラの中間の向き（ハーフベクトル）に法線が近い部分。LightLevel を掛けるので影の面には出ない
+float ComputeToonHighlight(FToonHitRecord Rec, FToonRay Ray, float LightLevel)
+{
 	// 全体の強さ（コンソール変数）× メッシュごとの強さ（Custom Primitive Data）
 	float HighlightStrength = saturate(ToonHighlightStrength * Rec.Material.HighlightStrength);
+	if (HighlightStrength <= 0.0f)
+	{
+		return 0.0f;
+	}
+
+	float3 HalfVector = SafeNormalize(ToLightDirection - Ray.Direction, Rec.Normal);
+	float NdotH = dot(Rec.Normal, HalfVector);
+	float HighlightLevel = smoothstep(ToonHighlightThreshold - TOON_HIGHLIGHT_SOFTNESS, ToonHighlightThreshold + TOON_HIGHLIGHT_SOFTNESS, NdotH);
+	return HighlightLevel * LightLevel * HighlightStrength;
+}
+
+// トゥーン T5：リムライトの明るさ（加算する光）
+// カメラから見て輪郭に近い部分（法線と視線がほぼ直角）を帯状に明るくする
+float3 ComputeToonRim(FToonHitRecord Rec, FToonRay Ray, float LightLevel)
+{
 	float RimStrength = ToonRimStrength * Rec.Material.RimStrength;
-
-	if (HighlightStrength > 0.0f)
+	if (RimStrength <= 0.0f)
 	{
-		float3 HalfVector = SafeNormalize(ToLightDirection + ToCamera, Rec.Normal);
-		float NdotH = dot(Rec.Normal, HalfVector);
-		float HighlightLevel = smoothstep(ToonHighlightThreshold - TOON_HIGHLIGHT_SOFTNESS, ToonHighlightThreshold + TOON_HIGHLIGHT_SOFTNESS, NdotH);
-		Color = lerp(Color, ToonLightColor, HighlightLevel * LightLevel * HighlightStrength);
+		return 0.0f;
 	}
 
-	// リムライト：カメラから見て輪郭に近い部分（法線と視線がほぼ直角）を帯状に明るくする
-	if (RimStrength > 0.0f)
+	float NdotV = saturate(dot(Rec.Normal, -Ray.Direction));
+	float Softness = max(ToonEdgeSoftness, 1.0e-4f);
+	float RimLevel = smoothstep(ToonRimThreshold - Softness, ToonRimThreshold + Softness, 1.0f - NdotV);
+	if (bToonRimLitSideOnly != 0)
 	{
-		float NdotV = saturate(dot(Rec.Normal, ToCamera));
-		float Softness = max(ToonEdgeSoftness, 1.0e-4f);
-		float RimLevel = smoothstep(ToonRimThreshold - Softness, ToonRimThreshold + Softness, 1.0f - NdotV);
-		if (bToonRimLitSideOnly != 0)
-		{
-			RimLevel *= LightLevel;
-		}
-		Color += ToonLightColor * RimLevel * RimStrength;
+		RimLevel *= LightLevel;
 	}
+	return ToonLightColor * RimLevel * RimStrength;
+}
 
-	// トゥーン T6：アウトライン（陰影やハイライトの上に描く）
-	if (bToonOutline != 0)
-	{
-		Color = lerp(Color, ToonOutlineColor, ToonOutline(UV, Ray, Rec));
-	}
+// トゥーン T2〜T5：普通の素材（金属・ガラス以外）の色
+// 明るい面は「素材の色 × ライトの色」、影の面は「素材の色 × 影色」で塗り、ハイライトとリムライトを乗せる
+float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
+{
+	float3 Albedo = Rec.Material.Albedo;
+	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
+	float3 ShadowTint = Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : ToonShadowColor;
 
+	float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal);
+	float3 Color = lerp(Albedo * ShadowTint, Albedo * ToonLightColor, LightLevel);
+	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
+	Color += ComputeToonRim(Rec, Ray, LightLevel);
 	return Color;
+}
+
+// トゥーン T7：反射・屈折を追いかけるための「レイの順番待ちリスト」の1件
+struct FToonPendingRay
+{
+	FToonRay Ray;
+	float3 Throughput;	// このレイが最終的な色に寄与する割合
+	uint Depth;			// ここまでに反射・屈折した回数
+};
+
+// レイの順番待ちリストの容量（ガラスでは1本が反射と屈折の2本に分かれるため）
+#define TOON_MAX_PENDING_RAYS 8
+
+// 寄与がこれより小さいレイは追いかけない
+#define TOON_MIN_THROUGHPUT 0.01f
+
+// トゥーン T2〜T7：トゥーンシェーディング
+// 金属やガラスに当たったら、反射・屈折の先も同じトゥーンの陰影で描く（様式化された反射）
+// ノイズを出さないため、金属のぼけは使わずくっきりした鏡面反射にし、ガラスは反射と屈折をフレネル反射率で混ぜる
+// GBuffer の滑らかな法線とアウトラインは、カメラから直接見えている面にだけ使う
+float3 RayColorToon(float2 UV, FToonRay CameraRay)
+{
+	FToonPendingRay Pending[TOON_MAX_PENDING_RAYS];
+	uint NumPending = 1;
+	Pending[0].Ray = CameraRay;
+	Pending[0].Throughput = 1.0f;
+	Pending[0].Depth = 0;
+
+	float3 Color = 0.0f;
+	float Outline = 0.0f;
+
+	// 1本のレイから最大2本に分かれるため、処理するレイの総数にも上限を設ける
+	for (uint Step = 0; Step < TOON_MAX_PENDING_RAYS * 2 && NumPending > 0; ++Step)
+	{
+		--NumPending;
+		FToonPendingRay Current = Pending[NumPending];
+		bool bCameraRay = Current.Depth == 0;
+
+		FToonHitRecord Rec = (FToonHitRecord)0;
+		if (!HitAnything(Current.Ray, bCameraRay ? 0.0f : TOON_RAY_TMIN, Rec))
+		{
+			Color += Current.Throughput * SkyColor(Current.Ray);
+			continue;
+		}
+
+		// GBuffer の滑らかな法線に置き換える前の、実際の三角形（または球）の向き
+		float3 GeometricNormal = Rec.Normal;
+		if (bCameraRay)
+		{
+			ApplyGBufferNormal(UV, Current.Ray, Rec);
+
+			// トゥーン T6：アウトライン（最後に、陰影や映り込みの上に描く）
+			if (bToonOutline != 0)
+			{
+				Outline = ToonOutline(UV, Current.Ray, Rec);
+			}
+		}
+
+		bool bReflective = Rec.Material.Type == TOON_MATERIAL_METAL || Rec.Material.Type == TOON_MATERIAL_DIELECTRIC;
+		if (!bReflective || Current.Depth >= ToonReflectionDepth)
+		{
+			// 普通の素材か、反射回数の上限に達した場合は、その場で塗って終わる（黒にはしない）
+			Color += Current.Throughput * ShadeToonOpaque(Rec, Current.Ray, GeometricNormal);
+			continue;
+		}
+
+		// 金属・ガラスの表面にも、ハイライトとリムライトを乗せる
+		float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal);
+		Color += Current.Throughput * (ToonLightColor * ComputeToonHighlight(Rec, Current.Ray, LightLevel) + ComputeToonRim(Rec, Current.Ray, LightLevel));
+
+		float3 ReflectDirection = reflect(Current.Ray.Direction, Rec.Normal);
+		float3 ReflectThroughput;
+		float3 RefractThroughput = 0.0f;
+		float3 RefractDirection = 0.0f;
+
+		if (Rec.Material.Type == TOON_MATERIAL_METAL)
+		{
+			// 金属：くっきりした鏡面反射に、素材の色を掛ける
+			ReflectThroughput = Current.Throughput * Rec.Material.Albedo;
+		}
+		else
+		{
+			// ガラス：反射と屈折の両方を、フレネル反射率の割合で追いかける（全反射なら反射だけ）
+			float Ri = Rec.bFrontFace ? (1.0f / Rec.Material.RefractionIndex) : Rec.Material.RefractionIndex;
+			float CosTheta = min(dot(-Current.Ray.Direction, Rec.Normal), 1.0f);
+			float SinTheta = sqrt(max(0.0f, 1.0f - CosTheta * CosTheta));
+			bool bCannotRefract = Ri * SinTheta > 1.0f;
+			float ReflectRatio = bCannotRefract ? 1.0f : Reflectance(CosTheta, Ri);
+
+			ReflectThroughput = Current.Throughput * ReflectRatio;
+			RefractThroughput = Current.Throughput * (1.0f - ReflectRatio);
+			RefractDirection = refract(Current.Ray.Direction, Rec.Normal, Ri);
+		}
+
+		// 屈折を先に積み、反射を後に積む（後に積んだものから処理される）
+		// リストが一杯のときは追加しない（寄与の小さい枝が省略される）
+		if (dot(RefractThroughput, RefractThroughput) > TOON_MIN_THROUGHPUT * TOON_MIN_THROUGHPUT && NumPending < TOON_MAX_PENDING_RAYS)
+		{
+			Pending[NumPending].Ray.Origin = Rec.Position;
+			Pending[NumPending].Ray.Direction = SafeNormalize(RefractDirection, ReflectDirection);
+			Pending[NumPending].Throughput = RefractThroughput;
+			Pending[NumPending].Depth = Current.Depth + 1;
+			++NumPending;
+		}
+		if (dot(ReflectThroughput, ReflectThroughput) > TOON_MIN_THROUGHPUT * TOON_MIN_THROUGHPUT && NumPending < TOON_MAX_PENDING_RAYS)
+		{
+			Pending[NumPending].Ray.Origin = Rec.Position;
+			Pending[NumPending].Ray.Direction = SafeNormalize(ReflectDirection, Rec.Normal);
+			Pending[NumPending].Throughput = ReflectThroughput;
+			Pending[NumPending].Depth = Current.Depth + 1;
+			++NumPending;
+		}
+	}
+
+	return lerp(Color, ToonOutlineColor, Outline);
 }
 
 float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)

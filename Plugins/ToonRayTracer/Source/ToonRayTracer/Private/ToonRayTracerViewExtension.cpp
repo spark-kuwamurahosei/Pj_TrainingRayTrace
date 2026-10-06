@@ -155,6 +155,13 @@ namespace
 
 	const FLinearColor DefaultToonOutlineColor(0.02f, 0.02f, 0.04f);
 
+	// トゥーン T7：様式化された反射
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonReflectionDepth(
+		TEXT("r.ToonRayTracer.Toon.ReflectionDepth"),
+		4,
+		TEXT("Maximum number of reflections / refractions followed on metal and glass in toon shading (0 shades them as plain materials)"),
+		ECVF_RenderThreadSafe);
+
 	// "R,G,B" 形式の文字列を色に変換する（読めなければ Default を返す）
 	FLinearColor ParseLinearColor(const FString& Text, const FLinearColor& Default)
 	{
@@ -391,6 +398,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const float ToonOutlineWidth = FMath::Max(CVarToonRayTracerToonOutlineWidth.GetValueOnRenderThread(), 0.0f);
 	const float ToonOutlineThreshold = FMath::Max(CVarToonRayTracerToonOutlineThreshold.GetValueOnRenderThread(), 0.0f);
 	const FLinearColor ToonOutlineColor = ToonOutlineColor_RenderThread;
+	const uint32 ToonReflectionDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonReflectionDepth.GetValueOnRenderThread(), 0, 16));
 
 	// ライトの向きや色、トゥーンの設定が変わったときも蓄積をリセットする
 	const FToonDirectionalLight& DirectionalLight = DirectionalLight_RenderThread;
@@ -404,7 +412,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
 	const uint32 ToonOutlineHash = HashCombine(
 		HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)),
-		HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)));
+		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
 		GetTypeHash(bUseGBufferNormal)), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash));
@@ -506,6 +514,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->bToonOutline = bToonOutline ? 1u : 0u;
 	PassParameters->ToonOutlineWidth = ToonOutlineWidth;
 	PassParameters->ToonOutlineThreshold = ToonOutlineThreshold;
+	PassParameters->ToonReflectionDepth = ToonReflectionDepth;
 	PassParameters->ToonOutlineColor = FVector3f(ToonOutlineColor.R, ToonOutlineColor.G, ToonOutlineColor.B);
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
 	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);

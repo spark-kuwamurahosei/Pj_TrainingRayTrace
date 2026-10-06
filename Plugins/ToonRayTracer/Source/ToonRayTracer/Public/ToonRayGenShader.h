@@ -80,6 +80,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonOutlineWidth)
 		SHADER_PARAMETER(float, ToonOutlineThreshold)
 		SHADER_PARAMETER(FVector3f, ToonOutlineColor)
+		// トゥーン T7：金属・ガラスで反射・屈折を追いかける回数の上限
+		SHADER_PARAMETER(uint32, ToonReflectionDepth)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 	END_SHADER_PARAMETER_STRUCT()
