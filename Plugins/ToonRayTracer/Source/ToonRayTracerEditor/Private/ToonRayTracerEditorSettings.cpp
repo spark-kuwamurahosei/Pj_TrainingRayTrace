@@ -100,6 +100,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	TraceMode = EToonRayTracerTraceMode::Scene;
 	SamplesPerPixel = 4;
 	bUseGBufferNormal = true;
+	bUseGBufferBaseColor = true;
 	bAccumulate = true;
 	MaxAccumulatedFrames = 1024;
 	MaxDepth = 10;
@@ -134,6 +135,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetInt(TEXT("r.ToonRayTracer.TraceMode"), static_cast<int32>(TraceMode));
 	SetInt(TEXT("r.ToonRayTracer.SamplesPerPixel"), SamplesPerPixel);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferNormal"), bUseGBufferNormal);
+	SetBool(TEXT("r.ToonRayTracer.UseGBufferBaseColor"), bUseGBufferBaseColor);
 	SetBool(TEXT("r.ToonRayTracer.Accumulate"), bAccumulate);
 	SetInt(TEXT("r.ToonRayTracer.MaxAccumulatedFrames"), MaxAccumulatedFrames);
 	SetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
@@ -168,6 +170,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetEnum(TEXT("r.ToonRayTracer.TraceMode"), TraceMode);
 	GetInt(TEXT("r.ToonRayTracer.SamplesPerPixel"), SamplesPerPixel);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferNormal"), bUseGBufferNormal);
+	GetBool(TEXT("r.ToonRayTracer.UseGBufferBaseColor"), bUseGBufferBaseColor);
 	GetBool(TEXT("r.ToonRayTracer.Accumulate"), bAccumulate);
 	GetInt(TEXT("r.ToonRayTracer.MaxAccumulatedFrames"), MaxAccumulatedFrames);
 	GetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);

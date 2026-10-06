@@ -181,6 +181,13 @@ namespace
 		TEXT("Use smooth normals from the GBuffer for the first hit of camera rays (0: off, 1: on)"),
 		ECVF_RenderThreadSafe);
 
+	// 汎用化 G1：UE のマテリアルの色（GBuffer のベースカラー）を素材の色として使う
+	TAutoConsoleVariable<int32> CVarToonRayTracerUseGBufferBaseColor(
+		TEXT("r.ToonRayTracer.UseGBufferBaseColor"),
+		1,
+		TEXT("Use the material base color from the GBuffer for the first hit of camera rays on meshes without a material set in Custom Primitive Data (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerAccumulate(
 		TEXT("r.ToonRayTracer.Accumulate"),
 		1,
@@ -372,11 +379,13 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const uint32 MaxDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerMaxDepth.GetValueOnRenderThread(), 1, 50));
 	const bool bAccumulate = CVarToonRayTracerAccumulate.GetValueOnRenderThread() != 0;
 
-	// 通常描画の GBuffer（法線と深度）。取得できない場合（モバイルなど）は使わない
+	// 通常描画の GBuffer（法線、ベースカラー、深度）。取得できない場合（モバイルなど）は使わない
 	const FSceneTextureUniformParameters* SceneTextureParameters =
 		Inputs.SceneTextures.SceneTextures ? Inputs.SceneTextures.SceneTextures->GetParameters().GetContents() : nullptr;
-	const bool bUseGBufferNormal = CVarToonRayTracerUseGBufferNormal.GetValueOnRenderThread() != 0
-		&& SceneTextureParameters && SceneTextureParameters->GBufferATexture && SceneTextureParameters->SceneDepthTexture;
+	const bool bHasGBuffer = SceneTextureParameters && SceneTextureParameters->GBufferATexture
+		&& SceneTextureParameters->GBufferCTexture && SceneTextureParameters->SceneDepthTexture;
+	const bool bUseGBufferNormal = bHasGBuffer && CVarToonRayTracerUseGBufferNormal.GetValueOnRenderThread() != 0;
+	const bool bUseGBufferBaseColor = bHasGBuffer && CVarToonRayTracerUseGBufferBaseColor.GetValueOnRenderThread() != 0;
 	const uint32 MaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
 	const FIntPoint ViewRectSize = Output.ViewRect.Size();
 
@@ -424,7 +433,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		GetTypeHash(bUseGBufferNormal)), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
+		HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
 		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
@@ -488,11 +497,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
 	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : 0;
 	PassParameters->TLAS = TLAS;
-	if (bUseGBufferNormal)
+	if (bUseGBufferNormal || bUseGBufferBaseColor)
 	{
 		// GBuffer は描画解像度で作られるため、アップスケール前の描画範囲を渡す
 		const FIntRect GBufferViewRect = UE::FXRenderingUtils::GetRawViewRectUnsafe(View);
 		PassParameters->GBufferATexture = SceneTextureParameters->GBufferATexture;
+		PassParameters->GBufferCTexture = SceneTextureParameters->GBufferCTexture;
 		PassParameters->SceneDepthTexture = SceneTextureParameters->SceneDepthTexture;
 		PassParameters->GBufferViewRectMin = GBufferViewRect.Min;
 		PassParameters->GBufferViewRectSize = GBufferViewRect.Size();
@@ -500,11 +510,13 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	else
 	{
 		PassParameters->GBufferATexture = GSystemTextures.GetBlackDummy(GraphBuilder);
+		PassParameters->GBufferCTexture = GSystemTextures.GetBlackDummy(GraphBuilder);
 		PassParameters->SceneDepthTexture = GSystemTextures.GetDepthDummy(GraphBuilder);
 		PassParameters->GBufferViewRectMin = FIntPoint::ZeroValue;
 		PassParameters->GBufferViewRectSize = FIntPoint(1, 1);
 	}
 	PassParameters->bUseGBufferNormal = bUseGBufferNormal ? 1u : 0u;
+	PassParameters->bUseGBufferBaseColor = bUseGBufferBaseColor ? 1u : 0u;
 	PassParameters->ToLightDirection = DirectionalLight.ToLightDirection;
 	PassParameters->LightColor = FVector3f(DirectionalLight.Color.R, DirectionalLight.Color.G, DirectionalLight.Color.B);
 	PassParameters->bHasDirectionalLight = DirectionalLight.bValid ? 1u : 0u;

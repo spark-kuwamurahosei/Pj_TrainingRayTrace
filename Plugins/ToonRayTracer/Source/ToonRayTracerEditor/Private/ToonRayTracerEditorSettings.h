@@ -54,6 +54,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "滑らかな法線を使う"))
 	bool bUseGBufferNormal;
 
+	/** マテリアルを Custom Primitive Data で指定していないメッシュに、UE のマテリアルの色（GBuffer のベースカラー）を使う */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "マテリアルの色を使う"))
+	bool bUseGBufferBaseColor;
+
 	/** カメラが静止している間、フレームをまたいで結果を平均する */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "フレーム間で蓄積する"))
 	bool bAccumulate;

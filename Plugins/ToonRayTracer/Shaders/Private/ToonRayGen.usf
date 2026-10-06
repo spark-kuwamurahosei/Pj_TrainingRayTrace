@@ -38,14 +38,17 @@ float4x4 ClipToTranslatedWorld;
 int2 ViewRectMin;
 int2 ViewRectSize;
 
-// カメラから最初に当たった面の法線を、通常描画の GBuffer から読むためのテクスチャ
+// カメラから最初に当たった面の法線とベースカラーを、通常描画の GBuffer から読むためのテクスチャ
 Texture2D GBufferATexture;
+Texture2D GBufferCTexture;
 Texture2D SceneDepthTexture;
 // GBuffer 内の描画範囲（描画解像度）
 int2 GBufferViewRectMin;
 int2 GBufferViewRectSize;
 // 1 なら GBuffer の法線を使う
 uint bUseGBufferNormal;
+// 1 なら、マテリアル未指定のメッシュの色に GBuffer のベースカラーを使う
+uint bUseGBufferBaseColor;
 
 // Directional Light（光源へ向かう方向、色）。bHasDirectionalLight が 0 ならライトなし
 float3 ToLightDirection;
@@ -460,12 +463,16 @@ bool HitAnything(FToonRay Ray, float TMin, inout FToonHitRecord Rec)
 #define TOON_GBUFFER_MATCH_MIN_DISTANCE 1.0f		// cm
 #define TOON_GBUFFER_MATCH_RELATIVE_DISTANCE 0.01f	// ヒットまでの距離に対する割合
 
-// フェーズ10：カメラから最初に当たった面の法線を、通常描画の GBuffer の法線（頂点法線の補間＋法線マップ）に置き換える
-// レイトレーシング用のメッシュデータには頂点の位置しかないため、滑らかな法線は GBuffer から得る
-// 同じ面に当たっているかを深度で確かめ、違う場合は置き換えない（補助レイで求めた面の法線のまま）
-void ApplyGBufferNormal(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
+// カメラから最初に当たった面の情報を、通常描画の GBuffer の値に置き換える
+// ・フェーズ10：法線を GBuffer の法線（頂点法線の補間＋法線マップ）にする
+//   レイトレーシング用のメッシュデータには頂点の位置しかないため、滑らかな法線は GBuffer から得る
+// ・汎用化 G1：Custom Primitive Data でマテリアルを指定していないメッシュは、素材の色を GBuffer のベースカラー
+//   （UE のマテリアルのテクスチャの色）にする。メッシュごとの設定なしで、UE のマテリアルの色がトゥーンの塗りに使われる
+// 同じ面に当たっているかを深度で確かめ、違う場合は置き換えない（補助レイで求めた面の法線、Custom Primitive Data の色のまま）
+void ApplyGBufferSurface(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
 {
-	if (bUseGBufferNormal == 0 || TraceMode == 0)
+	bool bApplyBaseColor = bUseGBufferBaseColor != 0 && Rec.Material.Type == TOON_MATERIAL_DEFAULT;
+	if ((bUseGBufferNormal == 0 && !bApplyBaseColor) || TraceMode == 0)
 	{
 		return;
 	}
@@ -484,6 +491,18 @@ void ApplyGBufferNormal(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
 	float3 GBufferPosition = GBufferClipPosition.xyz / GBufferClipPosition.w;
 	float Tolerance = max(TOON_GBUFFER_MATCH_MIN_DISTANCE, Rec.T * TOON_GBUFFER_MATCH_RELATIVE_DISTANCE);
 	if (distance(GBufferPosition, Rec.Position) > Tolerance)
+	{
+		return;
+	}
+
+	// GBufferC の rgb にはベースカラーが入っている（DeferredShadingCommon の DecodeBaseColor）
+	// sRGB のレンダーターゲットなので、読み出した時点で線形の色になっている
+	if (bApplyBaseColor)
+	{
+		Rec.Material.Albedo = GBufferCTexture.Load(int3(GBufferPixel, 0)).rgb;
+	}
+
+	if (bUseGBufferNormal == 0)
 	{
 		return;
 	}
@@ -524,7 +543,7 @@ float3 RayColorNormal(float2 UV, FToonRay Ray)
 	FToonHitRecord Rec = (FToonHitRecord)0;
 	if (HitAnything(Ray, 0.0f, Rec))
 	{
-		ApplyGBufferNormal(UV, Ray, Rec);
+		ApplyGBufferSurface(UV, Ray, Rec);
 		// 法線（-1 ～ 1）を色（0 ～ 1）に変換
 		return 0.5f * (Rec.Normal + 1.0f);
 	}
@@ -621,7 +640,7 @@ float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 		// カメラから最初に当たった面だけ、GBuffer の滑らかな法線を使う
 		if (Depth == 0)
 		{
-			ApplyGBufferNormal(UV, Ray, Rec);
+			ApplyGBufferSurface(UV, Ray, Rec);
 		}
 
 		float3 ScatterAttenuation;
@@ -651,7 +670,7 @@ float3 RayColorDirectLight(float2 UV, FToonRay Ray)
 	{
 		return SkyColor(Ray);
 	}
-	ApplyGBufferNormal(UV, Ray, Rec);
+	ApplyGBufferSurface(UV, Ray, Rec);
 
 	float3 Albedo = Rec.Material.Albedo;
 	float3 Ambient = TOON_AMBIENT_STRENGTH * SkyColor(Ray);
@@ -751,7 +770,7 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 		{
 			return 1.0f;
 		}
-		ApplyGBufferNormal(NeighborUV, NeighborRay, NeighborRec);
+		ApplyGBufferSurface(NeighborUV, NeighborRay, NeighborRec);
 
 		// 補助レイをずらした量を、中心のヒット位置での距離（cm）に換算したもの
 		float OffsetDistance = max(Rec.T * length(NeighborRay.Direction - Ray.Direction), 1.0e-3f);
@@ -915,7 +934,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 		float3 GeometricNormal = Rec.Normal;
 		if (bCameraRay)
 		{
-			ApplyGBufferNormal(UV, Current.Ray, Rec);
+			ApplyGBufferSurface(UV, Current.Ray, Rec);
 
 			// トゥーン T6：アウトライン（最後に、陰影や映り込みの上に描く）
 			if (bToonOutline != 0)
