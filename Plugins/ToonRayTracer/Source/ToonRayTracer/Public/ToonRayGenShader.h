@@ -43,7 +43,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(FIntPoint, ViewRectSize)
 		// 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 		SHADER_PARAMETER_ARRAY(FVector4f, Spheres, [MaxSpheres])
-		// 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率）と反射率（rgb）
+		// 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率, w: トゥーンのハイライトとリムライトの強さ）と反射率（rgb）
 		SHADER_PARAMETER_ARRAY(FVector4f, SphereMaterialParams, [MaxSpheres])
 		SHADER_PARAMETER_ARRAY(FVector4f, SphereAlbedo, [MaxSpheres])
 		SHADER_PARAMETER(uint32, NumSpheres)
@@ -69,6 +69,12 @@ class FToonRayGenShader : public FGlobalShader
 		// トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
 		SHADER_PARAMETER(uint32, bToonCastShadows)
 		SHADER_PARAMETER(float, ToonShadowBias)
+		// トゥーン T5：ハイライト（NdotH のしきい値、強さ）とリムライト（1 - NdotV のしきい値、強さ、光が当たる側だけか）
+		SHADER_PARAMETER(float, ToonHighlightThreshold)
+		SHADER_PARAMETER(float, ToonHighlightStrength)
+		SHADER_PARAMETER(float, ToonRimThreshold)
+		SHADER_PARAMETER(float, ToonRimStrength)
+		SHADER_PARAMETER(uint32, bToonRimLitSideOnly)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 	END_SHADER_PARAMETER_STRUCT()

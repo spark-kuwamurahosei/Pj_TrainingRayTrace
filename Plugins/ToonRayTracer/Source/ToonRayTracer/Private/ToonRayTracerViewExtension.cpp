@@ -96,6 +96,37 @@ namespace
 		TEXT("Offset (cm) of the shadow ray origin along the geometric normal, to avoid self-shadowing artifacts"),
 		ECVF_RenderThreadSafe);
 
+	// トゥーン T5：ハイライトとリムライト
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHighlightThreshold(
+		TEXT("r.ToonRayTracer.Toon.HighlightThreshold"),
+		0.97f,
+		TEXT("N dot H threshold for the toon highlight. Closer to 1 makes the highlight smaller"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHighlightStrength(
+		TEXT("r.ToonRayTracer.Toon.HighlightStrength"),
+		1.0f,
+		TEXT("Strength (0-1) of the toon highlight. 0 disables it"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonRimThreshold(
+		TEXT("r.ToonRayTracer.Toon.RimThreshold"),
+		0.7f,
+		TEXT("(1 - N dot V) threshold for the rim light. Closer to 1 makes the rim thinner"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonRimStrength(
+		TEXT("r.ToonRayTracer.Toon.RimStrength"),
+		0.3f,
+		TEXT("Strength of the rim light (added light). 0 disables it"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonRimLitSideOnly(
+		TEXT("r.ToonRayTracer.Toon.RimLitSideOnly"),
+		1,
+		TEXT("Show the rim light only on the lit side (0: everywhere, 1: lit side only)"),
+		ECVF_RenderThreadSafe);
+
 	// "R,G,B" 形式の文字列を色に変換する（読めなければ Default を返す）
 	FLinearColor ParseLinearColor(const FString& Text, const FLinearColor& Default)
 	{
@@ -321,6 +352,11 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const float ToonLightScale = FMath::Max(CVarToonRayTracerToonLightScale.GetValueOnRenderThread(), 0.0f);
 	const bool bToonCastShadows = CVarToonRayTracerToonCastShadows.GetValueOnRenderThread() != 0;
 	const float ToonShadowBias = FMath::Max(CVarToonRayTracerToonShadowBias.GetValueOnRenderThread(), 0.0f);
+	const float ToonHighlightThreshold = CVarToonRayTracerToonHighlightThreshold.GetValueOnRenderThread();
+	const float ToonHighlightStrength = FMath::Clamp(CVarToonRayTracerToonHighlightStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonRimThreshold = CVarToonRayTracerToonRimThreshold.GetValueOnRenderThread();
+	const float ToonRimStrength = FMath::Max(CVarToonRayTracerToonRimStrength.GetValueOnRenderThread(), 0.0f);
+	const bool bToonRimLitSideOnly = CVarToonRayTracerToonRimLitSideOnly.GetValueOnRenderThread() != 0;
 
 	// ライトの向きや色、トゥーンの設定が変わったときも蓄積をリセットする
 	const FToonDirectionalLight& DirectionalLight = DirectionalLight_RenderThread;
@@ -329,9 +365,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const uint32 ToonHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(ToonBands), GetTypeHash(ToonShadowThreshold)), HashCombine(GetTypeHash(ToonLitThreshold), GetTypeHash(ToonEdgeSoftness))),
 		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), GetTypeHash(ToonLightScale)), HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias))));
+	const uint32 ToonHighlightHash = HashCombine(
+		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
+		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		GetTypeHash(bUseGBufferNormal)), LightHash), ToonHash);
+		GetTypeHash(bUseGBufferNormal)), LightHash), HashCombine(ToonHash, ToonHighlightHash));
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
 	{
@@ -422,6 +461,11 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->ToonLightColor = PassParameters->LightColor * ToonLightScale;
 	PassParameters->bToonCastShadows = bToonCastShadows ? 1u : 0u;
 	PassParameters->ToonShadowBias = ToonShadowBias;
+	PassParameters->ToonHighlightThreshold = ToonHighlightThreshold;
+	PassParameters->ToonHighlightStrength = ToonHighlightStrength;
+	PassParameters->ToonRimThreshold = ToonRimThreshold;
+	PassParameters->ToonRimStrength = ToonRimStrength;
+	PassParameters->bToonRimLitSideOnly = bToonRimLitSideOnly ? 1u : 0u;
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
 	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);
 	PassParameters->Scene = UE::FXRenderingUtils::GetSceneUniformBuffer(GraphBuilder, SceneUniformBuffer);
@@ -451,7 +495,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		const FToonSphere& Sphere = GToonSpheres[Index];
 		const FVector TranslatedCenter = Sphere.Center + PreViewTranslation;
 		PassParameters->Spheres[Index] = FVector4f(FVector3f(TranslatedCenter), static_cast<float>(Sphere.Radius));
-		PassParameters->SphereMaterialParams[Index] = FVector4f(static_cast<float>(Sphere.Material), Sphere.Fuzz, Sphere.RefractionIndex, 0.0f);
+		// w：トゥーンのハイライトとリムライトの強さ。平らに近い地面（巨大な球）には出さない
+		const float ToonAccentStrength = Index == 0 ? 0.0f : 1.0f;
+		PassParameters->SphereMaterialParams[Index] = FVector4f(static_cast<float>(Sphere.Material), Sphere.Fuzz, Sphere.RefractionIndex, ToonAccentStrength);
 		PassParameters->SphereAlbedo[Index] = FVector4f(Sphere.Albedo.R, Sphere.Albedo.G, Sphere.Albedo.B, 0.0f);
 	}
 	PassParameters->NumSpheres = UE_ARRAY_COUNT(GToonSpheres);

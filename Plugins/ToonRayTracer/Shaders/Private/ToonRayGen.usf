@@ -62,10 +62,19 @@ float3 ToonLightColor;
 // トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
 uint bToonCastShadows;
 float ToonShadowBias;
+// トゥーン T5：ハイライト（NdotH のしきい値、強さ）とリムライト（1 - NdotV のしきい値、強さ、光が当たる側だけか）
+float ToonHighlightThreshold;
+float ToonHighlightStrength;
+float ToonRimThreshold;
+float ToonRimStrength;
+uint bToonRimLitSideOnly;
+
+// ハイライトの境目のぼかし幅（NdotH は 1 付近で変化が小さいため、陰影の境目より狭くする）
+#define TOON_HIGHLIGHT_SOFTNESS 0.005f
 
 // 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 float4 Spheres[TOON_MAX_SPHERES];
-// 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率）と反射率（rgb）
+// 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率, w: トゥーンのハイライトとリムライトの強さ）と反射率（rgb）
 float4 SphereMaterialParams[TOON_MAX_SPHERES];
 float4 SphereAlbedo[TOON_MAX_SPHERES];
 uint NumSpheres;
@@ -86,6 +95,9 @@ struct FToonMaterial
 	// トゥーン T4：メッシュごとの影色（bHasShadowColor が 0 なら全体の影色を使う）
 	float3 ShadowColor;
 	uint bHasShadowColor;
+	// トゥーン T5：メッシュごとのハイライトとリムライトの強さ（0 なら出さない）
+	float HighlightStrength;
+	float RimStrength;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -98,6 +110,8 @@ FToonMaterial GetDefaultMaterial()
 	Material.RefractionIndex = 1.0f;
 	Material.ShadowColor = 0.0f;
 	Material.bHasShadowColor = 0;
+	Material.HighlightStrength = 0.0f;
+	Material.RimStrength = 0.0f;
 	return Material;
 }
 
@@ -113,6 +127,8 @@ float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
 //   [4]: 金属のぼけ具合（0 ～ 1）
 //   [5]: 誘電体の屈折率（未設定や 0 以下ならガラスの 1.5）
 //   [6][7][8]: トゥーンの影色 RGB（すべて 0 なら全体の影色 r.ToonRayTracer.Toon.ShadowColor を使う）
+//   [9]: トゥーンのハイライトの強さ（0 ～ 1。未設定なら出さない）
+//   [10]: トゥーンのリムライトの強さ（未設定なら出さない）
 FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 {
 	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
@@ -144,6 +160,10 @@ FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 		Material.ShadowColor = ShadowColor;
 		Material.bHasShadowColor = 1;
 	}
+
+	// ハイライトとリムライトは、平らな床や壁に出ると不自然なため、設定したメッシュにだけ出す
+	Material.HighlightStrength = saturate(GetCustomPrimitiveDataFloat(PrimitiveData, 9));
+	Material.RimStrength = max(GetCustomPrimitiveDataFloat(PrimitiveData, 10), 0.0f);
 
 	return Material;
 }
@@ -267,6 +287,9 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 			Rec.Material.Albedo = SphereAlbedo[Index].rgb;
 			Rec.Material.Fuzz = SphereMaterialParams[Index].y;
 			Rec.Material.RefractionIndex = SphereMaterialParams[Index].z;
+			// w：トゥーンのハイライトとリムライトの強さ（地面は 0）
+			Rec.Material.HighlightStrength = SphereMaterialParams[Index].w;
+			Rec.Material.RimStrength = SphereMaterialParams[Index].w;
 		}
 	}
 
@@ -723,7 +746,39 @@ float3 RayColorToon(float2 UV, FToonRay Ray)
 		}
 	}
 
-	return lerp(ShadowColor, LitColor, LightLevel);
+	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
+
+	// トゥーン T5：ハイライトとリムライト
+	float3 ToCamera = -Ray.Direction;
+
+	// ハイライト：光源とカメラの中間の向き（ハーフベクトル）に法線が近い部分を、ライトの色でくっきり塗る
+	// LightLevel を掛けるので、影の面やシャドウレイで遮られた部分には出ない
+	// 全体の強さ（コンソール変数）× メッシュごとの強さ（Custom Primitive Data）
+	float HighlightStrength = saturate(ToonHighlightStrength * Rec.Material.HighlightStrength);
+	float RimStrength = ToonRimStrength * Rec.Material.RimStrength;
+
+	if (HighlightStrength > 0.0f)
+	{
+		float3 HalfVector = SafeNormalize(ToLightDirection + ToCamera, Rec.Normal);
+		float NdotH = dot(Rec.Normal, HalfVector);
+		float HighlightLevel = smoothstep(ToonHighlightThreshold - TOON_HIGHLIGHT_SOFTNESS, ToonHighlightThreshold + TOON_HIGHLIGHT_SOFTNESS, NdotH);
+		Color = lerp(Color, ToonLightColor, HighlightLevel * LightLevel * HighlightStrength);
+	}
+
+	// リムライト：カメラから見て輪郭に近い部分（法線と視線がほぼ直角）を帯状に明るくする
+	if (RimStrength > 0.0f)
+	{
+		float NdotV = saturate(dot(Rec.Normal, ToCamera));
+		float Softness = max(ToonEdgeSoftness, 1.0e-4f);
+		float RimLevel = smoothstep(ToonRimThreshold - Softness, ToonRimThreshold + Softness, 1.0f - NdotV);
+		if (bToonRimLitSideOnly != 0)
+		{
+			RimLevel *= LightLevel;
+		}
+		Color += ToonLightColor * RimLevel * RimStrength;
+	}
+
+	return Color;
 }
 
 float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
