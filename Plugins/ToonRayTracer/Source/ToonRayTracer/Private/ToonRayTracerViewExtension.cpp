@@ -7,6 +7,7 @@
 #include "RHI.h"
 #include "RHICommandList.h"
 #include "FXRenderingUtils.h"
+#include "SystemTextures.h"
 
 namespace
 {
@@ -35,6 +36,12 @@ namespace
 		TEXT("r.ToonRayTracer.MaxDepth"),
 		10,
 		TEXT("Maximum number of ray bounces (1-50)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerUseGBufferNormal(
+		TEXT("r.ToonRayTracer.UseGBufferNormal"),
+		1,
+		TEXT("Use smooth normals from the GBuffer for the first hit of camera rays (0: off, 1: on)"),
 		ECVF_RenderThreadSafe);
 
 	TAutoConsoleVariable<int32> CVarToonRayTracerAccumulate(
@@ -160,6 +167,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const uint32 ShadingMode = static_cast<uint32>(CVarToonRayTracerShadingMode.GetValueOnRenderThread());
 	const uint32 MaxDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerMaxDepth.GetValueOnRenderThread(), 1, 50));
 	const bool bAccumulate = CVarToonRayTracerAccumulate.GetValueOnRenderThread() != 0;
+
+	// 通常描画の GBuffer（法線と深度）。取得できない場合（モバイルなど）は使わない
+	const FSceneTextureUniformParameters* SceneTextureParameters =
+		Inputs.SceneTextures.SceneTextures ? Inputs.SceneTextures.SceneTextures->GetParameters().GetContents() : nullptr;
+	const bool bUseGBufferNormal = CVarToonRayTracerUseGBufferNormal.GetValueOnRenderThread() != 0
+		&& SceneTextureParameters && SceneTextureParameters->GBufferATexture && SceneTextureParameters->SceneDepthTexture;
 	const uint32 MaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
 	const FIntPoint ViewRectSize = Output.ViewRect.Size();
 
@@ -172,8 +185,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	// フレームをまたいだ蓄積（カメラか設定が変わったらリセット）
 	// ビューの状態を持たないビュー（サムネイル描画など）では蓄積しない
 	const uint32 FrameNumber = View.Family->FrameNumber;
-	const uint32 SettingsHash = HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)),
-		HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth)));
+	const uint32 SettingsHash = HashCombine(
+		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
+		GetTypeHash(bUseGBufferNormal));
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
 	{
@@ -236,6 +250,23 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
 	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : 0;
 	PassParameters->TLAS = TLAS;
+	if (bUseGBufferNormal)
+	{
+		// GBuffer は描画解像度で作られるため、アップスケール前の描画範囲を渡す
+		const FIntRect GBufferViewRect = UE::FXRenderingUtils::GetRawViewRectUnsafe(View);
+		PassParameters->GBufferATexture = SceneTextureParameters->GBufferATexture;
+		PassParameters->SceneDepthTexture = SceneTextureParameters->SceneDepthTexture;
+		PassParameters->GBufferViewRectMin = GBufferViewRect.Min;
+		PassParameters->GBufferViewRectSize = GBufferViewRect.Size();
+	}
+	else
+	{
+		PassParameters->GBufferATexture = GSystemTextures.GetBlackDummy(GraphBuilder);
+		PassParameters->SceneDepthTexture = GSystemTextures.GetDepthDummy(GraphBuilder);
+		PassParameters->GBufferViewRectMin = FIntPoint::ZeroValue;
+		PassParameters->GBufferViewRectSize = FIntPoint(1, 1);
+	}
+	PassParameters->bUseGBufferNormal = bUseGBufferNormal ? 1u : 0u;
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
 	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);
 	PassParameters->Scene = UE::FXRenderingUtils::GetSceneUniformBuffer(GraphBuilder, SceneUniformBuffer);

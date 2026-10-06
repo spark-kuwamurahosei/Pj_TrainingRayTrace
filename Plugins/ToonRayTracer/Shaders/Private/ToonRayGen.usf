@@ -38,6 +38,15 @@ float4x4 ClipToTranslatedWorld;
 int2 ViewRectMin;
 int2 ViewRectSize;
 
+// カメラから最初に当たった面の法線を、通常描画の GBuffer から読むためのテクスチャ
+Texture2D GBufferATexture;
+Texture2D SceneDepthTexture;
+// GBuffer 内の描画範囲（描画解像度）
+int2 GBufferViewRectMin;
+int2 GBufferViewRectSize;
+// 1 なら GBuffer の法線を使う
+uint bUseGBufferNormal;
+
 // 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 float4 Spheres[TOON_MAX_SPHERES];
 // 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率）と反射率（rgb）
@@ -134,11 +143,16 @@ struct FToonRay
 	}
 };
 
+// UV（左上原点、下向き+）→ NDC（中心原点、上向き+）
+float2 UVToNDC(float2 UV)
+{
+	return float2(UV.x * 2.0f - 1.0f, 1.0f - UV.y * 2.0f);
+}
+
 // UV座標からカメラのレイを生成する（Translated World 空間）
 FToonRay GenerateCameraRay(float2 UV)
 {
-	// UV（左上原点、下向き+）→ NDC（中心原点、上向き+）
-	float2 NDC = float2(UV.x * 2.0f - 1.0f, 1.0f - UV.y * 2.0f);
+	float2 NDC = UVToNDC(UV);
 
 	// UEは Reversed-Z のため z=1 がニアプレーン、z=0 がファープレーン
 	// エンジンの CreatePrimaryRay と同じく、2点からレイを作る（平行投影でも正しく動く）
@@ -363,6 +377,51 @@ bool HitAnything(FToonRay Ray, float TMin, inout FToonHitRecord Rec)
 	return HitScene(Ray, TMin, Rec);
 }
 
+// GBuffer の深度から復元した位置と、レイのヒット位置がどれだけずれていたら別の面とみなすか
+// （ラスタライズ用とレイトレーシング用でメッシュが異なる場合や、TAA のジッター分のずれを許容する）
+#define TOON_GBUFFER_MATCH_MIN_DISTANCE 1.0f		// cm
+#define TOON_GBUFFER_MATCH_RELATIVE_DISTANCE 0.01f	// ヒットまでの距離に対する割合
+
+// フェーズ10：カメラから最初に当たった面の法線を、通常描画の GBuffer の法線（頂点法線の補間＋法線マップ）に置き換える
+// レイトレーシング用のメッシュデータには頂点の位置しかないため、滑らかな法線は GBuffer から得る
+// 同じ面に当たっているかを深度で確かめ、違う場合は置き換えない（補助レイで求めた面の法線のまま）
+void ApplyGBufferNormal(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
+{
+	if (bUseGBufferNormal == 0 || TraceMode == 0)
+	{
+		return;
+	}
+
+	int2 GBufferPixel = GBufferViewRectMin + min((int2)(UV * (float2)GBufferViewRectSize), GBufferViewRectSize - 1);
+
+	// Reversed-Z のため 0 は無限遠（空など、何も描かれていない）
+	float DeviceZ = SceneDepthTexture.Load(int3(GBufferPixel, 0)).r;
+	if (DeviceZ <= 0.0f)
+	{
+		return;
+	}
+
+	// GBuffer の深度から Translated World 空間の位置を復元し、レイのヒット位置と比べる
+	float4 GBufferClipPosition = mul(float4(UVToNDC(UV), DeviceZ, 1.0f), ClipToTranslatedWorld);
+	float3 GBufferPosition = GBufferClipPosition.xyz / GBufferClipPosition.w;
+	float Tolerance = max(TOON_GBUFFER_MATCH_MIN_DISTANCE, Rec.T * TOON_GBUFFER_MATCH_RELATIVE_DISTANCE);
+	if (distance(GBufferPosition, Rec.Position) > Tolerance)
+	{
+		return;
+	}
+
+	// GBufferA の rgb にはワールド空間の法線が 0 ～ 1 に変換されて入っている（DeferredShadingCommon の DecodeNormal）
+	float3 Normal = GBufferATexture.Load(int3(GBufferPixel, 0)).rgb * 2.0f - 1.0f;
+	if (dot(Normal, Normal) < 1.0e-4f)
+	{
+		return;
+	}
+	Normal = normalize(Normal);
+
+	// 本の set_face_normal と同じく、法線はレイと逆向きに揃える（表裏の判定は HitKind のまま）
+	Rec.Normal = dot(Normal, Ray.Direction) < 0.0f ? Normal : -Normal;
+}
+
 // 空のグラデーション（本の第4章）
 float3 SkyColor(FToonRay Ray)
 {
@@ -382,11 +441,12 @@ float3 RandomUnitVector(inout uint RandomState)
 }
 
 // フェーズ3〜4：当たった面の法線を色として可視化する
-float3 RayColorNormal(FToonRay Ray)
+float3 RayColorNormal(float2 UV, FToonRay Ray)
 {
 	FToonHitRecord Rec = (FToonHitRecord)0;
 	if (HitAnything(Ray, 0.0f, Rec))
 	{
+		ApplyGBufferNormal(UV, Ray, Rec);
 		// 法線（-1 ～ 1）を色（0 ～ 1）に変換
 		return 0.5f * (Rec.Normal + 1.0f);
 	}
@@ -467,7 +527,7 @@ bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout u
 
 // フェーズ6〜8：マテリアルに応じてレイを反射させ、届いた光を求める（本の第9〜10章）
 // 本の ray_color は再帰だが、シェーダーでは再帰できないため、減衰率を掛け合わせるループで書く
-float3 RayColorMaterial(FToonRay Ray, inout uint RandomState)
+float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 {
 	float3 Attenuation = 1.0f;
 
@@ -478,6 +538,12 @@ float3 RayColorMaterial(FToonRay Ray, inout uint RandomState)
 		{
 			// どこにも当たらなければ空の色が、ここまでの減衰を受けて届く
 			return Attenuation * SkyColor(Ray);
+		}
+
+		// カメラから最初に当たった面だけ、GBuffer の滑らかな法線を使う
+		if (Depth == 0)
+		{
+			ApplyGBufferNormal(UV, Ray, Rec);
 		}
 
 		float3 ScatterAttenuation;
@@ -495,13 +561,13 @@ float3 RayColorMaterial(FToonRay Ray, inout uint RandomState)
 	return 0.0f;
 }
 
-float3 RayColor(FToonRay Ray, inout uint RandomState)
+float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
 {
 	if (ShadingMode == 0)
 	{
-		return RayColorNormal(Ray);
+		return RayColorNormal(UV, Ray);
 	}
-	return RayColorMaterial(Ray, RandomState);
+	return RayColorMaterial(UV, Ray, RandomState);
 }
 
 // レイトレーシングのエントリーポイント
@@ -533,7 +599,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			float2 UV = ((float2)LocalPixel + 0.5f + Offset) / (float2)ViewRectSize;
 
 			FToonRay Ray = GenerateCameraRay(UV);
-			float3 SampleColor = RayColor(Ray, RandomState);
+			float3 SampleColor = RayColor(UV, Ray, RandomState);
 
 			// NaN や無限大になったサンプルは平均に入れない（蓄積に残ると黒い点になる）
 			if (all(isfinite(SampleColor)))

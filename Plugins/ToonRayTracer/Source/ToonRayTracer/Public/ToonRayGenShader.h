@@ -47,6 +47,14 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FVector4f, SphereMaterialParams, [MaxSpheres])
 		SHADER_PARAMETER_ARRAY(FVector4f, SphereAlbedo, [MaxSpheres])
 		SHADER_PARAMETER(uint32, NumSpheres)
+		// カメラから最初に当たった面の法線を、通常描画の GBuffer から読むためのテクスチャ
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferATexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthTexture)
+		// GBuffer 内の描画範囲（描画解像度。アップスケール後の ViewRect とは異なることがある）
+		SHADER_PARAMETER(FIntPoint, GBufferViewRectMin)
+		SHADER_PARAMETER(FIntPoint, GBufferViewRectSize)
+		// 1 なら GBuffer の法線を使う
+		SHADER_PARAMETER(uint32, bUseGBufferNormal)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 	END_SHADER_PARAMETER_STRUCT()
