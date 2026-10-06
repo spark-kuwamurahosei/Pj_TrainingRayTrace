@@ -40,6 +40,7 @@ int2 ViewRectSize;
 
 // カメラから最初に当たった面の法線とベースカラーを、通常描画の GBuffer から読むためのテクスチャ
 Texture2D GBufferATexture;
+Texture2D GBufferBTexture;
 Texture2D GBufferCTexture;
 Texture2D SceneDepthTexture;
 // GBuffer 内の描画範囲（描画解像度）
@@ -49,6 +50,13 @@ int2 GBufferViewRectSize;
 uint bUseGBufferNormal;
 // 1 なら、マテリアル未指定のメッシュの色に GBuffer のベースカラーを使う
 uint bUseGBufferBaseColor;
+// 1 なら、マテリアル未指定のメッシュを GBuffer のメタリックとラフネスから金属と判定する
+uint bUseGBufferMetal;
+// 金属として鏡面反射させるラフネスの上限（これより粗い金属は普通の塗りにする）
+float MetalRoughnessThreshold;
+
+// メタリックがこれ以上なら金属とみなす
+#define TOON_GBUFFER_METALLIC_THRESHOLD 0.5f
 
 // Directional Light（光源へ向かう方向、色）。bHasDirectionalLight が 0 ならライトなし
 float3 ToLightDirection;
@@ -468,11 +476,15 @@ bool HitAnything(FToonRay Ray, float TMin, inout FToonHitRecord Rec)
 //   レイトレーシング用のメッシュデータには頂点の位置しかないため、滑らかな法線は GBuffer から得る
 // ・汎用化 G1：Custom Primitive Data でマテリアルを指定していないメッシュは、素材の色を GBuffer のベースカラー
 //   （UE のマテリアルのテクスチャの色）にする。メッシュごとの設定なしで、UE のマテリアルの色がトゥーンの塗りに使われる
+// ・汎用化 G2：同じくマテリアル未指定のメッシュは、GBuffer のメタリックとラフネスから金属かどうかを判定する
+//   メタリックが高く、ラフネスが小さい（つやのある）金属だけを鏡面反射の金属として扱う
 // 同じ面に当たっているかを深度で確かめ、違う場合は置き換えない（補助レイで求めた面の法線、Custom Primitive Data の色のまま）
 void ApplyGBufferSurface(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
 {
-	bool bApplyBaseColor = bUseGBufferBaseColor != 0 && Rec.Material.Type == TOON_MATERIAL_DEFAULT;
-	if ((bUseGBufferNormal == 0 && !bApplyBaseColor) || TraceMode == 0)
+	bool bMaterialNotSpecified = Rec.Material.Type == TOON_MATERIAL_DEFAULT;
+	bool bApplyBaseColor = bUseGBufferBaseColor != 0 && bMaterialNotSpecified;
+	bool bApplyMetal = bUseGBufferMetal != 0 && bMaterialNotSpecified;
+	if ((bUseGBufferNormal == 0 && !bApplyBaseColor && !bApplyMetal) || TraceMode == 0)
 	{
 		return;
 	}
@@ -497,9 +509,26 @@ void ApplyGBufferSurface(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
 
 	// GBufferC の rgb にはベースカラーが入っている（DeferredShadingCommon の DecodeBaseColor）
 	// sRGB のレンダーターゲットなので、読み出した時点で線形の色になっている
+	float3 BaseColor = GBufferCTexture.Load(int3(GBufferPixel, 0)).rgb;
 	if (bApplyBaseColor)
 	{
-		Rec.Material.Albedo = GBufferCTexture.Load(int3(GBufferPixel, 0)).rgb;
+		Rec.Material.Albedo = BaseColor;
+	}
+
+	// GBufferB の rgb にはメタリック、スペキュラ、ラフネスが入っている（DeferredShadingCommon の DecodeGBufferData）
+	if (bApplyMetal)
+	{
+		float3 MetallicSpecularRoughness = GBufferBTexture.Load(int3(GBufferPixel, 0)).rgb;
+		float Metallic = MetallicSpecularRoughness.r;
+		float Roughness = MetallicSpecularRoughness.b;
+		if (Metallic >= TOON_GBUFFER_METALLIC_THRESHOLD && Roughness <= MetalRoughnessThreshold)
+		{
+			// 金属のベースカラーは映り込みの色（反射率）になる
+			Rec.Material.Type = TOON_MATERIAL_METAL;
+			Rec.Material.Albedo = BaseColor;
+			// 確認用の ShadingMode 1 ではラフネスを反射のぼけ具合に使う（トゥーンではくっきりした鏡面反射）
+			Rec.Material.Fuzz = Roughness;
+		}
 	}
 
 	if (bUseGBufferNormal == 0)

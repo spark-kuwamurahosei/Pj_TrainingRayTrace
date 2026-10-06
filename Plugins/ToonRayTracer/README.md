@@ -43,6 +43,7 @@ UE5.8 のハードウェアレイトレーシング（DXR）を使ったトゥ�
 ## メッシュごとの設定（Custom Primitive Data）
 
 何も設定しなくても、カメラから見えている面は UE のマテリアルの色（GBuffer のベースカラー）でトゥーンの塗りになる。
+メタリックが高くつやのある（ラフネスが小さい）マテリアルは、自動で鏡面反射の金属になる。
 Custom Primitive Data は、マテリアルの種類（金属・ガラス）や影色、ハイライトなどを上書きしたいメッシュにだけ設定する。
 
 メッシュの詳細パネルの「Custom Primitive Data」→「Data」に要素を追加して設定する。
@@ -93,6 +94,8 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
 | `r.ToonRayTracer.SamplesPerPixel` | 4 | 1 ピクセルあたりのサンプル数（アンチエイリアス、1 ～ 64） |
 | `r.ToonRayTracer.UseGBufferNormal` | 1 | カメラから見えている面に GBuffer の滑らかな法線を使うか |
 | `r.ToonRayTracer.UseGBufferBaseColor` | 1 | マテリアル未指定のメッシュに、UE のマテリアルの色（GBuffer のベースカラー）を使うか |
+| `r.ToonRayTracer.UseGBufferMetal` | 1 | マテリアル未指定のメッシュを、UE のマテリアルのメタリック（0.5 以上）とラフネスから金属と判定するか |
+| `r.ToonRayTracer.MetalRoughnessThreshold` | 0.4 | 金属として鏡面反射させるラフネスの上限。これより粗い金属は普通の塗りにする |
 | `r.ToonRayTracer.Accumulate` | 1 | カメラ静止中にフレームをまたいで結果を平均するか。0 → 1 で蓄積をリセット |
 | `r.ToonRayTracer.MaxAccumulatedFrames` | 1024 | 蓄積するフレーム数の上限。到達後は新たにレイを飛ばさず結果を表示し続ける |
 | `r.ToonRayTracer.MaxDepth` | 10 | ShadingMode 1 での反射回数の上限（1 ～ 50） |

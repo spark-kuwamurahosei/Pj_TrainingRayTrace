@@ -188,6 +188,19 @@ namespace
 		TEXT("Use the material base color from the GBuffer for the first hit of camera rays on meshes without a material set in Custom Primitive Data (0: off, 1: on)"),
 		ECVF_RenderThreadSafe);
 
+	// 汎用化 G2：UE のマテリアルのメタリックとラフネスから金属を自動判定する
+	TAutoConsoleVariable<int32> CVarToonRayTracerUseGBufferMetal(
+		TEXT("r.ToonRayTracer.UseGBufferMetal"),
+		1,
+		TEXT("Treat glossy metallic materials (from the GBuffer) as mirror metals on meshes without a material set in Custom Primitive Data (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerMetalRoughnessThreshold(
+		TEXT("r.ToonRayTracer.MetalRoughnessThreshold"),
+		0.4f,
+		TEXT("Maximum roughness (0-1) of a metallic material to be treated as a mirror metal. Rougher metals are shaded as plain materials"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerAccumulate(
 		TEXT("r.ToonRayTracer.Accumulate"),
 		1,
@@ -382,10 +395,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	// 通常描画の GBuffer（法線、ベースカラー、深度）。取得できない場合（モバイルなど）は使わない
 	const FSceneTextureUniformParameters* SceneTextureParameters =
 		Inputs.SceneTextures.SceneTextures ? Inputs.SceneTextures.SceneTextures->GetParameters().GetContents() : nullptr;
-	const bool bHasGBuffer = SceneTextureParameters && SceneTextureParameters->GBufferATexture
+	const bool bHasGBuffer = SceneTextureParameters && SceneTextureParameters->GBufferATexture && SceneTextureParameters->GBufferBTexture
 		&& SceneTextureParameters->GBufferCTexture && SceneTextureParameters->SceneDepthTexture;
 	const bool bUseGBufferNormal = bHasGBuffer && CVarToonRayTracerUseGBufferNormal.GetValueOnRenderThread() != 0;
 	const bool bUseGBufferBaseColor = bHasGBuffer && CVarToonRayTracerUseGBufferBaseColor.GetValueOnRenderThread() != 0;
+	const bool bUseGBufferMetal = bHasGBuffer && CVarToonRayTracerUseGBufferMetal.GetValueOnRenderThread() != 0;
+	const float MetalRoughnessThreshold = FMath::Clamp(CVarToonRayTracerMetalRoughnessThreshold.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const uint32 MaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
 	const FIntPoint ViewRectSize = Output.ViewRect.Size();
 
@@ -433,7 +448,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
+		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
 		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
@@ -497,11 +512,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
 	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : 0;
 	PassParameters->TLAS = TLAS;
-	if (bUseGBufferNormal || bUseGBufferBaseColor)
+	if (bUseGBufferNormal || bUseGBufferBaseColor || bUseGBufferMetal)
 	{
 		// GBuffer は描画解像度で作られるため、アップスケール前の描画範囲を渡す
 		const FIntRect GBufferViewRect = UE::FXRenderingUtils::GetRawViewRectUnsafe(View);
 		PassParameters->GBufferATexture = SceneTextureParameters->GBufferATexture;
+		PassParameters->GBufferBTexture = SceneTextureParameters->GBufferBTexture;
 		PassParameters->GBufferCTexture = SceneTextureParameters->GBufferCTexture;
 		PassParameters->SceneDepthTexture = SceneTextureParameters->SceneDepthTexture;
 		PassParameters->GBufferViewRectMin = GBufferViewRect.Min;
@@ -510,6 +526,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	else
 	{
 		PassParameters->GBufferATexture = GSystemTextures.GetBlackDummy(GraphBuilder);
+		PassParameters->GBufferBTexture = GSystemTextures.GetBlackDummy(GraphBuilder);
 		PassParameters->GBufferCTexture = GSystemTextures.GetBlackDummy(GraphBuilder);
 		PassParameters->SceneDepthTexture = GSystemTextures.GetDepthDummy(GraphBuilder);
 		PassParameters->GBufferViewRectMin = FIntPoint::ZeroValue;
@@ -517,6 +534,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	}
 	PassParameters->bUseGBufferNormal = bUseGBufferNormal ? 1u : 0u;
 	PassParameters->bUseGBufferBaseColor = bUseGBufferBaseColor ? 1u : 0u;
+	PassParameters->bUseGBufferMetal = bUseGBufferMetal ? 1u : 0u;
+	PassParameters->MetalRoughnessThreshold = MetalRoughnessThreshold;
 	PassParameters->ToLightDirection = DirectionalLight.ToLightDirection;
 	PassParameters->LightColor = FVector3f(DirectionalLight.Color.R, DirectionalLight.Color.G, DirectionalLight.Color.B);
 	PassParameters->bHasDirectionalLight = DirectionalLight.bValid ? 1u : 0u;

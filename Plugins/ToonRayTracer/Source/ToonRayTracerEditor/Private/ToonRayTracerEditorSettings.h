@@ -58,6 +58,14 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "マテリアルの色を使う"))
 	bool bUseGBufferBaseColor;
 
+	/** マテリアルを Custom Primitive Data で指定していないメッシュを、UE のマテリアルのメタリックとラフネスから金属と判定する */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "金属を自動判定する"))
+	bool bUseGBufferMetal;
+
+	/** 金属として鏡面反射させるラフネスの上限。これより粗い金属は普通の塗りにする */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "金属とみなすラフネスの上限", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0", EditCondition = "bUseGBufferMetal"))
+	float MetalRoughnessThreshold;
+
 	/** カメラが静止している間、フレームをまたいで結果を平均する */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "フレーム間で蓄積する"))
 	bool bAccumulate;
