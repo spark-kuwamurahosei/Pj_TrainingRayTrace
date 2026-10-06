@@ -47,6 +47,11 @@ int2 GBufferViewRectSize;
 // 1 なら GBuffer の法線を使う
 uint bUseGBufferNormal;
 
+// Directional Light（光源へ向かう方向、色）。bHasDirectionalLight が 0 ならライトなし
+float3 ToLightDirection;
+float3 LightColor;
+uint bHasDirectionalLight;
+
 // 球のリスト（xyz: Translated World 空間の中心、w: 半径）
 float4 Spheres[TOON_MAX_SPHERES];
 // 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率）と反射率（rgb）
@@ -561,11 +566,40 @@ float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 	return 0.0f;
 }
 
+// 影の部分にも少し色が残るようにする環境光の強さ（空の色に掛ける）
+#define TOON_AMBIENT_STRENGTH 0.2f
+
+// トゥーン T1：Directional Light の向きと色が正しく渡っているかを確認するための、なめらかな陰影
+// 光源に向いている面ほど明るく（N・L）、ライトの色で照らされる。影や段階化は T2 以降で追加する
+float3 RayColorDirectLight(float2 UV, FToonRay Ray)
+{
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (!HitAnything(Ray, 0.0f, Rec))
+	{
+		return SkyColor(Ray);
+	}
+	ApplyGBufferNormal(UV, Ray, Rec);
+
+	float3 Albedo = Rec.Material.Albedo;
+	float3 Ambient = TOON_AMBIENT_STRENGTH * SkyColor(Ray);
+	if (bHasDirectionalLight == 0)
+	{
+		return Albedo * Ambient;
+	}
+
+	float NdotL = saturate(dot(Rec.Normal, ToLightDirection));
+	return Albedo * (LightColor * NdotL + Ambient);
+}
+
 float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
 {
 	if (ShadingMode == 0)
 	{
 		return RayColorNormal(UV, Ray);
+	}
+	if (ShadingMode == 2)
+	{
+		return RayColorDirectLight(UV, Ray);
 	}
 	return RayColorMaterial(UV, Ray, RandomState);
 }

@@ -8,6 +8,10 @@
 #include "RHICommandList.h"
 #include "FXRenderingUtils.h"
 #include "SystemTextures.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Engine/World.h"
+#include "UObject/UObjectIterator.h"
+#include "RenderingThread.h"
 
 namespace
 {
@@ -28,7 +32,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerShadingMode(
 		TEXT("r.ToonRayTracer.ShadingMode"),
 		1,
-		TEXT("0: Visualize normals, 1: Materials (Ray Tracing in One Weekend chapters 9-10)"),
+		TEXT("0: Visualize normals, 1: Materials (Ray Tracing in One Weekend chapters 9-11), 2: Directional light N dot L (toon T1)"),
 		ECVF_RenderThreadSafe);
 
 	// 本の第9章の max_depth に相当
@@ -102,6 +106,60 @@ ToonRayTracerViewExtension::ToonRayTracerViewExtension(const FAutoRegister& Auto
 
 ToonRayTracerViewExtension::~ToonRayTracerViewExtension()
 {
+}
+
+// ゲームスレッドで、ビューファミリーのワールドにある Directional Light を探す
+// 大気の太陽として使われているライトを優先し、なければ最も強いライトを使う
+ToonRayTracerViewExtension::FToonDirectionalLight ToonRayTracerViewExtension::FindDirectionalLight(const FSceneViewFamily& ViewFamily)
+{
+	FToonDirectionalLight Result;
+
+	const UWorld* World = ViewFamily.Scene ? ViewFamily.Scene->GetWorld() : nullptr;
+	if (!World)
+	{
+		return Result;
+	}
+
+	const UDirectionalLightComponent* BestLight = nullptr;
+	for (TObjectIterator<UDirectionalLightComponent> It; It; ++It)
+	{
+		const UDirectionalLightComponent* Light = *It;
+		if (Light->GetWorld() != World || !Light->IsRegistered() || !Light->IsVisible() || !Light->bAffectsWorld || Light->Intensity <= 0.0f)
+		{
+			continue;
+		}
+
+		const bool bIsSun = Light->IsUsedAsAtmosphereSunLight() && Light->GetAtmosphereSunLightIndex() == 0;
+		const bool bBestIsSun = BestLight && BestLight->IsUsedAsAtmosphereSunLight() && BestLight->GetAtmosphereSunLightIndex() == 0;
+		if (!BestLight
+			|| (bIsSun && !bBestIsSun)
+			|| (bIsSun == bBestIsSun && Light->Intensity > BestLight->Intensity))
+		{
+			BestLight = Light;
+		}
+	}
+
+	if (BestLight)
+	{
+		// GetDirection() は光が進む向きなので、光源へ向かう方向はその逆
+		Result.ToLightDirection = FVector3f(-BestLight->GetDirection().GetSafeNormal());
+		Result.Color = BestLight->GetLightColor();
+		Result.Intensity = BestLight->Intensity;
+		Result.bValid = true;
+	}
+	return Result;
+}
+
+void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFamily)
+{
+	// ライトの情報はゲームスレッド側にしかないため、ここで取得してレンダースレッドへ渡す
+	// レンダーコマンドは順番に実行されるので、このビューファミリーの描画より前に反映される
+	FToonDirectionalLight Light = FindDirectionalLight(InViewFamily);
+	ENQUEUE_RENDER_COMMAND(ToonRayTracerUpdateDirectionalLight)(
+		[this, Light](FRHICommandListImmediate&)
+		{
+			DirectionalLight_RenderThread = Light;
+		});
 }
 
 // パスの登録
@@ -185,9 +243,13 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	// フレームをまたいだ蓄積（カメラか設定が変わったらリセット）
 	// ビューの状態を持たないビュー（サムネイル描画など）では蓄積しない
 	const uint32 FrameNumber = View.Family->FrameNumber;
-	const uint32 SettingsHash = HashCombine(
+	// ライトの向きや色が変わったときも蓄積をリセットする
+	const FToonDirectionalLight& DirectionalLight = DirectionalLight_RenderThread;
+	const uint32 LightHash = HashCombine(HashCombine(GetTypeHash(DirectionalLight.ToLightDirection), GetTypeHash(DirectionalLight.Color)),
+		HashCombine(GetTypeHash(DirectionalLight.Intensity), GetTypeHash(DirectionalLight.bValid)));
+	const uint32 SettingsHash = HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		GetTypeHash(bUseGBufferNormal));
+		GetTypeHash(bUseGBufferNormal)), LightHash);
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
 	{
@@ -267,6 +329,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		PassParameters->GBufferViewRectSize = FIntPoint(1, 1);
 	}
 	PassParameters->bUseGBufferNormal = bUseGBufferNormal ? 1u : 0u;
+	PassParameters->ToLightDirection = DirectionalLight.ToLightDirection;
+	PassParameters->LightColor = FVector3f(DirectionalLight.Color.R, DirectionalLight.Color.G, DirectionalLight.Color.B);
+	PassParameters->bHasDirectionalLight = DirectionalLight.bValid ? 1u : 0u;
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
 	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);
 	PassParameters->Scene = UE::FXRenderingUtils::GetSceneUniformBuffer(GraphBuilder, SceneUniformBuffer);

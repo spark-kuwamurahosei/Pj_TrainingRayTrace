@@ -17,7 +17,7 @@ public:
 
 	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override {}
 	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) override {}
-	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override {}
+	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override;
 	virtual void PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily) override {}
 	virtual void PreRenderView_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView) override {}
 
@@ -32,6 +32,24 @@ private:
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
 		const FPostProcessMaterialInputs& Inputs);
+
+	// トゥーンシェーディングに使う Directional Light の情報
+	struct FToonDirectionalLight
+	{
+		// 光源へ向かう方向（ワールド空間、正規化済み）
+		FVector3f ToLightDirection = FVector3f(0.0f, 0.0f, 1.0f);
+		// ライトの色（線形）
+		FLinearColor Color = FLinearColor::Black;
+		// ライトの強さ（ルクス）
+		float Intensity = 0.0f;
+		bool bValid = false;
+	};
+
+	// ゲームスレッドで、ビューファミリーのワールドから Directional Light を探す
+	static FToonDirectionalLight FindDirectionalLight(const FSceneViewFamily& ViewFamily);
+
+	// レンダースレッドからのみアクセスする。BeginRenderViewFamily でレンダーコマンド経由で更新される
+	FToonDirectionalLight DirectionalLight_RenderThread;
 
 	// カメラが静止している間、フレームをまたいで結果を平均するための状態（ビューごと）
 	struct FAccumulationState

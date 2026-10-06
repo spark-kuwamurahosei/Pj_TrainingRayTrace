@@ -55,6 +55,10 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(FIntPoint, GBufferViewRectSize)
 		// 1 なら GBuffer の法線を使う
 		SHADER_PARAMETER(uint32, bUseGBufferNormal)
+		// Directional Light（光源へ向かう方向、色）。bHasDirectionalLight が 0 ならライトなし
+		SHADER_PARAMETER(FVector3f, ToLightDirection)
+		SHADER_PARAMETER(FVector3f, LightColor)
+		SHADER_PARAMETER(uint32, bHasDirectionalLight)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 	END_SHADER_PARAMETER_STRUCT()
