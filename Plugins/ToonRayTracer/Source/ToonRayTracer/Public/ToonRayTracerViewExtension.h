@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "SceneViewExtension.h"
 #include "RendererInterface.h"
+#include "RenderGraphResources.h"
 
 /**
  * 
@@ -75,4 +76,18 @@ private:
 
 	// レンダースレッドからのみアクセスする。キーはビューの状態（FSceneViewStateInterface）のアドレス
 	TMap<const void*, TSharedPtr<FAccumulationState>> AccumulationStates;
+
+	// 汎用化 G4：物体ごとの代表色の表（GPUScene のインスタンス番号はシーンごとに振られるため、シーンごとに持つ）
+	struct FObjectColorTableState
+	{
+		// 物体ごとの平均色を保持するバッファ
+		TRefCountPtr<FRDGPooledBuffer> Buffer;
+		// 作成したときの r.ToonRayTracer.ResetAccumulation の値（変わったら表を空にする）
+		int32 ResetCounter = 0;
+		// 最後に使われたフレーム番号（閉じたシーンの表を破棄するため）
+		uint32 LastUsedFrameNumber = 0;
+	};
+
+	// レンダースレッドからのみアクセスする。キーはシーン（FSceneInterface）のアドレス
+	TMap<const void*, TSharedPtr<FObjectColorTableState>> ObjectColorTables;
 };

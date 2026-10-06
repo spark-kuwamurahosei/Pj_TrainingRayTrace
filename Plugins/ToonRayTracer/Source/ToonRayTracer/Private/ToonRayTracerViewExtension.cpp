@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 #include "RenderingThread.h"
+#include "RenderGraphUtils.h"
 
 namespace
 {
@@ -186,6 +187,20 @@ namespace
 		TEXT("r.ToonRayTracer.UseGBufferBaseColor"),
 		1,
 		TEXT("Use the material base color from the GBuffer for the first hit of camera rays on meshes without a material set in Custom Primitive Data (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
+	// 汎用化 G3：反射・屈折した先も、カメラから見えている点なら GBuffer の値を使う
+	TAutoConsoleVariable<int32> CVarToonRayTracerUseGBufferForReflections(
+		TEXT("r.ToonRayTracer.UseGBufferForReflections"),
+		1,
+		TEXT("For reflected / refracted hits that are visible on screen, use the GBuffer base color, normal and metal detection (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
+	// 反射・屈折した先の法線をなめらかにする補助レイの間隔（ポリゴン1枚分程度にすると明暗の境目の階段が目立たなくなる）
+	TAutoConsoleVariable<float> CVarToonRayTracerReflectionNormalSmoothing(
+		TEXT("r.ToonRayTracer.ReflectionNormalSmoothing"),
+		15.0f,
+		TEXT("Spacing (cm) of the probe rays used to smooth normals on reflected / refracted hits. 0 uses flat per-triangle normals"),
 		ECVF_RenderThreadSafe);
 
 	// 汎用化 G2：UE のマテリアルのメタリックとラフネスから金属を自動判定する
@@ -400,6 +415,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const bool bUseGBufferNormal = bHasGBuffer && CVarToonRayTracerUseGBufferNormal.GetValueOnRenderThread() != 0;
 	const bool bUseGBufferBaseColor = bHasGBuffer && CVarToonRayTracerUseGBufferBaseColor.GetValueOnRenderThread() != 0;
 	const bool bUseGBufferMetal = bHasGBuffer && CVarToonRayTracerUseGBufferMetal.GetValueOnRenderThread() != 0;
+	const bool bUseGBufferForReflections = bHasGBuffer && CVarToonRayTracerUseGBufferForReflections.GetValueOnRenderThread() != 0;
+	const float ReflectionNormalSmoothing = FMath::Max(CVarToonRayTracerReflectionNormalSmoothing.GetValueOnRenderThread(), 0.0f);
 	const float MetalRoughnessThreshold = FMath::Clamp(CVarToonRayTracerMetalRoughnessThreshold.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const uint32 MaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
 	const FIntPoint ViewRectSize = Output.ViewRect.Size();
@@ -448,7 +465,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
+		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
 		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
@@ -491,6 +508,47 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		}
 	}
 
+	// 汎用化 G4：物体ごとの代表色の表（前のフレームまでにカメラから見えた UE のマテリアルの色の平均）
+	// 反射・屈折の先が画面外や隠れた点のとき、灰色の代わりにこの色を使う
+	// 「蓄積をリセット」でも空にする（物体を消したり入れ替えたりしたあとに、古い色が残らないように）
+	// しばらく描画されていないシーンの表を破棄する
+	for (auto It = ObjectColorTables.CreateIterator(); It; ++It)
+	{
+		if (FrameNumber - It.Value()->LastUsedFrameNumber > AccumulationStateTimeoutFrames)
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	const int32 ResetAccumulationCounter = CVarToonRayTracerResetAccumulation.GetValueOnRenderThread();
+	TSharedPtr<FObjectColorTableState>& ObjectColorTableStatePtr = ObjectColorTables.FindOrAdd(View.Family->Scene);
+	if (!ObjectColorTableStatePtr.IsValid())
+	{
+		ObjectColorTableStatePtr = MakeShared<FObjectColorTableState>();
+	}
+	// 抽出先のポインタはグラフの実行まで有効である必要があるため、マップの要素ではなく共有ポインタの中身を使う
+	FObjectColorTableState& ObjectColorTableState = *ObjectColorTableStatePtr;
+	ObjectColorTableState.LastUsedFrameNumber = FrameNumber;
+	FRDGBufferRef ObjectColorTableBuffer = nullptr;
+	if (ObjectColorTableState.Buffer.IsValid() && ObjectColorTableState.ResetCounter == ResetAccumulationCounter)
+	{
+		ObjectColorTableBuffer = GraphBuilder.RegisterExternalBuffer(ObjectColorTableState.Buffer, TEXT("ToonRayTracerObjectColorTable"));
+	}
+	else
+	{
+		ObjectColorTableBuffer = GraphBuilder.CreateBuffer(
+			FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), ToonObjectColorTable::Size * ToonObjectColorTable::TableStride),
+			TEXT("ToonRayTracerObjectColorTable"));
+		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(ObjectColorTableBuffer), 0u);
+		ObjectColorTableState.ResetCounter = ResetAccumulationCounter;
+	}
+
+	// このフレームに見えた色の合計（毎フレーム空にしてから RayGen で足し込む）
+	FRDGBufferRef ObjectColorFrameSums = GraphBuilder.CreateBuffer(
+		FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), ToonObjectColorTable::Size * ToonObjectColorTable::SumStride),
+		TEXT("ToonRayTracerObjectColorFrameSums"));
+	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(ObjectColorFrameSums), 0u);
+
 	// 蓄積用テクスチャ（ViewRect サイズ、線形色を高精度で保持）
 	FRDGTextureRef AccumulationTexture = nullptr;
 	if (AccumulationState && AccumulationState->Texture.IsValid() && AccumulationState->AccumulatedFrames > 0)
@@ -512,7 +570,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
 	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : 0;
 	PassParameters->TLAS = TLAS;
-	if (bUseGBufferNormal || bUseGBufferBaseColor || bUseGBufferMetal)
+	if (bUseGBufferNormal || bUseGBufferBaseColor || bUseGBufferMetal || bUseGBufferForReflections)
 	{
 		// GBuffer は描画解像度で作られるため、アップスケール前の描画範囲を渡す
 		const FIntRect GBufferViewRect = UE::FXRenderingUtils::GetRawViewRectUnsafe(View);
@@ -535,6 +593,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->bUseGBufferNormal = bUseGBufferNormal ? 1u : 0u;
 	PassParameters->bUseGBufferBaseColor = bUseGBufferBaseColor ? 1u : 0u;
 	PassParameters->bUseGBufferMetal = bUseGBufferMetal ? 1u : 0u;
+	PassParameters->bUseGBufferForReflections = bUseGBufferForReflections ? 1u : 0u;
+	PassParameters->ReflectionNormalSmoothing = ReflectionNormalSmoothing;
 	PassParameters->MetalRoughnessThreshold = MetalRoughnessThreshold;
 	PassParameters->ToLightDirection = DirectionalLight.ToLightDirection;
 	PassParameters->LightColor = FVector3f(DirectionalLight.Color.R, DirectionalLight.Color.G, DirectionalLight.Color.B);
@@ -560,11 +620,14 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
 	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);
 	PassParameters->Scene = UE::FXRenderingUtils::GetSceneUniformBuffer(GraphBuilder, SceneUniformBuffer);
+	PassParameters->ObjectColorTable = GraphBuilder.CreateSRV(ObjectColorTableBuffer);
+	PassParameters->ObjectColorFrameSums = GraphBuilder.CreateUAV(ObjectColorFrameSums);
 	PassParameters->TraceMode = TraceMode;
 	PassParameters->SamplesPerPixel = SamplesPerPixel;
 	PassParameters->ShadingMode = ShadingMode;
 	PassParameters->MaxDepth = MaxDepth;
 	PassParameters->ClipToTranslatedWorld = FMatrix44f(ClipToTranslatedWorldNoAA);
+	PassParameters->TranslatedWorldToClip = FMatrix44f(View.ViewMatrices.GetTranslatedViewMatrix() * ViewToClipNoAA);
 	PassParameters->ViewRectMin = Output.ViewRect.Min;
 	PassParameters->ViewRectSize = ViewRectSize;
 
@@ -653,6 +716,22 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 			);
 		}
 	);
+
+	// 汎用化 G4：このフレームに見えた色の合計から物体ごとの平均色を求め、代表色の表を更新する
+	{
+		FToonObjectColorResolveCS::FParameters* ResolveParameters = GraphBuilder.AllocParameters<FToonObjectColorResolveCS::FParameters>();
+		ResolveParameters->ObjectColorFrameSums = GraphBuilder.CreateSRV(ObjectColorFrameSums);
+		ResolveParameters->ObjectColorTable = GraphBuilder.CreateUAV(ObjectColorTableBuffer);
+
+		TShaderMapRef<FToonObjectColorResolveCS> ResolveShader(ShaderMap);
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("ToonRayTracing_ObjectColorResolve"),
+			ResolveShader,
+			ResolveParameters,
+			FComputeShaderUtils::GetGroupCount(static_cast<int32>(ToonObjectColorTable::Size), FToonObjectColorResolveCS::ThreadGroupSize));
+	}
+	GraphBuilder.QueueBufferExtraction(ObjectColorTableBuffer, &ObjectColorTableState.Buffer);
 
 	// 蓄積テクスチャを次のフレームまで保持する
 	// （RDG では、書き込むパスを登録した後でないと抽出を登録できない）

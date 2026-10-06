@@ -58,6 +58,14 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "マテリアルの色を使う"))
 	bool bUseGBufferBaseColor;
 
+	/** 反射・屈折した先も、カメラから見えている点なら UE のマテリアルの色や滑らかな法線を使う */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "映り込みにもマテリアルの色を使う"))
+	bool bUseGBufferForReflections;
+
+	/** 映り込んだ物体の法線をなめらかにする補助レイの間隔（cm）。ポリゴン1枚分程度にすると明暗の境目の階段が目立たなくなる。0 なら面ごとの法線 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|反射", meta = (DisplayName = "映り込みの法線のなめらかさ（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
+	float ReflectionNormalSmoothing;
+
 	/** マテリアルを Custom Primitive Data で指定していないメッシュを、UE のマテリアルのメタリックとラフネスから金属と判定する */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "金属を自動判定する"))
 	bool bUseGBufferMetal;

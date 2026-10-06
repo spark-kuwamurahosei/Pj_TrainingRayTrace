@@ -8,6 +8,21 @@
 #include "ShaderParameterStruct.h"
 #include "SceneUniformBuffer.h"
 
+// 汎用化 G4：物体ごとの代表色のハッシュ表（ToonObjectColorTable.ush と一致させる）
+namespace ToonObjectColorTable
+{
+	// 表の要素数（2 のべき乗）
+	constexpr uint32 Size = 4096;
+	// 1 要素あたりの uint の数（このフレームの合計：キー、R・G・B の合計、サンプル数 / 代表色：キー、R・G・B）
+	constexpr uint32 SumStride = 5;
+	constexpr uint32 TableStride = 4;
+
+	inline void ModifyCompilationEnvironment(FShaderCompilerEnvironment& OutEnvironment)
+	{
+		OutEnvironment.SetDefine(TEXT("TOON_OBJECT_COLOR_TABLE_SIZE"), Size);
+	}
+}
+
 class FToonRayGenShader : public FGlobalShader
 {
 	DECLARE_GLOBAL_SHADER(FToonRayGenShader);
@@ -59,6 +74,12 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, bUseGBufferNormal)
 		// 1 なら、マテリアル未指定のメッシュの色に GBuffer のベースカラーを使う
 		SHADER_PARAMETER(uint32, bUseGBufferBaseColor)
+		// 1 なら、反射・屈折した先の点もカメラから見えていれば GBuffer の値を使う
+		SHADER_PARAMETER(uint32, bUseGBufferForReflections)
+		// 反射・屈折した先の法線をなめらかにするための補助レイの間隔（cm）。0 なら面ごとの法線
+		SHADER_PARAMETER(float, ReflectionNormalSmoothing)
+		// Translated World 空間 → クリップ空間への変換行列（反射した先の点を画面に投影する）
+		SHADER_PARAMETER(FMatrix44f, TranslatedWorldToClip)
 		// 1 なら、マテリアル未指定のメッシュを GBuffer のメタリックとラフネスから金属と判定する
 		SHADER_PARAMETER(uint32, bUseGBufferMetal)
 		// 金属として鏡面反射させるラフネスの上限
@@ -92,6 +113,9 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, ToonReflectionDepth)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
+		// 汎用化 G4：物体ごとの代表色（前のフレームまで）と、このフレームに見えた色の合計
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ObjectColorTable)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ObjectColorFrameSums)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
@@ -106,6 +130,7 @@ class FToonRayGenShader : public FGlobalShader
 		// GetPrimitiveData() を Primitive ユニフォームバッファではなく GPUScene のバッファから読むようにする
 		// （未定義だとメッシュ描画用の Primitive ユニフォームバッファを参照してしまい、グローバルシェーダーではバインドできない）
 		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
+		ToonObjectColorTable::ModifyCompilationEnvironment(OutEnvironment);
 	}
 
 	static ERayTracingPayloadType GetRayTracingPayloadType(const int32 /*PermutationId*/)
@@ -149,5 +174,30 @@ class FToonMissShader : public FGlobalShader
 	static ERayTracingPayloadType GetRayTracingPayloadType(const int32 /*PermutationId*/)
 	{
 		return ERayTracingPayloadType::Default;
+	}
+};
+
+// 汎用化 G4：このフレームに見えた色の合計から物体ごとの平均色を求め、フレームをまたいで保持する表に書き込む
+class FToonObjectColorResolveCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FToonObjectColorResolveCS);
+	SHADER_USE_PARAMETER_STRUCT(FToonObjectColorResolveCS, FGlobalShader);
+
+	static constexpr int32 ThreadGroupSize = 64;
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ObjectColorFrameSums)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ObjectColorTable)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return ShouldCompileRayTracingShadersForProject(Parameters.Platform);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		ToonObjectColorTable::ModifyCompilationEnvironment(OutEnvironment);
 	}
 };

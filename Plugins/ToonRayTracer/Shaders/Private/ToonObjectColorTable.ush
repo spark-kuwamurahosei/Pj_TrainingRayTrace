@@ -1,0 +1,34 @@
+// 汎用化 G4：物体ごとの代表色（カメラから見えた部分の UE のマテリアルの色の平均）を覚えておくハッシュ表
+// 反射・屈折の先が画面外や隠れた点で GBuffer から色を取れないとき、灰色の代わりにこの色を使う
+//
+// ・ObjectColorFrameSums：このフレームに見えた色の合計（RayGen で書き込み、フレームごとに 0 クリア）
+//   1 要素 = TOON_OBJECT_COLOR_SUM_STRIDE 個の uint（キー、R・G・B の合計、サンプル数）
+// ・ObjectColorTable：物体ごとの平均色（フレームをまたいで保持。解決パスで書き込み、RayGen で読む）
+//   1 要素 = TOON_OBJECT_COLOR_TABLE_STRIDE 個の uint（キー、R・G・B の float のビット列）
+// キーは GPUScene のインスタンス番号 + 1（0 は空き）
+// TOON_OBJECT_COLOR_TABLE_SIZE（2 のべき乗）は C++ から定義される
+
+#define TOON_OBJECT_COLOR_SUM_STRIDE 5
+#define TOON_OBJECT_COLOR_TABLE_STRIDE 4
+
+// 衝突したときに隣の要素を探す回数
+#define TOON_OBJECT_COLOR_MAX_PROBES 16
+
+// 色の合計を整数で足し込むときの倍率（4K の 1/4 のピクセル数でも uint に収まる）
+#define TOON_OBJECT_COLOR_SUM_SCALE 255.0f
+
+uint ToonObjectColorKey(uint InstanceId)
+{
+	return InstanceId + 1;
+}
+
+// キーから最初に調べる要素の番号を求める
+uint ToonObjectColorHash(uint Key)
+{
+	return (Key * 2654435761u) & (TOON_OBJECT_COLOR_TABLE_SIZE - 1);
+}
+
+uint ToonObjectColorProbeSlot(uint Key, uint Probe)
+{
+	return (ToonObjectColorHash(Key) + Probe) & (TOON_OBJECT_COLOR_TABLE_SIZE - 1);
+}

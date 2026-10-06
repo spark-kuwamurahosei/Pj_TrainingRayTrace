@@ -101,6 +101,8 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	SamplesPerPixel = 4;
 	bUseGBufferNormal = true;
 	bUseGBufferBaseColor = true;
+	bUseGBufferForReflections = true;
+	ReflectionNormalSmoothing = 15.0f;
 	bUseGBufferMetal = true;
 	MetalRoughnessThreshold = 0.4f;
 	bAccumulate = true;
@@ -138,6 +140,8 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetInt(TEXT("r.ToonRayTracer.SamplesPerPixel"), SamplesPerPixel);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferNormal"), bUseGBufferNormal);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferBaseColor"), bUseGBufferBaseColor);
+	SetBool(TEXT("r.ToonRayTracer.UseGBufferForReflections"), bUseGBufferForReflections);
+	SetFloat(TEXT("r.ToonRayTracer.ReflectionNormalSmoothing"), ReflectionNormalSmoothing);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferMetal"), bUseGBufferMetal);
 	SetFloat(TEXT("r.ToonRayTracer.MetalRoughnessThreshold"), MetalRoughnessThreshold);
 	SetBool(TEXT("r.ToonRayTracer.Accumulate"), bAccumulate);
@@ -175,6 +179,8 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetInt(TEXT("r.ToonRayTracer.SamplesPerPixel"), SamplesPerPixel);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferNormal"), bUseGBufferNormal);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferBaseColor"), bUseGBufferBaseColor);
+	GetBool(TEXT("r.ToonRayTracer.UseGBufferForReflections"), bUseGBufferForReflections);
+	GetFloat(TEXT("r.ToonRayTracer.ReflectionNormalSmoothing"), ReflectionNormalSmoothing);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferMetal"), bUseGBufferMetal);
 	GetFloat(TEXT("r.ToonRayTracer.MetalRoughnessThreshold"), MetalRoughnessThreshold);
 	GetBool(TEXT("r.ToonRayTracer.Accumulate"), bAccumulate);

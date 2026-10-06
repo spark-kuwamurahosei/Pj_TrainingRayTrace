@@ -87,6 +87,9 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
 | `OutlineColor` | `0.02,0.02,0.04` | 線の色（線形の R,G,B） |
 | `ReflectionDepth` | 4 | 金属・ガラスで反射・屈折を追いかける回数。0 なら普通の素材として塗る |
 
+映り込みの法線のなめらかさは `r.ToonRayTracer.ReflectionNormalSmoothing`（既定値 15cm）で調整する。
+反射・屈折した先で法線を求める補助レイの間隔で、ポリゴン1枚分程度にすると映り込んだ物体の明暗の境目の階段が目立たなくなる（0 なら面ごとの法線）。
+
 ### 共通
 
 | 変数 | 既定値 | 内容 |
@@ -94,6 +97,7 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
 | `r.ToonRayTracer.SamplesPerPixel` | 4 | 1 ピクセルあたりのサンプル数（アンチエイリアス、1 ～ 64） |
 | `r.ToonRayTracer.UseGBufferNormal` | 1 | カメラから見えている面に GBuffer の滑らかな法線を使うか |
 | `r.ToonRayTracer.UseGBufferBaseColor` | 1 | マテリアル未指定のメッシュに、UE のマテリアルの色（GBuffer のベースカラー）を使うか |
+| `r.ToonRayTracer.UseGBufferForReflections` | 1 | 反射・屈折した先も、カメラから見えている点なら UE のマテリアルの色・滑らかな法線・金属の判定を使うか |
 | `r.ToonRayTracer.UseGBufferMetal` | 1 | マテリアル未指定のメッシュを、UE のマテリアルのメタリック（0.5 以上）とラフネスから金属と判定するか |
 | `r.ToonRayTracer.MetalRoughnessThreshold` | 0.4 | 金属として鏡面反射させるラフネスの上限。これより粗い金属は普通の塗りにする |
 | `r.ToonRayTracer.Accumulate` | 1 | カメラ静止中にフレームをまたいで結果を平均するか。0 → 1 で蓄積をリセット |
@@ -110,6 +114,9 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
   （コンソールでは `r.ToonRayTracer.ResetAccumulation` の値を変える）
 - シェーダー（`.usf`）だけを変更した場合は、エディタのコンソールで `recompileshaders changed` を実行すれば反映される。
   C++ を変更した場合は、エディタを閉じてからビルドする（Live Coding が有効な間は外部からビルドできない）
-- 滑らかな法線と UE のマテリアルの色が使えるのは、カメラから直接見えている面だけ。
-  反射・屈折の先はポリゴンの面ごとの法線と、Custom Primitive Data の色（未設定なら 50% の灰色）になるになる
+- 滑らかな法線と UE のマテリアルの色が使えるのは、カメラから見えている点だけ（反射・屈折の先も、画面内に見えていれば使う）。
+  画面外や、手前の物体に隠れている点は、その物体の代表色（これまでにカメラから見えた部分の UE のマテリアルの色の平均）で塗る。
+  テクスチャの模様は再現されず、1 色になる。一度も画面に映っていない物体は Custom Primitive Data の色（未設定なら 50% の灰色）になる
+- 代表色は物体（GPUScene のインスタンス番号）ごとに最大 4096 個まで覚えておく。
+  物体を消したり入れ替えたりしたあとに古い色が映る場合は「蓄積をリセット」を押す（代表色の表も空になる）
 - ガラスも影を落とす（シャドウレイでは不透明として扱う）

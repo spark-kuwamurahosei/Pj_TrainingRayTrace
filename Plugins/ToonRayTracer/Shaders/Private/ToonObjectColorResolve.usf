@@ -1,0 +1,47 @@
+#include "/Engine/Private/Common.ush"
+#include "ToonObjectColorTable.ush"
+
+// このフレームに見えた色の合計（RayGen が書き込んだもの）
+StructuredBuffer<uint> ObjectColorFrameSums;
+
+// 物体ごとの平均色（フレームをまたいで保持する）
+RWStructuredBuffer<uint> ObjectColorTable;
+
+// 汎用化 G4：このフレームの合計から物体ごとの平均色を求め、フレームをまたいで保持する表に書き込む
+// 1 スレッドが合計の 1 要素を担当する（同じキーは合計の表に 1 つしかないため、書き込みは競合しない）
+[numthreads(64, 1, 1)]
+void ToonObjectColorResolveCS(uint DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId >= TOON_OBJECT_COLOR_TABLE_SIZE)
+	{
+		return;
+	}
+
+	uint SumBase = DispatchThreadId * TOON_OBJECT_COLOR_SUM_STRIDE;
+	uint Key = ObjectColorFrameSums[SumBase];
+	uint Count = ObjectColorFrameSums[SumBase + 4];
+	if (Key == 0 || Count == 0)
+	{
+		return;
+	}
+
+	float3 Average = float3(ObjectColorFrameSums[SumBase + 1], ObjectColorFrameSums[SumBase + 2], ObjectColorFrameSums[SumBase + 3])
+		/ ((float)Count * TOON_OBJECT_COLOR_SUM_SCALE);
+
+	// 同じキーの要素か空き要素を探して書き込む（別のキーとの取り合いは比較交換で決める）
+	for (uint Probe = 0; Probe < TOON_OBJECT_COLOR_MAX_PROBES; ++Probe)
+	{
+		uint Slot = ToonObjectColorProbeSlot(Key, Probe);
+		uint TableBase = Slot * TOON_OBJECT_COLOR_TABLE_STRIDE;
+		uint PreviousKey;
+		InterlockedCompareExchange(ObjectColorTable[TableBase], 0u, Key, PreviousKey);
+		if (PreviousKey == 0 || PreviousKey == Key)
+		{
+			ObjectColorTable[TableBase + 1] = asuint(Average.r);
+			ObjectColorTable[TableBase + 2] = asuint(Average.g);
+			ObjectColorTable[TableBase + 3] = asuint(Average.b);
+			return;
+		}
+	}
+	// 表がいっぱいなら諦める（その物体は灰色のまま）
+}
