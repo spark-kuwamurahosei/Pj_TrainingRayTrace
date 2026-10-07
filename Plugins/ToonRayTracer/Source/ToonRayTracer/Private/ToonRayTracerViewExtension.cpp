@@ -109,6 +109,19 @@ namespace
 		TEXT("Offset (cm) of the shadow ray origin along the geometric normal, to avoid self-shadowing artifacts"),
 		ECVF_RenderThreadSafe);
 
+	// Perlin ノイズの応用：影の境目を手描き風に揺らす
+	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowNoiseStrength(
+		TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"),
+		0.0f,
+		TEXT("Strength of the Perlin noise that wobbles the toon shadow boundaries for a hand-drawn look (0: off, around 0.1-0.3 is subtle to strong)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowNoiseSize(
+		TEXT("r.ToonRayTracer.Toon.ShadowNoiseSize"),
+		40.0f,
+		TEXT("Size (cm) of the shadow boundary wobble. Computed in mesh local space with the mesh scale applied, so the pattern sticks to the mesh"),
+		ECVF_RenderThreadSafe);
+
 	// トゥーン T5：ハイライトとリムライト
 	TAutoConsoleVariable<float> CVarToonRayTracerToonHighlightThreshold(
 		TEXT("r.ToonRayTracer.Toon.HighlightThreshold"),
@@ -506,6 +519,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const float ToonLightScale = FMath::Max(CVarToonRayTracerToonLightScale.GetValueOnRenderThread(), 0.0f);
 	const bool bToonCastShadows = CVarToonRayTracerToonCastShadows.GetValueOnRenderThread() != 0;
 	const float ToonShadowBias = FMath::Max(CVarToonRayTracerToonShadowBias.GetValueOnRenderThread(), 0.0f);
+	const float ToonShadowNoiseStrength = FMath::Max(CVarToonRayTracerToonShadowNoiseStrength.GetValueOnRenderThread(), 0.0f);
+	const float ToonShadowNoiseSize = FMath::Max(CVarToonRayTracerToonShadowNoiseSize.GetValueOnRenderThread(), 0.1f);
 	const float ToonHighlightThreshold = CVarToonRayTracerToonHighlightThreshold.GetValueOnRenderThread();
 	const float ToonHighlightStrength = FMath::Clamp(CVarToonRayTracerToonHighlightStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const float ToonRimThreshold = CVarToonRayTracerToonRimThreshold.GetValueOnRenderThread();
@@ -524,7 +539,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(GetTypeHash(DirectionalLight.Intensity), GetTypeHash(DirectionalLight.bValid)));
 	const uint32 ToonHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(ToonBands), GetTypeHash(ToonShadowThreshold)), HashCombine(GetTypeHash(ToonLitThreshold), GetTypeHash(ToonEdgeSoftness))),
-		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), GetTypeHash(ToonLightScale)), HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias))));
+		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), GetTypeHash(ToonLightScale)), HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)))));
 	const uint32 ToonHighlightHash = HashCombine(
 		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
@@ -737,6 +752,15 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->ToonLightColor = PassParameters->LightColor * ToonLightScale;
 	PassParameters->bToonCastShadows = bToonCastShadows ? 1u : 0u;
 	PassParameters->ToonShadowBias = ToonShadowBias;
+	PassParameters->ToonShadowNoiseStrength = ToonShadowNoiseStrength;
+	PassParameters->ToonShadowNoiseSize = ToonShadowNoiseSize;
+	{
+		// double のワールド座標を float 2 つ（上位と下位）に分けて渡す（シェーダー側で MakeDFVector3 に戻す）
+		const FVector PreViewTranslationForNoise = View.ViewMatrices.GetPreViewTranslation();
+		const FVector3f High = FVector3f(PreViewTranslationForNoise);
+		PassParameters->PreViewTranslationHigh = High;
+		PassParameters->PreViewTranslationLow = FVector3f(PreViewTranslationForNoise - FVector(High));
+	}
 	PassParameters->ToonHighlightThreshold = ToonHighlightThreshold;
 	PassParameters->ToonHighlightStrength = ToonHighlightStrength;
 	PassParameters->ToonRimThreshold = ToonRimThreshold;
