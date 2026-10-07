@@ -337,6 +337,8 @@ namespace
 		FLinearColor Albedo2 = FLinearColor::Black;	// チェッカーのもう一方の色
 		float TextureUnitLength = 100.0f;	// 大理石：本の 1 単位の長さ（cm）。第5章のシーンは 1m、第10章は本の単位をそのまま cm にしている
 		float Density = 0.0f;		// 煙の濃さ（1cm あたりに散乱する確率、本の constant_medium の density）
+		// 『The Next Week』第2章：シャッターが開いている間に中心が動く量（cm、本の center2 - center1）
+		FVector Motion = FVector::ZeroVector;
 	};
 
 	// 『Ray Tracing in One Weekend』第11章のシーンをUEの単位系（cm, Z-up）に置き換えたもの
@@ -479,8 +481,9 @@ namespace
 	// 省いたもの：動く球の移動ブラー（第2章、止めた状態で置く）、地球の画像（UV のチェッカーで代用）、1000 個の小さな球
 	const FToonSphere GFinalSceneSpheres[] =
 	{
-		// 本では移動ブラーで動く、オレンジのランバートの球
-		{ FVector(200.0, 400.0, 400.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.7f, 0.3f, 0.1f), 0.0f, 1.0f },
+		// 移動ブラーで動く、オレンジのランバートの球（本の center2 = center1 + vec3(30, 0, 0)。本の x は UE の Y）
+		{ FVector(200.0, 400.0, 400.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.7f, 0.3f, 0.1f), 0.0f, 1.0f,
+			EToonTextureType::Solid, 1.0f, FLinearColor::Black, 100.0f, 0.0f, FVector(0.0, 30.0, 0.0) },
 		// ガラスの球
 		{ FVector(45.0, 260.0, 150.0), 50.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.5f },
 		// ぼけの強い金属の球
@@ -1017,6 +1020,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		PassParameters->SphereAlbedo[Index] = FVector4f(Sphere.Albedo.R, Sphere.Albedo.G, Sphere.Albedo.B, 0.0f);
 		PassParameters->SphereTextureParams[Index] = FVector4f(static_cast<float>(Sphere.Texture), Sphere.TextureScale, Sphere.TextureUnitLength, Sphere.Density);
 		PassParameters->SphereAlbedo2[Index] = FVector4f(Sphere.Albedo2.R, Sphere.Albedo2.G, Sphere.Albedo2.B, 0.0f);
+		PassParameters->SphereMotion[Index] = FVector4f(FVector3f(Sphere.Motion), 0.0f);
 	}
 	PassParameters->NumSpheres = AnalyticScene.Spheres.Num();
 

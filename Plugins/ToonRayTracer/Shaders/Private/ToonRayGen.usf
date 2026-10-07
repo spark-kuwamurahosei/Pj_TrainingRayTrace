@@ -182,7 +182,20 @@ float4 SphereAlbedo[TOON_MAX_SPHERES];
 // 『The Next Week』第4章：球のテクスチャ（x: 種類, y: 大きさ）と、チェッカーのもう一方の色（rgb）
 float4 SphereTextureParams[TOON_MAX_SPHERES];
 float4 SphereAlbedo2[TOON_MAX_SPHERES];
+// 『The Next Week』第2章：シャッターが開いている間（時刻 0 ～ 1）に球が動く量（xyz、cm）
+float4 SphereMotion[TOON_MAX_SPHERES];
 uint NumSpheres;
+
+// 『The Next Week』第2章：このサンプルのレイの時刻（0 ～ 1、本の ray::time）
+// 本はレイごとに時刻を持たせ、反射・屈折したレイにも引き継ぐ。1 サンプルの間はすべてのレイが同じ時刻になるため、
+// ここではサンプルごとの変数に入れ、シャドウレイなどの関数に時刻を渡さずに済むようにしている
+static float SampleTime = 0.0f;
+
+// 『The Next Week』第2章：時刻 SampleTime での球の中心（本の center.at(time)）
+float3 GetSphereCenter(uint Index)
+{
+	return Spheres[Index].xyz + SampleTime * SphereMotion[Index].xyz;
+}
 
 // 『The Next Week』第6章：四角形（Q：角の位置、U と V：角から伸びる 2 辺。xyz を使う）とマテリアル
 float4 QuadQ[TOON_MAX_QUADS];
@@ -796,11 +809,11 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bo
 		bool bHitSphere;
 		if (bVolume)
 		{
-			bHitSphere = HitSphereVolume(Spheres[Index].xyz, Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec);
+			bHitSphere = HitSphereVolume(GetSphereCenter(Index), Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec);
 		}
 		else
 		{
-			bHitSphere = HitSphere(Spheres[Index].xyz, Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec);
+			bHitSphere = HitSphere(GetSphereCenter(Index), Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec);
 		}
 		if (bHitSphere)
 		{
@@ -809,7 +822,7 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bo
 			Rec = TempRec;
 			Rec.Material.Type = SphereType;
 			Rec.Material.Density = SphereTextureParams[Index].w;
-			Rec.Material.Albedo = SampleSphereTexture(Index, Rec.UV, Rec.Position - Spheres[Index].xyz);
+			Rec.Material.Albedo = SampleSphereTexture(Index, Rec.UV, Rec.Position - GetSphereCenter(Index));
 			Rec.Material.Fuzz = SphereMaterialParams[Index].y;
 			Rec.Material.RefractionIndex = SphereMaterialParams[Index].z;
 			// w：トゥーンのハイライトとリムライトの強さ（地面は 0）
@@ -1631,7 +1644,7 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 		// 球は中心からの位置、四角形は角からの位置
 		if (Rec.ObjectId < NumSpheres)
 		{
-			return Rec.Position - Spheres[Rec.ObjectId].xyz;
+			return Rec.Position - GetSphereCenter(Rec.ObjectId);
 		}
 		if (Rec.ObjectId < NumSpheres + NumQuads)
 		{
@@ -2313,6 +2326,10 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）
 			float2 Offset = float2(ToonRandomFloat(RandomState), ToonRandomFloat(RandomState)) - 0.5f;
 			float2 UV = ((float2)LocalPixel + 0.5f + Offset) / (float2)ViewRectSize;
+
+			// 『The Next Week』第2章：シャッターが開いている間のランダムな時刻（本の ray(origin, direction, random_double())）
+			// 動く物体は時刻ごとに違う位置で当たり、サンプルとフレームの蓄積で平均されて、移動ブラーになる
+			SampleTime = ToonRandomFloat(RandomState);
 
 			FToonRay Ray = GenerateCameraRay(UV);
 			float3 SampleColor = RayColor(UV, Ray, RandomState);
