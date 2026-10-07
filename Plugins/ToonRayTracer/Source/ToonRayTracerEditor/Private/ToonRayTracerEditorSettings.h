@@ -66,6 +66,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|反射", meta = (DisplayName = "映り込みの法線のなめらかさ（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
 	float ReflectionNormalSmoothing;
 
+	/** カメラのレイが、通常描画に描かれていない面（マテリアルの透過で抜けた部分など）を通り抜ける */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "透過で抜けた面を通り抜ける"))
+	bool bSkipMaskedSurfaces;
+
 	/** マテリアルを Custom Primitive Data で指定していないメッシュを、UE のマテリアルのメタリックとラフネスから金属と判定する */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "金属を自動判定する"))
 	bool bUseGBufferMetal;
@@ -81,6 +85,14 @@ public:
 	/** 蓄積するフレーム数の上限 */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "蓄積フレーム数の上限", ClampMin = "1", UIMin = "1", UIMax = "4096", EditCondition = "bAccumulate"))
 	int32 MaxAccumulatedFrames;
+
+	/** 動いている物体（と、動いて見えるようになった後ろ側）のピクセルだけ蓄積をやり直す */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "動く物体を検出する", EditCondition = "bAccumulate"))
+	bool bDetectMotion;
+
+	/** 物体が動いている間の蓄積フレーム数の上限。小さいほど動く影や映り込みの残像が短くなる */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "物体が動いている間の蓄積フレーム数の上限", ClampMin = "1", UIMin = "1", UIMax = "64", EditCondition = "bAccumulate && bDetectMotion"))
+	int32 MotionMaxAccumulatedFrames;
 
 	/** 確認用の「本の第9〜11章」モードでの反射回数の上限 */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "反射回数の上限（第9〜11章モード）", ClampMin = "1", ClampMax = "50", UIMin = "1", UIMax = "50"))
@@ -150,9 +162,13 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "アウトラインを引く"))
 	bool bOutline;
 
-	/** 線の太さ（ピクセル） */
-	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "線の太さ（ピクセル）", ClampMin = "0.0", UIMin = "0.5", UIMax = "5.0", EditCondition = "bOutline"))
+	/** スケルタルメッシュ以外（背景や小物など）の線の太さ（ピクセル）。0 なら線を引かない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "線の太さ：背景など（ピクセル）", ClampMin = "0.0", UIMin = "0.0", UIMax = "5.0", EditCondition = "bOutline"))
 	float OutlineWidth;
+
+	/** スケルタルメッシュ（キャラクターなど）の線の太さ（ピクセル）。0 なら線を引かない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "線の太さ：キャラクター（ピクセル）", ClampMin = "0.0", UIMin = "0.0", UIMax = "5.0", EditCondition = "bOutline"))
+	float OutlineWidthSkinned;
 
 	/** 線を引く段差のしきい値。小さいほど細かい段差にも線が出る */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "線のしきい値", ClampMin = "0.0", UIMin = "0.1", UIMax = "5.0", EditCondition = "bOutline"))

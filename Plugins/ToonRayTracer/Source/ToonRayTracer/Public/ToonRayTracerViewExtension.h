@@ -61,6 +61,12 @@ private:
 	{
 		// これまでの平均値（線形色）を保持するテクスチャ
 		TRefCountPtr<IPooledRenderTarget> Texture;
+		// 動く物体への対応：前のフレームの深度（見えている物体が変わったかを調べる）
+		TRefCountPtr<IPooledRenderTarget> DepthTexture;
+		// 動く物体への対応：ピクセルの中心で何が見えていたかの要約（影や映り込みが変わったかを調べる）
+		TRefCountPtr<IPooledRenderTarget> SignatureTexture;
+		// 動く物体への対応：前のフレームに、シーン内で物体が動いていたかのフラグ
+		TRefCountPtr<FRDGPooledBuffer> SceneMotionBuffer;
 		// テクスチャに蓄積済みのフレーム数（上限で止まる）
 		uint32 AccumulatedFrames = 0;
 		// 乱数の種に使う、毎フレーム進むカウンタ（上限で止まらない）

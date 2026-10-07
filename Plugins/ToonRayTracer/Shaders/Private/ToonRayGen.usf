@@ -17,6 +17,23 @@ uint MaxAccumulatedFrames;
 // 乱数の種に混ぜる値（蓄積中は毎フレーム変わり、上限で止まらない）
 uint RandomSeed;
 
+// 動く物体への対応：GBuffer の速度、前のフレームの深度（ピクセルごと）、シーン内で動いている物体があるかのフラグ
+Texture2D GBufferVelocityTexture;
+RWTexture2D<float> AccumulationDepthTexture;
+// ピクセルの中心で「何が見えているか」の要約（ComputePixelSignature）。変わったピクセルは蓄積をやり直す
+RWTexture2D<uint> AccumulationSignatureTexture;
+StructuredBuffer<uint> PreviousSceneMotion;
+RWStructuredBuffer<uint> SceneMotion;
+// 1 なら動く物体を検出して、そのピクセルの蓄積をやり直す
+uint bDetectMotion;
+// 動いている物体があるフレームでの蓄積数の上限（影や映り込みの残像を短くする）
+uint MotionMaxAccumulatedFrames;
+
+// 動いているとみなす速度（ピクセル / フレーム）
+#define TOON_MOTION_MIN_PIXELS 0.05f
+// 見えている物体が変わったとみなす深度の差（割合）
+#define TOON_MOTION_DEPTH_TOLERANCE 0.01f
+
 // シーンの TLAS（Translated World 空間で構築されている）
 RaytracingAccelerationStructure TLAS;
 
@@ -64,6 +81,8 @@ uint bUseGBufferBaseColor;
 uint bUseGBufferMetal;
 // 金属として鏡面反射させるラフネスの上限（これより粗い金属は普通の塗りにする）
 float MetalRoughnessThreshold;
+// 1 なら、カメラのレイが GBuffer に描かれていない面（マテリアルの透過で抜けた部分など）に当たったとき、通り抜ける
+uint bSkipMaskedSurfaces;
 
 // 汎用化 G4：物体ごとの代表色（前のフレームまでに見えた UE のマテリアルの色の平均）と、このフレームに見えた色の合計
 StructuredBuffer<uint> ObjectColorTable;
@@ -100,6 +119,8 @@ uint bToonRimLitSideOnly;
 // トゥーン T6：アウトラインを引くか、線の太さ（ピクセル）、線を引く距離の差のしきい値（補助レイをずらした量の何倍か）、線の色
 uint bToonOutline;
 float ToonOutlineWidth;
+// スケルタルメッシュ（キャラクターなど）の線の太さ（ピクセル）
+float ToonOutlineWidthSkinned;
 float ToonOutlineThreshold;
 float3 ToonOutlineColor;
 
@@ -141,6 +162,8 @@ struct FToonMaterial
 	// トゥーン T5：メッシュごとのハイライトとリムライトの強さ（0 なら出さない）
 	float HighlightStrength;
 	float RimStrength;
+	// トゥーン T6：このメッシュの線の太さ（ピクセル、0 なら線を引かない）
+	float OutlineWidth;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -155,6 +178,7 @@ FToonMaterial GetDefaultMaterial()
 	Material.bHasShadowColor = 0;
 	Material.HighlightStrength = 0.0f;
 	Material.RimStrength = 0.0f;
+	Material.OutlineWidth = ToonOutlineWidth;
 	return Material;
 }
 
@@ -172,6 +196,7 @@ float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
 //   [6][7][8]: トゥーンの影色 RGB（すべて 0 なら全体の影色 r.ToonRayTracer.Toon.ShadowColor を使う）
 //   [9]: トゥーンのハイライトの強さ（0 ～ 1。未設定なら出さない）
 //   [10]: トゥーンのリムライトの強さ（未設定なら出さない）
+//   [11]: トゥーンの線の太さ（ピクセル。未設定ならメッシュの種類ごとの太さ、負の値なら線を引かない）
 FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 {
 	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
@@ -207,6 +232,15 @@ FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 	// ハイライトとリムライトは、平らな床や壁に出ると不自然なため、設定したメッシュにだけ出す
 	Material.HighlightStrength = saturate(GetCustomPrimitiveDataFloat(PrimitiveData, 9));
 	Material.RimStrength = max(GetCustomPrimitiveDataFloat(PrimitiveData, 10), 0.0f);
+
+	// 線の太さは、スケルタルメッシュ（キャラクターなど）とそれ以外（背景など）で分ける
+	// GPUScene のフラグで判定するため、メッシュごとの設定は不要。Custom Primitive Data で個別に上書きできる
+	Material.OutlineWidth = (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0 ? ToonOutlineWidthSkinned : ToonOutlineWidth;
+	float OutlineWidthOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 11);
+	if (OutlineWidthOverride != 0.0f)
+	{
+		Material.OutlineWidth = max(OutlineWidthOverride, 0.0f);
+	}
 
 	return Material;
 }
@@ -335,6 +369,7 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 			// w：トゥーンのハイライトとリムライトの強さ（地面は 0）
 			Rec.Material.HighlightStrength = SphereMaterialParams[Index].w;
 			Rec.Material.RimStrength = SphereMaterialParams[Index].w;
+			Rec.Material.OutlineWidth = ToonOutlineWidth;
 			Rec.ObjectId = Index;
 		}
 	}
@@ -553,6 +588,65 @@ bool IsGBufferSamePoint(float2 UV, float3 Position, float ToleranceBaseDistance)
 	float3 GBufferPosition = GBufferClipPosition.xyz / GBufferClipPosition.w;
 	float Tolerance = max(TOON_GBUFFER_MATCH_MIN_DISTANCE, ToleranceBaseDistance * TOON_GBUFFER_MATCH_RELATIVE_DISTANCE);
 	return distance(GBufferPosition, Position) <= Tolerance;
+}
+
+// カメラから通り抜ける面の最大数
+#define TOON_MAX_MASKED_SKIPS 4
+
+// 汎用化：カメラのレイが当たった点が、通常描画（GBuffer）では描かれていない面かどうか
+// レイトレーシングではすべての面を不透明として扱うため（AnyHit シェーダーを使わない）、
+// マテリアルの透過（Masked）で抜けているはずの部分にも当たる。その点が GBuffer に描かれている一番手前の面より
+// 明らかに手前にあれば、GBuffer には描かれていない（＝透過で抜けている）とみなす
+// 周囲 3x3 ピクセルの一番手前の深度と比べ、TAA のジッターで物体の輪郭を誤って抜かないようにする
+bool IsHiddenInGBuffer(float2 UV, float3 Position)
+{
+	int2 Center = GetGBufferPixel(UV);
+	int2 PixelMin = GBufferViewRectMin;
+	int2 PixelMax = GBufferViewRectMin + GBufferViewRectSize - 1;
+
+	// Reversed-Z のため、値が大きいほど手前（0 は何も描かれていない）
+	float NearestDeviceZ = 0.0f;
+	for (int OffsetY = -1; OffsetY <= 1; ++OffsetY)
+	{
+		for (int OffsetX = -1; OffsetX <= 1; ++OffsetX)
+		{
+			NearestDeviceZ = max(NearestDeviceZ, SceneDepthTexture.Load(int3(clamp(Center + int2(OffsetX, OffsetY), PixelMin, PixelMax), 0)).r);
+		}
+	}
+	if (NearestDeviceZ <= 0.0f)
+	{
+		// 周囲に何も描かれていない（空）のに当たった
+		return true;
+	}
+
+	// Translated World 空間の原点はカメラの位置なので、位置の長さがカメラからの距離になる
+	float4 GBufferClipPosition = mul(float4(UVToNDC(UV), NearestDeviceZ, 1.0f), ClipToTranslatedWorld);
+	float GBufferDistance = length(GBufferClipPosition.xyz / GBufferClipPosition.w);
+	float HitDistance = length(Position);
+	float Tolerance = max(TOON_GBUFFER_MATCH_MIN_DISTANCE, HitDistance * TOON_GBUFFER_MATCH_RELATIVE_DISTANCE);
+	return HitDistance < GBufferDistance - Tolerance;
+}
+
+// カメラのレイ（中心のレイとアウトラインの補助レイ）の交差判定
+// GBuffer に描かれていない面（透過で抜けている部分）に当たったら、その先へ通り抜けて次の面を探す
+// Custom Primitive Data でマテリアルを指定したメッシュ（ガラスなど）は通り抜けない
+bool HitCameraVisible(FToonRay Ray, float2 UV, inout FToonHitRecord Rec)
+{
+	float TMin = 0.0f;
+	for (uint Skip = 0; Skip <= TOON_MAX_MASKED_SKIPS; ++Skip)
+	{
+		if (!HitAnything(Ray, TMin, Rec))
+		{
+			return false;
+		}
+		if (bSkipMaskedSurfaces == 0 || TraceMode == 0 || Rec.Material.Type != TOON_MATERIAL_DEFAULT || !IsHiddenInGBuffer(UV, Rec.Position))
+		{
+			return true;
+		}
+		TMin = Rec.T + TOON_RAY_TMIN;
+		Rec = (FToonHitRecord)0;
+	}
+	return HitAnything(Ray, TMin, Rec);
 }
 
 // GBuffer のピクセルから、マテリアルの色と金属の判定を読んで Rec に反映する
@@ -984,7 +1078,12 @@ bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
 // 同じ平面上にぴったり並んだ別のメッシュの継ぎ目は、どちらの平面からも距離 0 なので線を引かない
 float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 {
-	float2 OffsetUV = ToonOutlineWidth / (float2)ViewRectSize;
+	// 線の太さは、中心に見えている物体ごとに決める（物体の輪郭の線は、手前の物体の側に引かれる）
+	if (Rec.Material.OutlineWidth <= 0.0f)
+	{
+		return 0.0f;
+	}
+	float2 OffsetUV = Rec.Material.OutlineWidth / (float2)ViewRectSize;
 	float2 Directions[4] = { float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f) };
 
 	// 中心の点の法線は、GBuffer の滑らかな法線（ApplyGBufferNormal 済み）を使う
@@ -998,7 +1097,7 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 
 		// 補助レイでも面の向きが必要なため、法線まで求める交差判定を使い、カメラから直接見える点なので GBuffer の法線に置き換える
 		FToonHitRecord NeighborRec = (FToonHitRecord)0;
-		if (!HitAnything(NeighborRay, 0.0f, NeighborRec))
+		if (!HitCameraVisible(NeighborRay, NeighborUV, NeighborRec))
 		{
 			return 1.0f;
 		}
@@ -1157,8 +1256,12 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 
 		// 反射・屈折した先は GBuffer の法線が使えないことが多いため、補助レイの間隔を広げてなめらかな法線にする
 		// （面ごとの法線のままだと、映り込んだ物体の明暗の境目がポリゴンに沿って階段状になる）
+		// カメラのレイは、透過で抜けている面を通り抜ける
 		FToonHitRecord Rec = (FToonHitRecord)0;
-		if (!HitAnything(Current.Ray, bCameraRay ? 0.0f : TOON_RAY_TMIN, Rec, bCameraRay ? 0.0f : ReflectionNormalSmoothing))
+		bool bHit = bCameraRay
+			? HitCameraVisible(Current.Ray, UV, Rec)
+			: HitAnything(Current.Ray, TOON_RAY_TMIN, Rec, ReflectionNormalSmoothing);
+		if (!bHit)
 		{
 			Color += Current.Throughput * SkyColor(Current.Ray);
 			continue;
@@ -1259,16 +1362,154 @@ float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
 }
 
 // レイトレーシングのエントリーポイント
+// 動く物体への対応：GBuffer の速度から、そのピクセルに見えている物体が動いているかを調べる
+// 速度を書き込まない（動いていない）物体は 0 のまま（EncodeVelocityToTexture は 0 を「速度なし」として残している）
+bool IsPixelMoving(float2 UV)
+{
+	float4 EncodedVelocity = GBufferVelocityTexture.Load(int3(GetGBufferPixel(UV), 0));
+	if (EncodedVelocity.x <= 0.0f)
+	{
+		return false;
+	}
+	// 速度はクリップ空間（-1 ～ 1）での移動量なので、半分にして画面のピクセル数を掛けるとピクセル単位になる
+	float2 Velocity = DecodeVelocityFromTexture(EncodedVelocity).xy;
+	return any(abs(Velocity) * 0.5f * (float2)GBufferViewRectSize > TOON_MOTION_MIN_PIXELS);
+}
+
+// 動く物体への対応：周囲のピクセルも含めて、動いている物体が見えているかを調べる
+// アウトラインは物体の輪郭の外側（背景のピクセル）にも描かれるため、そのピクセルだけを見ると
+// 動いていない・深度も変わらないと判定され、線の残像が残る。線の太さ分だけ離れたピクセルも調べる
+bool IsNeighborhoodMoving(float2 UV)
+{
+	float Radius = bToonOutline != 0 ? ceil(max(ToonOutlineWidth, ToonOutlineWidthSkinned)) + 1.0f : 1.0f;
+	float2 UVStep = Radius / (float2)ViewRectSize;
+	for (int OffsetY = -1; OffsetY <= 1; ++OffsetY)
+	{
+		for (int OffsetX = -1; OffsetX <= 1; ++OffsetX)
+		{
+			if (IsPixelMoving(saturate(UV + float2(OffsetX, OffsetY) * UVStep)))
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// 動く物体への対応：前のフレームの深度が、今のフレームの周囲 3x3 ピクセルの深度の範囲から外れていれば、
+// 見えている物体が変わった（物体が動いて後ろが見えた、など）とみなす
+// 1 ピクセルだけで比べると、GBuffer の TAA のジッターで輪郭の深度が毎フレーム入れ替わり、輪郭の蓄積が進まなくなるため範囲で比べる
+bool HasDepthChanged(float2 UV, float PreviousDeviceZ, out float CurrentDeviceZ)
+{
+	int2 Center = GetGBufferPixel(UV);
+	int2 PixelMin = GBufferViewRectMin;
+	int2 PixelMax = GBufferViewRectMin + GBufferViewRectSize - 1;
+	CurrentDeviceZ = SceneDepthTexture.Load(int3(Center, 0)).r;
+
+	float MinDeviceZ = CurrentDeviceZ;
+	float MaxDeviceZ = CurrentDeviceZ;
+	for (int OffsetY = -1; OffsetY <= 1; ++OffsetY)
+	{
+		for (int OffsetX = -1; OffsetX <= 1; ++OffsetX)
+		{
+			float DeviceZ = SceneDepthTexture.Load(int3(clamp(Center + int2(OffsetX, OffsetY), PixelMin, PixelMax), 0)).r;
+			MinDeviceZ = min(MinDeviceZ, DeviceZ);
+			MaxDeviceZ = max(MaxDeviceZ, DeviceZ);
+		}
+	}
+
+	// Reversed-Z の深度はカメラからの距離に反比例するため、割合で比べれば距離の割合で比べたのと同じになる
+	float Tolerance = PreviousDeviceZ * TOON_MOTION_DEPTH_TOLERANCE;
+	return PreviousDeviceZ < MinDeviceZ - Tolerance || PreviousDeviceZ > MaxDeviceZ + Tolerance;
+}
+
+// 動く物体への対応：ピクセルの中心のレイで「何が見えているか」の要約（シグネチャ）を作る
+// 見えている物体、その点に光が届くか、その点で鏡のように反射した先の物体のどれかが変わると値が変わる
+// （動く物体の影が落ちてきた、鏡に動く物体が映り込んだ、などを検出する）
+// ジッターのない中心のレイと、GBuffer を使わない面ごとの法線だけで作るため、何も動いていなければ毎フレーム同じ値になる
+// 反射した先は素材に関係なく調べる（金属でない面で値が変わっても、そのピクセルの蓄積がやり直されるだけで見た目は変わらない）
+uint ComputePixelSignature(float2 UV)
+{
+	if (TraceMode == 0)
+	{
+		return 0;
+	}
+
+	FToonRay Ray = GenerateCameraRay(UV);
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (!HitAnything(Ray, 0.0f, Rec))
+	{
+		return 0;
+	}
+
+	bool bLit = false;
+	if (bHasDirectionalLight != 0 && dot(Rec.Normal, ToLightDirection) > 0.0f)
+	{
+		bLit = bToonCastShadows == 0 || IsLightVisible(Rec.Position + Rec.Normal * ToonShadowBias, false);
+	}
+
+	FToonRay ReflectedRay;
+	ReflectedRay.Origin = Rec.Position;
+	ReflectedRay.Direction = reflect(Ray.Direction, Rec.Normal);
+	FDefaultPayload ReflectedPayload;
+	uint ReflectedObject = TraceScene(ReflectedRay, TOON_RAY_TMIN, ReflectedPayload) ? ReflectedPayload.InstanceID + 1 : 0;
+
+	return ToonPcgHash(ToonPcgHash(Rec.ObjectId * 2u + (bLit ? 1u : 0u)) ^ ReflectedObject) | 1u;
+}
+
 RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 {
 	// ディスパッチは ViewRect のサイズで行うため、ここで得られるのは ViewRect 内のローカル座標
 	uint2 LocalPixel = DispatchRaysIndex().xy;
+	float2 CenterUV = ((float2)LocalPixel + 0.5f) / (float2)ViewRectSize;
+
+	// このピクセルに蓄積済みのフレーム数（AccumulationTexture の a に入れている）
+	// AccumulatedFrames が 0（カメラや設定が変わった直後）なら、全ピクセルを最初からやり直す
+	float4 History = 0.0f;
+	uint HistoryFrames = 0;
+	if (AccumulatedFrames > 0)
+	{
+		History = AccumulationTexture[LocalPixel];
+		HistoryFrames = (uint)History.a;
+	}
+
+	// 動く物体への対応
+	// ・動いている物体が見えているピクセルと、見えている物体が変わったピクセルは、蓄積をやり直す
+	// ・前のフレームにどこかで物体が動いていたら、全ピクセルの蓄積数を少なく抑える（動く物体の影や映り込みの残像を短くする）
+	bool bSceneMoving = false;
+	if (bDetectMotion != 0)
+	{
+		bSceneMoving = PreviousSceneMotion[0] != 0;
+
+		float CurrentDeviceZ;
+		bool bDepthChanged = HasDepthChanged(CenterUV, AccumulationDepthTexture[LocalPixel], CurrentDeviceZ);
+		AccumulationDepthTexture[LocalPixel] = CurrentDeviceZ;
+
+		if (AccumulatedFrames > 0 && (bDepthChanged || IsNeighborhoodMoving(CenterUV)))
+		{
+			HistoryFrames = 0;
+			InterlockedOr(SceneMotion[0], 1u);
+		}
+
+		// 物体が動いている間と、蓄積をやり直すピクセルでは、何が見えているかの要約を作って前のフレームと比べる
+		// 動く物体の影や映り込みが変わったピクセルだけやり直し、それ以外（止まっている物体の輪郭など）は蓄積を続ける
+		if (bSceneMoving || HistoryFrames == 0)
+		{
+			uint Signature = ComputePixelSignature(CenterUV);
+			if (Signature != AccumulationSignatureTexture[LocalPixel])
+			{
+				HistoryFrames = 0;
+			}
+			AccumulationSignatureTexture[LocalPixel] = Signature;
+		}
+	}
+	uint MaxFrames = bSceneMoving ? clamp(MotionMaxAccumulatedFrames, 1u, MaxAccumulatedFrames) : MaxAccumulatedFrames;
 
 	float3 Color;
-	if (AccumulatedFrames >= MaxAccumulatedFrames)
+	if (!bSceneMoving && HistoryFrames >= MaxFrames)
 	{
 		// 蓄積数の上限に達したら、それ以上レイを飛ばさず蓄積済みの平均をそのまま表示する
-		Color = AccumulationTexture[LocalPixel].rgb;
+		Color = History.rgb;
 	}
 	else
 	{
@@ -1303,15 +1544,16 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 
 		// フェーズ7：カメラが静止している間、これまでのフレームの平均と混ぜる
 		// N フレーム分の平均に新しい1フレームを 1/(N+1) の重みで加えると、N+1 フレーム分の平均になる
-		if (AccumulatedFrames > 0)
+		// 動いている物体があるフレームでは N を上限で抑え、古いフレームの影響が早く消えるようにする
+		uint PreviousFrames = min(HistoryFrames, MaxFrames - 1);
+		if (PreviousFrames > 0)
 		{
-			float3 PreviousAverage = AccumulationTexture[LocalPixel].rgb;
 			// このフレームに有効なサンプルがなければ、これまでの平均をそのまま使う
 			Color = ValidSamples > 0
-				? lerp(PreviousAverage, Color, 1.0f / (float)(AccumulatedFrames + 1))
-				: PreviousAverage;
+				? lerp(History.rgb, Color, 1.0f / (float)(PreviousFrames + 1))
+				: History.rgb;
 		}
-		AccumulationTexture[LocalPixel] = float4(Color, 1.0f);
+		AccumulationTexture[LocalPixel] = float4(Color, (float)(PreviousFrames + 1));
 	}
 
 	// ガンマ補正（本の linear_to_gamma）

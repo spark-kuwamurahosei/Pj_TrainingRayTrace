@@ -104,9 +104,12 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	bUseGBufferForReflections = true;
 	ReflectionNormalSmoothing = 15.0f;
 	bUseGBufferMetal = true;
+	bSkipMaskedSurfaces = true;
 	MetalRoughnessThreshold = 0.4f;
 	bAccumulate = true;
 	MaxAccumulatedFrames = 1024;
+	bDetectMotion = true;
+	MotionMaxAccumulatedFrames = 8;
 	MaxDepth = 10;
 
 	Bands = 2;
@@ -127,6 +130,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 
 	bOutline = true;
 	OutlineWidth = 1.5f;
+	OutlineWidthSkinned = 1.0f;
 	OutlineThreshold = 1.0f;
 	OutlineColor = FLinearColor(0.02f, 0.02f, 0.04f);
 
@@ -143,9 +147,12 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferForReflections"), bUseGBufferForReflections);
 	SetFloat(TEXT("r.ToonRayTracer.ReflectionNormalSmoothing"), ReflectionNormalSmoothing);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferMetal"), bUseGBufferMetal);
+	SetBool(TEXT("r.ToonRayTracer.SkipMaskedSurfaces"), bSkipMaskedSurfaces);
 	SetFloat(TEXT("r.ToonRayTracer.MetalRoughnessThreshold"), MetalRoughnessThreshold);
 	SetBool(TEXT("r.ToonRayTracer.Accumulate"), bAccumulate);
 	SetInt(TEXT("r.ToonRayTracer.MaxAccumulatedFrames"), MaxAccumulatedFrames);
+	SetBool(TEXT("r.ToonRayTracer.DetectMotion"), bDetectMotion);
+	SetInt(TEXT("r.ToonRayTracer.MotionMaxAccumulatedFrames"), MotionMaxAccumulatedFrames);
 	SetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
 
 	SetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
@@ -166,6 +173,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 
 	SetBool(TEXT("r.ToonRayTracer.Toon.Outline"), bOutline);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidth"), OutlineWidth);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidthSkinned"), OutlineWidthSkinned);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.OutlineThreshold"), OutlineThreshold);
 	SetColor(TEXT("r.ToonRayTracer.Toon.OutlineColor"), OutlineColor);
 
@@ -182,9 +190,12 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferForReflections"), bUseGBufferForReflections);
 	GetFloat(TEXT("r.ToonRayTracer.ReflectionNormalSmoothing"), ReflectionNormalSmoothing);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferMetal"), bUseGBufferMetal);
+	GetBool(TEXT("r.ToonRayTracer.SkipMaskedSurfaces"), bSkipMaskedSurfaces);
 	GetFloat(TEXT("r.ToonRayTracer.MetalRoughnessThreshold"), MetalRoughnessThreshold);
 	GetBool(TEXT("r.ToonRayTracer.Accumulate"), bAccumulate);
 	GetInt(TEXT("r.ToonRayTracer.MaxAccumulatedFrames"), MaxAccumulatedFrames);
+	GetBool(TEXT("r.ToonRayTracer.DetectMotion"), bDetectMotion);
+	GetInt(TEXT("r.ToonRayTracer.MotionMaxAccumulatedFrames"), MotionMaxAccumulatedFrames);
 	GetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
 
 	GetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
@@ -205,6 +216,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 
 	GetBool(TEXT("r.ToonRayTracer.Toon.Outline"), bOutline);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidth"), OutlineWidth);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidthSkinned"), OutlineWidthSkinned);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.OutlineThreshold"), OutlineThreshold);
 	GetColor(TEXT("r.ToonRayTracer.Toon.OutlineColor"), OutlineColor);
 

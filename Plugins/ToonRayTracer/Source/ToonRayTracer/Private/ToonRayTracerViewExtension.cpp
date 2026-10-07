@@ -13,6 +13,10 @@
 #include "UObject/UObjectIterator.h"
 #include "RenderingThread.h"
 #include "RenderGraphUtils.h"
+#include "ProfilingDebugging/RealtimeGPUProfiler.h"
+
+// stat gpu に「ToonRayTracer」として GPU 時間を表示する
+DECLARE_GPU_STAT(ToonRayTracer);
 
 namespace
 {
@@ -139,7 +143,13 @@ namespace
 	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineWidth(
 		TEXT("r.ToonRayTracer.Toon.OutlineWidth"),
 		1.5f,
-		TEXT("Outline width in pixels (offset of the neighbor rays)"),
+		TEXT("Outline width in pixels (offset of the neighbor rays) for meshes other than skeletal meshes (backgrounds, props)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineWidthSkinned(
+		TEXT("r.ToonRayTracer.Toon.OutlineWidthSkinned"),
+		1.0f,
+		TEXT("Outline width in pixels for skeletal meshes (characters)"),
 		ECVF_RenderThreadSafe);
 
 	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineThreshold(
@@ -234,6 +244,26 @@ namespace
 		TEXT("r.ToonRayTracer.MaxAccumulatedFrames"),
 		1024,
 		TEXT("Upper limit of accumulated frames. After reaching it, the accumulated result is shown without tracing new rays"),
+		ECVF_RenderThreadSafe);
+
+	// カメラのレイが、GBuffer に描かれていない面（マテリアルの透過で抜けた部分など）を通り抜けるか
+	TAutoConsoleVariable<int32> CVarToonRayTracerSkipMaskedSurfaces(
+		TEXT("r.ToonRayTracer.SkipMaskedSurfaces"),
+		1,
+		TEXT("Camera rays pass through surfaces that are not in the GBuffer (e.g. cut out by masked materials)"),
+		ECVF_RenderThreadSafe);
+
+	// 動く物体への対応
+	TAutoConsoleVariable<int32> CVarToonRayTracerDetectMotion(
+		TEXT("r.ToonRayTracer.DetectMotion"),
+		1,
+		TEXT("Detect moving objects (GBuffer velocity and depth changes) and restart the accumulation of the affected pixels"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerMotionMaxAccumulatedFrames(
+		TEXT("r.ToonRayTracer.MotionMaxAccumulatedFrames"),
+		8,
+		TEXT("Upper limit of accumulated frames while something is moving in the scene. Smaller values shorten the trails of moving shadows and reflections"),
 		ECVF_RenderThreadSafe);
 
 	// この数のフレームで使われなかったビューの蓄積状態は破棄する
@@ -390,6 +420,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		return Inputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 	}
 
+	// このパスで追加する処理（色の表のクリア・解決、蓄積、レイトレーシング）の GPU 時間をまとめて計測する
+	RDG_EVENT_SCOPE_STAT(GraphBuilder, ToonRayTracer, "ToonRayTracer");
+
 	// 現在の画面の情報を取得
 	FScreenPassTexture SceneColor = (FScreenPassTexture)Inputs.GetInput(EPostProcessMaterialInput::SceneColor);
 
@@ -419,6 +452,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const float ReflectionNormalSmoothing = FMath::Max(CVarToonRayTracerReflectionNormalSmoothing.GetValueOnRenderThread(), 0.0f);
 	const float MetalRoughnessThreshold = FMath::Clamp(CVarToonRayTracerMetalRoughnessThreshold.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const uint32 MaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
+	const bool bDetectMotion = bHasGBuffer && CVarToonRayTracerDetectMotion.GetValueOnRenderThread() != 0;
+	const bool bSkipMaskedSurfaces = bHasGBuffer && CVarToonRayTracerSkipMaskedSurfaces.GetValueOnRenderThread() != 0;
+	const uint32 MotionMaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMotionMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
 	const FIntPoint ViewRectSize = Output.ViewRect.Size();
 
 	// TAA 用のジッターを含まない行列でレイを作る
@@ -446,6 +482,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const bool bToonRimLitSideOnly = CVarToonRayTracerToonRimLitSideOnly.GetValueOnRenderThread() != 0;
 	const bool bToonOutline = CVarToonRayTracerToonOutline.GetValueOnRenderThread() != 0;
 	const float ToonOutlineWidth = FMath::Max(CVarToonRayTracerToonOutlineWidth.GetValueOnRenderThread(), 0.0f);
+	const float ToonOutlineWidthSkinned = FMath::Max(CVarToonRayTracerToonOutlineWidthSkinned.GetValueOnRenderThread(), 0.0f);
 	const float ToonOutlineThreshold = FMath::Max(CVarToonRayTracerToonOutlineThreshold.GetValueOnRenderThread(), 0.0f);
 	const FLinearColor ToonOutlineColor = ToonOutlineColor_RenderThread;
 	const uint32 ToonReflectionDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonReflectionDepth.GetValueOnRenderThread(), 0, 16));
@@ -461,11 +498,11 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
 	const uint32 ToonOutlineHash = HashCombine(
-		HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)),
+		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
+		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
 		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
@@ -482,7 +519,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 			|| !AccumulationState->ViewToClipNoAA.Equals(ViewToClipNoAA, 0.0)
 			|| AccumulationState->ViewRectSize != ViewRectSize
 			|| AccumulationState->SettingsHash != SettingsHash
-			|| !AccumulationState->Texture.IsValid();
+			|| !AccumulationState->Texture.IsValid()
+			|| !AccumulationState->DepthTexture.IsValid()
+			|| !AccumulationState->SignatureTexture.IsValid();
 		if (bCameraOrSettingsChanged)
 		{
 			AccumulationState->AccumulatedFrames = 0;
@@ -561,6 +600,48 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 			ViewRectSize, PF_A32B32G32R32F, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
 		AccumulationTexture = GraphBuilder.CreateTexture(AccumulationDesc, TEXT("ToonRayTracerAccumulation"));
 	}
+
+	// 動く物体への対応：前のフレームの深度（蓄積用テクスチャと同じく、リセット時は作り直す）
+	FRDGTextureRef AccumulationDepthTexture = nullptr;
+	if (AccumulationState && AccumulationState->DepthTexture.IsValid() && AccumulationState->AccumulatedFrames > 0)
+	{
+		AccumulationDepthTexture = GraphBuilder.RegisterExternalTexture(AccumulationState->DepthTexture, TEXT("ToonRayTracerAccumulationDepth"));
+	}
+	else
+	{
+		const FRDGTextureDesc DepthDesc = FRDGTextureDesc::Create2D(
+			ViewRectSize, PF_R32_FLOAT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+		AccumulationDepthTexture = GraphBuilder.CreateTexture(DepthDesc, TEXT("ToonRayTracerAccumulationDepth"));
+	}
+
+	// 動く物体への対応：ピクセルの中心で何が見えていたかの要約
+	FRDGTextureRef AccumulationSignatureTexture = nullptr;
+	if (AccumulationState && AccumulationState->SignatureTexture.IsValid() && AccumulationState->AccumulatedFrames > 0)
+	{
+		AccumulationSignatureTexture = GraphBuilder.RegisterExternalTexture(AccumulationState->SignatureTexture, TEXT("ToonRayTracerAccumulationSignature"));
+	}
+	else
+	{
+		const FRDGTextureDesc SignatureDesc = FRDGTextureDesc::Create2D(
+			ViewRectSize, PF_R32_UINT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+		AccumulationSignatureTexture = GraphBuilder.CreateTexture(SignatureDesc, TEXT("ToonRayTracerAccumulationSignature"));
+	}
+
+	// 動く物体への対応：シーン内で物体が動いていたかのフラグ
+	// このフレームの結果は次のフレームで使う（前のフレームのものがなければ「動いていない」として 0 のバッファを使う）
+	const FRDGBufferDesc SceneMotionDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1);
+	FRDGBufferRef PreviousSceneMotion = nullptr;
+	if (AccumulationState && AccumulationState->SceneMotionBuffer.IsValid())
+	{
+		PreviousSceneMotion = GraphBuilder.RegisterExternalBuffer(AccumulationState->SceneMotionBuffer, TEXT("ToonRayTracerPreviousSceneMotion"));
+	}
+	else
+	{
+		PreviousSceneMotion = GraphBuilder.CreateBuffer(SceneMotionDesc, TEXT("ToonRayTracerPreviousSceneMotion"));
+		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(PreviousSceneMotion), 0u);
+	}
+	FRDGBufferRef SceneMotion = GraphBuilder.CreateBuffer(SceneMotionDesc, TEXT("ToonRayTracerSceneMotion"));
+	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(SceneMotion), 0u);
 	const uint32 AccumulatedFrames = AccumulationState ? AccumulationState->AccumulatedFrames : 0;
 
 	FToonRayGenShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FToonRayGenShader::FParameters>();
@@ -569,8 +650,17 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->AccumulatedFrames = AccumulatedFrames;
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
 	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : 0;
+	PassParameters->AccumulationDepthTexture = GraphBuilder.CreateUAV(AccumulationDepthTexture);
+	PassParameters->AccumulationSignatureTexture = GraphBuilder.CreateUAV(AccumulationSignatureTexture);
+	PassParameters->PreviousSceneMotion = GraphBuilder.CreateSRV(PreviousSceneMotion);
+	PassParameters->SceneMotion = GraphBuilder.CreateUAV(SceneMotion);
+	PassParameters->bDetectMotion = bDetectMotion ? 1u : 0u;
+	PassParameters->MotionMaxAccumulatedFrames = MotionMaxAccumulatedFrames;
+	PassParameters->GBufferVelocityTexture = bDetectMotion && SceneTextureParameters->GBufferVelocityTexture
+		? SceneTextureParameters->GBufferVelocityTexture
+		: GSystemTextures.GetBlackDummy(GraphBuilder);
 	PassParameters->TLAS = TLAS;
-	if (bUseGBufferNormal || bUseGBufferBaseColor || bUseGBufferMetal || bUseGBufferForReflections)
+	if (bUseGBufferNormal || bUseGBufferBaseColor || bUseGBufferMetal || bUseGBufferForReflections || bDetectMotion || bSkipMaskedSurfaces)
 	{
 		// GBuffer は描画解像度で作られるため、アップスケール前の描画範囲を渡す
 		const FIntRect GBufferViewRect = UE::FXRenderingUtils::GetRawViewRectUnsafe(View);
@@ -596,6 +686,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->bUseGBufferForReflections = bUseGBufferForReflections ? 1u : 0u;
 	PassParameters->ReflectionNormalSmoothing = ReflectionNormalSmoothing;
 	PassParameters->MetalRoughnessThreshold = MetalRoughnessThreshold;
+	PassParameters->bSkipMaskedSurfaces = bSkipMaskedSurfaces ? 1u : 0u;
 	PassParameters->ToLightDirection = DirectionalLight.ToLightDirection;
 	PassParameters->LightColor = FVector3f(DirectionalLight.Color.R, DirectionalLight.Color.G, DirectionalLight.Color.B);
 	PassParameters->bHasDirectionalLight = DirectionalLight.bValid ? 1u : 0u;
@@ -614,6 +705,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->bToonRimLitSideOnly = bToonRimLitSideOnly ? 1u : 0u;
 	PassParameters->bToonOutline = bToonOutline ? 1u : 0u;
 	PassParameters->ToonOutlineWidth = ToonOutlineWidth;
+	PassParameters->ToonOutlineWidthSkinned = ToonOutlineWidthSkinned;
 	PassParameters->ToonOutlineThreshold = ToonOutlineThreshold;
 	PassParameters->ToonReflectionDepth = ToonReflectionDepth;
 	PassParameters->ToonOutlineColor = FVector3f(ToonOutlineColor.R, ToonOutlineColor.G, ToonOutlineColor.B);
@@ -693,7 +785,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 
 	// RDGにレイトレーシング用のパスを登録してディスパッチ
 	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("ToonRayTracing_Phase1"),
+		RDG_EVENT_NAME("ToonRayTracing_RayGen %dx%d", Resolution.X, Resolution.Y),
 		PassParameters,
 		ERDGPassFlags::Compute,
 		[PassParameters, RayGenShader, PipelineState, SBT, Resolution](FRDGAsyncTask, FRHICommandList& RHICmdList)
@@ -738,6 +830,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	if (AccumulationState)
 	{
 		GraphBuilder.QueueTextureExtraction(AccumulationTexture, &AccumulationState->Texture);
+		GraphBuilder.QueueTextureExtraction(AccumulationDepthTexture, &AccumulationState->DepthTexture);
+		GraphBuilder.QueueTextureExtraction(AccumulationSignatureTexture, &AccumulationState->SignatureTexture);
+		GraphBuilder.QueueBufferExtraction(SceneMotion, &AccumulationState->SceneMotionBuffer);
 	}
 
 	// このパスがポストプロセスの最後の場合、エンジンが用意した出力先へ書き戻す必要がある

@@ -41,6 +41,16 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, MaxAccumulatedFrames)
 		// 乱数の種に混ぜる値（蓄積中は毎フレーム変わる）
 		SHADER_PARAMETER(uint32, RandomSeed)
+		// 動く物体への対応：GBuffer の速度、前のフレームの深度、シーン内で物体が動いているかのフラグ（前のフレーム / このフレーム）
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferVelocityTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, AccumulationDepthTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, AccumulationSignatureTexture)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PreviousSceneMotion)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, SceneMotion)
+		// 1 なら動く物体を検出して蓄積をやり直す
+		SHADER_PARAMETER(uint32, bDetectMotion)
+		// 動いている物体があるフレームでの蓄積数の上限
+		SHADER_PARAMETER(uint32, MotionMaxAccumulatedFrames)
 		// シーンの TLAS（Translated World 空間で構築されている）
 		SHADER_PARAMETER_RDG_BUFFER_SRV(RaytracingAccelerationStructure, TLAS)
 		// 0: 解析的な球、1: シーンの TLAS に TraceRay
@@ -84,6 +94,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, bUseGBufferMetal)
 		// 金属として鏡面反射させるラフネスの上限
 		SHADER_PARAMETER(float, MetalRoughnessThreshold)
+		// 1 なら、カメラのレイが GBuffer に描かれていない面（透過で抜けた部分など）を通り抜ける
+		SHADER_PARAMETER(uint32, bSkipMaskedSurfaces)
 		// Directional Light（光源へ向かう方向、色）。bHasDirectionalLight が 0 ならライトなし
 		SHADER_PARAMETER(FVector3f, ToLightDirection)
 		SHADER_PARAMETER(FVector3f, LightColor)
@@ -107,6 +119,7 @@ class FToonRayGenShader : public FGlobalShader
 		// トゥーン T6：アウトラインを引くか、線の太さ（ピクセル）、線を引く距離の差のしきい値（補助レイをずらした量の何倍か）、線の色
 		SHADER_PARAMETER(uint32, bToonOutline)
 		SHADER_PARAMETER(float, ToonOutlineWidth)
+		SHADER_PARAMETER(float, ToonOutlineWidthSkinned)
 		SHADER_PARAMETER(float, ToonOutlineThreshold)
 		SHADER_PARAMETER(FVector3f, ToonOutlineColor)
 		// トゥーン T7：金属・ガラスで反射・屈折を追いかける回数の上限
