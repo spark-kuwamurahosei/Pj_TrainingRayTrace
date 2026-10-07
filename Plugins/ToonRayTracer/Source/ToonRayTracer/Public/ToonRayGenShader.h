@@ -41,7 +41,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, MaxAccumulatedFrames)
 		// 乱数の種に混ぜる値（蓄積中は毎フレーム変わる）
 		SHADER_PARAMETER(uint32, RandomSeed)
-		// 動く物体への対応：GBuffer の速度、前のフレームの深度、シーン内で物体が動いているかのフラグ（前のフレーム / このフレーム）
+		// 動く物体への対応：GBuffer の速度、前のフレームの深度、シーン内で動きを検出したピクセル数（前のフレーム / このフレーム）
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferVelocityTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, AccumulationDepthTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, AccumulationSignatureTexture)
@@ -51,6 +51,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, bDetectMotion)
 		// 動いている物体があるフレームでの蓄積数の上限
 		SHADER_PARAMETER(uint32, MotionMaxAccumulatedFrames)
+		// 1 なら蓄積をやり直した理由を色で表示する（確認用）
+		SHADER_PARAMETER(uint32, DebugMotion)
 		// シーンの TLAS（Translated World 空間で構築されている）
 		SHADER_PARAMETER_RDG_BUFFER_SRV(RaytracingAccelerationStructure, TLAS)
 		// 0: 解析的な球、1: シーンの TLAS に TraceRay
