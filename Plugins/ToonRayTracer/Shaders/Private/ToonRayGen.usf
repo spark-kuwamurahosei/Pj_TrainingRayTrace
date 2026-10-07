@@ -221,6 +221,21 @@ float4 GroundGridParams;
 float4 GroundGridAlbedo;
 uint bGroundGrid;
 
+// 『The Next Week』第3章：BVH（入れ子の箱）で探す、たくさんの小さな球（本の final_scene の boxes2）
+// ノード 1 つは float4 2 つ：[0] = (箱の最小値 xyz, 子または最初の球の番号), [1] = (箱の最大値 xyz, 葉の球の数（0 なら内部ノード）)
+// 内部ノードの左の子は次の番号、右の子は [0].w の番号（深さ優先の順に並べている）
+// 座標は BvhOrigin（Translated World 空間）からの相対位置
+StructuredBuffer<float4> BvhNodes;
+StructuredBuffer<float4> BvhSpheres;	// xyz: 中心, w: 半径
+float4 BvhOrigin;
+float4 BvhAlbedo;
+uint NumBvhNodes;
+
+// BVH の球の識別番号の始まり（他の物体と重ならないよう大きくしている）
+#define TOON_BVH_OBJECT_ID_BASE 0x100000u
+// BVH をたどるときのスタックの大きさ（木の深さより大きくする）
+#define TOON_BVH_STACK_SIZE 32
+
 // 『The Next Week』第7章：1 なら背景を空ではなく黒にする（光る物体だけで照らすシーン）
 uint bBlackBackground;
 
@@ -788,6 +803,70 @@ bool HitGroundGrid(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Re
 // HLSL では関数がすべて呼び出し元に展開されるため、回数の決まったループが展開されると交差判定が何十か所にもコピーされ、
 // シェーダーが巨大になってドライバーのパイプライン構築が終わらなくなる（エディタが起動しない、GPU が応答しなくなる）
 
+// 『The Next Week』第3章：BVH をたどって、一番近い小さな球を探す（本の bvh_node::hit）
+// 本は再帰で左右の子を調べるが、シェーダーでは再帰できないため、調べるノードをスタックに積んで順に取り出す
+// レイが箱に当たらない（またはすでに見つけた球より遠い）ノードは、中を調べずに飛ばす
+bool HitSphereCluster(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, out uint SphereIndex)
+{
+	SphereIndex = 0;
+	FToonRay LocalRay = Ray;
+	LocalRay.Origin -= BvhOrigin.xyz;
+
+	uint Stack[TOON_BVH_STACK_SIZE];
+	int StackSize = 0;
+	Stack[StackSize++] = 0;
+	bool bHit = false;
+	float Closest = TMax;
+
+	[loop]
+	for (uint Iteration = 0; Iteration < NumBvhNodes && StackSize > 0; ++Iteration)
+	{
+		uint NodeIndex = Stack[--StackSize];
+		float4 NodeMin = BvhNodes[NodeIndex * 2];
+		float4 NodeMax = BvhNodes[NodeIndex * 2 + 1];
+
+		float TNear, TFar;
+		float3 Normal;
+		if (!IntersectAxisAlignedBox(NodeMin.xyz, NodeMax.xyz, LocalRay, TNear, TFar, Normal) || TFar < TMin || TNear > Closest)
+		{
+			continue;
+		}
+
+		uint ChildOrFirst = asuint(NodeMin.w);
+		uint Count = asuint(NodeMax.w);
+		if (Count > 0)
+		{
+			// 葉：中の球を調べる
+			[loop]
+			for (uint Index = 0; Index < Count; ++Index)
+			{
+				float4 Sphere = BvhSpheres[ChildOrFirst + Index];
+				FToonHitRecord TempRec = (FToonHitRecord)0;
+				if (HitSphere(Sphere.xyz, Sphere.w, LocalRay, TMin, Closest, TempRec))
+				{
+					bHit = true;
+					Closest = TempRec.T;
+					Rec = TempRec;
+					SphereIndex = ChildOrFirst + Index;
+				}
+			}
+		}
+		else if (StackSize + 2 <= TOON_BVH_STACK_SIZE)
+		{
+			// 内部ノード：右の子と左の子を積む（左の子を先に調べる）
+			Stack[StackSize++] = ChildOrFirst;
+			Stack[StackSize++] = NodeIndex + 1;
+		}
+	}
+
+	if (bHit)
+	{
+		// 球の判定は相対位置で行ったので、位置を Translated World 空間に戻す
+		Rec.Position = Ray.At(Rec.T);
+	}
+	return bHit;
+}
+
 // bIncludeVolumes が false なら煙を無視する（シャドウレイなど）
 bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bool bIncludeVolumes = true)
 {
@@ -897,6 +976,24 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bo
 			Rec.Material.RefractionIndex = 1.0f;
 			Rec.Material.OutlineWidth = ToonOutlineWidth;
 			Rec.ObjectId = NumSpheres + NumQuads + NumBoxes + CellIndex;
+		}
+	}
+
+	// 『The Next Week』第3章：BVH で探す小さな球の塊
+	if (NumBvhNodes > 0)
+	{
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		uint SphereIndex;
+		if (HitSphereCluster(Ray, TMin, ClosestSoFar, TempRec, SphereIndex))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = TOON_MATERIAL_LAMBERTIAN;
+			Rec.Material.Albedo = BvhAlbedo.rgb;
+			Rec.Material.RefractionIndex = 1.0f;
+			Rec.Material.OutlineWidth = ToonOutlineWidth;
+			Rec.ObjectId = TOON_BVH_OBJECT_ID_BASE + SphereIndex;
 		}
 	}
 
@@ -1653,6 +1750,10 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 		if (Rec.ObjectId < NumSpheres + NumQuads + NumBoxes)
 		{
 			return Rec.Position - BoxCenter[Rec.ObjectId - NumSpheres - NumQuads].xyz;
+		}
+		if (Rec.ObjectId >= TOON_BVH_OBJECT_ID_BASE)
+		{
+			return Rec.Position - BvhOrigin.xyz;
 		}
 		return Rec.Position - GroundGridOrigin.xyz;
 	}

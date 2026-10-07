@@ -109,6 +109,12 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(FVector4f, GroundGridParams)
 		SHADER_PARAMETER(FVector4f, GroundGridAlbedo)
 		SHADER_PARAMETER(uint32, bGroundGrid)
+		// 『The Next Week』第3章：BVH のノード（float4 2 つで 1 ノード）と小さな球、塊の原点（Translated World 空間）と色
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, BvhNodes)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, BvhSpheres)
+		SHADER_PARAMETER(FVector4f, BvhOrigin)
+		SHADER_PARAMETER(FVector4f, BvhAlbedo)
+		SHADER_PARAMETER(uint32, NumBvhNodes)
 		// 『The Next Week』第7章：1 なら背景を黒にする
 		SHADER_PARAMETER(uint32, bBlackBackground)
 		SHADER_PARAMETER(uint32, NumSpheres)

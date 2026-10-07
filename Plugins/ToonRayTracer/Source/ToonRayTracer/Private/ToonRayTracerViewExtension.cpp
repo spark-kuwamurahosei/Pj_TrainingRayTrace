@@ -13,6 +13,7 @@
 #include "UObject/UObjectIterator.h"
 #include "RenderingThread.h"
 #include "RenderGraphUtils.h"
+#include "Algo/Sort.h"
 #include "ProfilingDebugging/RealtimeGPUProfiler.h"
 
 // stat gpu に「ToonRayTracer」として GPU 時間を表示する
@@ -521,6 +522,92 @@ namespace
 		return Grid;
 	}
 
+	// 『The Next Week』第3章：BVH（Bounding Volume Hierarchy、入れ子の箱）
+	// 本の final_scene の boxes2：一辺 165 の箱の中にランダムに置いた半径 10 の白い球 1000 個を、
+	// rotate_y(15 度) と translate(-100, 270, 395) で動かしたもの
+	struct FToonSphereClusterBvh
+	{
+		// ノード 1 つを float4 2 つで表す（シェーダー側の BvhNodes と一致させる）
+		// [0] = (箱の最小値, 内部ノードなら右の子の番号 / 葉なら最初の球の番号), [1] = (箱の最大値, 葉の球の数（内部ノードは 0）)
+		TArray<FVector4f> Nodes;
+		TArray<FVector4f> Spheres;	// xyz: 塊の原点からの中心, w: 半径
+		FVector Origin = FVector::ZeroVector;	// 塊の原点（ワールド座標）
+		FLinearColor Albedo = FLinearColor(0.73f, 0.73f, 0.73f);
+	};
+
+	// uint の値をそのまま float のビットとして入れる（シェーダー側で asuint で取り出す）
+	float UintAsFloat(uint32 Value)
+	{
+		float Result;
+		FMemory::Memcpy(&Result, &Value, sizeof(Result));
+		return Result;
+	}
+
+	// 本の bvh_node のコンストラクタ：箱の一番長い軸で球を並べ替え、半分に分けることを繰り返す
+	// 葉には 1 ～ 2 個の球を入れる（本と同じ）。ノードは深さ優先の順に並べ、左の子をすぐ次に置く
+	int32 BuildBvhNode(FToonSphereClusterBvh& Bvh, int32 Start, int32 End)
+	{
+		FBox3f Bounds(ForceInit);
+		for (int32 Index = Start; Index < End; ++Index)
+		{
+			const FVector4f& Sphere = Bvh.Spheres[Index];
+			const FVector3f Center(Sphere.X, Sphere.Y, Sphere.Z);
+			Bounds += FBox3f(Center - FVector3f(Sphere.W), Center + FVector3f(Sphere.W));
+		}
+
+		const int32 NodeIndex = Bvh.Nodes.Num() / 2;
+		Bvh.Nodes.AddDefaulted(2);
+
+		const int32 Count = End - Start;
+		if (Count <= 2)
+		{
+			Bvh.Nodes[NodeIndex * 2] = FVector4f(Bounds.Min, UintAsFloat(static_cast<uint32>(Start)));
+			Bvh.Nodes[NodeIndex * 2 + 1] = FVector4f(Bounds.Max, UintAsFloat(static_cast<uint32>(Count)));
+			return NodeIndex;
+		}
+
+		const FVector3f Extent = Bounds.GetSize();
+		const int32 Axis = Extent.X >= Extent.Y && Extent.X >= Extent.Z ? 0 : (Extent.Y >= Extent.Z ? 1 : 2);
+		TArrayView<FVector4f> Range(Bvh.Spheres.GetData() + Start, Count);
+		Algo::Sort(Range, [Axis](const FVector4f& A, const FVector4f& B) { return A[Axis] < B[Axis]; });
+
+		const int32 Mid = Start + Count / 2;
+		BuildBvhNode(Bvh, Start, Mid);	// 左の子（NodeIndex + 1 になる）
+		const int32 RightIndex = BuildBvhNode(Bvh, Mid, End);
+
+		Bvh.Nodes[NodeIndex * 2] = FVector4f(Bounds.Min, UintAsFloat(static_cast<uint32>(RightIndex)));
+		Bvh.Nodes[NodeIndex * 2 + 1] = FVector4f(Bounds.Max, UintAsFloat(0u));
+		return NodeIndex;
+	}
+
+	const FToonSphereClusterBvh& GetFinalSceneSphereCluster()
+	{
+		static const FToonSphereClusterBvh Bvh = []()
+		{
+			FToonSphereClusterBvh Result;
+			// 本の translate(-100, 270, 395) を（本の x, y, z）→（UE の Y, Z, X）に置き換えた位置を塊の原点にする
+			Result.Origin = FVector(395.0, -100.0, 270.0);
+
+			// 毎回同じ配置になるよう、乱数の種を固定する
+			FRandomStream Random(2026);
+			const double Angle = FMath::DegreesToRadians(15.0);
+			for (int32 Index = 0; Index < 1000; ++Index)
+			{
+				// 本の point3::random(0, 165) を rotate_y(15) で回す（回転の中心は箱の角）
+				const FVector Book(Random.FRandRange(0.0f, 165.0f), Random.FRandRange(0.0f, 165.0f), Random.FRandRange(0.0f, 165.0f));
+				const FVector Rotated(
+					FMath::Cos(Angle) * Book.X + FMath::Sin(Angle) * Book.Z,
+					Book.Y,
+					-FMath::Sin(Angle) * Book.X + FMath::Cos(Angle) * Book.Z);
+				Result.Spheres.Add(FVector4f(FVector3f(Rotated.Z, Rotated.X, Rotated.Y), 10.0f));
+			}
+
+			BuildBvhNode(Result, 0, Result.Spheres.Num());
+			return Result;
+		}();
+		return Bvh;
+	}
+
 	// 解析的な物体のシーン（r.ToonRayTracer.AnalyticScene で選ぶ）
 	struct FToonAnalyticScene
 	{
@@ -529,6 +616,7 @@ namespace
 		TConstArrayView<FToonBox> Boxes;
 		bool bBlackBackground;		// 光る物体だけで照らすシーンでは背景を黒にする
 		FToonGroundGrid GroundGrid = {};
+		bool bSphereCluster = false;	// 『The Next Week』第3章の BVH で探す小さな球の塊を置くか
 	};
 
 	FToonAnalyticScene GetAnalyticScene(int32 SceneIndex)
@@ -544,7 +632,7 @@ namespace
 		case 4:
 			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellSmokeQuads), MakeArrayView(GCornellSmokeBoxes), true };
 		case 5:
-			return { MakeArrayView(GFinalSceneSpheres), MakeArrayView(GFinalSceneQuads), TConstArrayView<FToonBox>(), true, MakeFinalSceneGroundGrid() };
+			return { MakeArrayView(GFinalSceneSpheres), MakeArrayView(GFinalSceneQuads), TConstArrayView<FToonBox>(), true, MakeFinalSceneGroundGrid(), true };
 		default:
 			return { MakeArrayView(GToonSpheres), TConstArrayView<FToonQuad>(), TConstArrayView<FToonBox>(), false };
 		}
@@ -1053,6 +1141,24 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->GroundGridOrigin = FVector4f(FVector3f(Grid.Origin + PreViewTranslation), static_cast<float>(Grid.CellSize));
 	PassParameters->GroundGridParams = FVector4f(static_cast<float>(Grid.Count.X), static_cast<float>(Grid.Count.Y), Grid.MinHeight, Grid.MaxHeight);
 	PassParameters->GroundGridAlbedo = FVector4f(Grid.Albedo.R, Grid.Albedo.G, Grid.Albedo.B, 0.0f);
+
+	// 『The Next Week』第3章：BVH で探す小さな球の塊（使わないシーンでも、シェーダーにバッファを渡す必要があるため空の内容で作る）
+	{
+		static const TArray<FVector4f> EmptyData = { FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f) };
+		const FToonSphereClusterBvh* Cluster = AnalyticScene.bSphereCluster ? &GetFinalSceneSphereCluster() : nullptr;
+		const TArray<FVector4f>& Nodes = Cluster ? Cluster->Nodes : EmptyData;
+		const TArray<FVector4f>& ClusterSpheres = Cluster ? Cluster->Spheres : EmptyData;
+		FRDGBufferRef NodesBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("ToonRayTracerBvhNodes"), sizeof(FVector4f), Nodes.Num(),
+			Nodes.GetData(), Nodes.Num() * sizeof(FVector4f), ERDGInitialDataFlags::NoCopy);
+		FRDGBufferRef SpheresBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("ToonRayTracerBvhSpheres"), sizeof(FVector4f), ClusterSpheres.Num(),
+			ClusterSpheres.GetData(), ClusterSpheres.Num() * sizeof(FVector4f), ERDGInitialDataFlags::NoCopy);
+		PassParameters->BvhNodes = GraphBuilder.CreateSRV(NodesBuffer);
+		PassParameters->BvhSpheres = GraphBuilder.CreateSRV(SpheresBuffer);
+		PassParameters->NumBvhNodes = Cluster ? Cluster->Nodes.Num() / 2 : 0;
+		PassParameters->BvhOrigin = FVector4f(FVector3f(Cluster ? Cluster->Origin + PreViewTranslation : FVector::ZeroVector), 0.0f);
+		const FLinearColor ClusterAlbedo = Cluster ? Cluster->Albedo : FLinearColor::Black;
+		PassParameters->BvhAlbedo = FVector4f(ClusterAlbedo.R, ClusterAlbedo.G, ClusterAlbedo.B, 0.0f);
+	}
 	PassParameters->bBlackBackground = TraceMode == 0 && AnalyticScene.bBlackBackground ? 1u : 0u;
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
