@@ -59,6 +59,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, TraceMode)
 		// 1ピクセルあたりのサンプル数（アンチエイリアス）
 		SHADER_PARAMETER(uint32, SamplesPerPixel)
+		// 蓄積をやり直したピクセルと、物体が動いている間のサンプル数
+		SHADER_PARAMETER(uint32, MotionSamplesPerPixel)
 		// 0: 法線の可視化、1: 拡散反射
 		SHADER_PARAMETER(uint32, ShadingMode)
 		// レイが反射する最大回数

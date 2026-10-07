@@ -57,6 +57,10 @@ uint TraceMode;
 // 1ピクセルあたりのサンプル数（アンチエイリアス）
 uint SamplesPerPixel;
 
+// 蓄積をやり直したピクセルと、物体が動いている間の、1 ピクセルあたりのサンプル数
+// 動いている間は負荷を下げ、止まったらフレームをまたいだ蓄積でアンチエイリアスを補う
+uint MotionSamplesPerPixel;
+
 // 0: 法線の可視化、1: 拡散反射（本の第9章）
 uint ShadingMode;
 
@@ -1562,7 +1566,9 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		// フェーズ5：ピクセル内のランダムな位置に複数のレイを飛ばして平均する（本の第8章）
 		float3 ColorSum = 0.0f;
 		uint ValidSamples = 0;
-		for (uint SampleIndex = 0; SampleIndex < SamplesPerPixel; ++SampleIndex)
+		// カメラが動いている間（蓄積をやり直したピクセル）と物体が動いている間は、サンプル数を減らして負荷を下げる
+		uint NumSamples = (HistoryFrames == 0 || bSceneMoving) ? MotionSamplesPerPixel : SamplesPerPixel;
+		for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
 		{
 			// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）
 			float2 Offset = float2(ToonRandomFloat(RandomState), ToonRandomFloat(RandomState)) - 0.5f;

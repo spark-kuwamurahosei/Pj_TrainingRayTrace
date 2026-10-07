@@ -50,6 +50,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "サンプル数", ClampMin = "1", ClampMax = "64", UIMin = "1", UIMax = "16"))
 	int32 SamplesPerPixel;
 
+	/** カメラや物体が動いている間のサンプル数。少ないほど軽いが、動いている間は輪郭がギザつく（止まると蓄積でなめらかになる）。0 ならサンプル数と同じ */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "動いている間のサンプル数", ClampMin = "0", ClampMax = "64", UIMin = "0", UIMax = "16"))
+	int32 MotionSamplesPerPixel;
+
 	/** カメラから見えている面に GBuffer の滑らかな法線を使う */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "滑らかな法線を使う"))
 	bool bUseGBufferNormal;

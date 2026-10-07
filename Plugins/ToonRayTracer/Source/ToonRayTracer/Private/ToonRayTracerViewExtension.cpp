@@ -28,6 +28,13 @@ namespace
 		ECVF_RenderThreadSafe);
 
 	// 本の第8章（アンチエイリアス）の samples_per_pixel に相当
+	// カメラや物体が動いている間のサンプル数（0 なら SamplesPerPixel と同じ）
+	TAutoConsoleVariable<int32> CVarToonRayTracerMotionSamplesPerPixel(
+		TEXT("r.ToonRayTracer.MotionSamplesPerPixel"),
+		2,
+		TEXT("Samples per pixel while the camera or objects are moving (0: same as SamplesPerPixel). Anti-aliasing is restored by the accumulation once they stop"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerSamplesPerPixel(
 		TEXT("r.ToonRayTracer.SamplesPerPixel"),
 		4,
@@ -731,6 +738,11 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->ObjectColorFrameSums = GraphBuilder.CreateUAV(ObjectColorFrameSums);
 	PassParameters->TraceMode = TraceMode;
 	PassParameters->SamplesPerPixel = SamplesPerPixel;
+	// 蓄積しない場合は毎フレームやり直しになるため、常に通常のサンプル数を使う
+	const int32 MotionSamplesPerPixelSetting = CVarToonRayTracerMotionSamplesPerPixel.GetValueOnRenderThread();
+	PassParameters->MotionSamplesPerPixel = AccumulationState && MotionSamplesPerPixelSetting > 0
+		? static_cast<uint32>(FMath::Clamp(MotionSamplesPerPixelSetting, 1, static_cast<int32>(SamplesPerPixel)))
+		: SamplesPerPixel;
 	PassParameters->ShadingMode = ShadingMode;
 	PassParameters->MaxDepth = MaxDepth;
 	PassParameters->ClipToTranslatedWorld = FMatrix44f(ClipToTranslatedWorldNoAA);
