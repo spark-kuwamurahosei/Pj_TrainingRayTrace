@@ -6,6 +6,10 @@
 #include "SceneViewExtension.h"
 #include "RendererInterface.h"
 #include "RenderGraphResources.h"
+#include "UObject/StrongObjectPtr.h"
+
+class UTexture2D;
+class FTextureResource;
 
 /**
  * 
@@ -55,6 +59,13 @@ private:
 	FLinearColor ToonShadowColor_RenderThread = FLinearColor(0.35f, 0.4f, 0.6f);
 	// トゥーンのアウトラインの色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonOutlineColor_RenderThread = FLinearColor(0.02f, 0.02f, 0.04f);
+
+	// 『The Next Week』第4章：球に貼る画像（r.ToonRayTracer.ImageTexture のパスから読み込む）
+	// ゲームスレッドで読み込み、ガベージコレクションで消えないよう保持する
+	TStrongObjectPtr<UTexture2D> ImageTexture;
+	FString ImageTexturePath;			// 読み込みを試したパス（同じパスで何度も読み込まないため）
+	// レンダースレッドからのみアクセスする
+	FTextureResource* ImageTextureResource_RenderThread = nullptr;
 
 	// カメラが静止している間、フレームをまたいで結果を平均するための状態（ビューごと）
 	struct FAccumulationState
