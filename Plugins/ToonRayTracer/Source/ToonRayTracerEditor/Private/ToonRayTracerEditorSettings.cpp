@@ -99,6 +99,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	ShadingMode = EToonRayTracerShadingMode::Toon;
 	TraceMode = EToonRayTracerTraceMode::Scene;
 	SamplesPerPixel = 4;
+	MotionSamplesPerPixel = 2;
 	bUseGBufferNormal = true;
 	bUseGBufferBaseColor = true;
 	bUseGBufferForReflections = true;
@@ -142,6 +143,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetInt(TEXT("r.ToonRayTracer.ShadingMode"), static_cast<int32>(ShadingMode));
 	SetInt(TEXT("r.ToonRayTracer.TraceMode"), static_cast<int32>(TraceMode));
 	SetInt(TEXT("r.ToonRayTracer.SamplesPerPixel"), SamplesPerPixel);
+	SetInt(TEXT("r.ToonRayTracer.MotionSamplesPerPixel"), MotionSamplesPerPixel);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferNormal"), bUseGBufferNormal);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferBaseColor"), bUseGBufferBaseColor);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferForReflections"), bUseGBufferForReflections);
@@ -185,6 +187,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetEnum(TEXT("r.ToonRayTracer.ShadingMode"), ShadingMode);
 	GetEnum(TEXT("r.ToonRayTracer.TraceMode"), TraceMode);
 	GetInt(TEXT("r.ToonRayTracer.SamplesPerPixel"), SamplesPerPixel);
+	GetInt(TEXT("r.ToonRayTracer.MotionSamplesPerPixel"), MotionSamplesPerPixel);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferNormal"), bUseGBufferNormal);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferBaseColor"), bUseGBufferBaseColor);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferForReflections"), bUseGBufferForReflections);
