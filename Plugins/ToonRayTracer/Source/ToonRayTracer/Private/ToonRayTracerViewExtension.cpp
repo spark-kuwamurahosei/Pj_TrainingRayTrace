@@ -31,7 +31,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerAnalyticScene(
 		TEXT("r.ToonRayTracer.AnalyticScene"),
 		0,
-		TEXT("Scene used when TraceMode is 0. 0: One Weekend chapter 11 (with Next Week textures), 1: Next Week chapter 7 simple light, 2: Next Week chapter 7 Cornell box"),
+		TEXT("Scene used when TraceMode is 0. 0: One Weekend chapter 11 (with Next Week textures), 1: Next Week chapter 7 simple light, 2: Next Week chapter 7 Cornell box, 3: Next Week chapter 8 Cornell box with boxes, 4: Next Week chapter 9 Cornell smoke"),
 		ECVF_RenderThreadSafe);
 
 	// 本の第8章（アンチエイリアス）の samples_per_pixel に相当
@@ -311,6 +311,7 @@ namespace
 		Metal = 2,		// 金属（本の metal）
 		Dielectric = 3,	// ガラスなどの誘電体（本の dielectric）
 		DiffuseLight = 4,	// 『The Next Week』第7章の光る素材（本の diffuse_light）
+		Volume = 5,			// 『The Next Week』第9章の煙や霧（本の constant_medium と isotropic）
 	};
 
 	// テクスチャの種類（シェーダー側の TOON_TEXTURE_* と一致させる）
@@ -399,11 +400,71 @@ namespace
 		{ FVector(555.0, 0.0, 0.0), FVector(0.0, 555.0, 0.0), FVector(0.0, 0.0, 555.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f) },
 	};
 
+	// 『The Next Week』第8〜9章：箱（本の box を rotate_y で回転し、translate で移動したもの）
+	// 本の箱は角を原点に置いて回転するが、ここでは中心・半分の大きさ・上下軸まわりの回転で表す
+	struct FToonBox
+	{
+		FVector Center;				// 中心（ワールド座標、cm）
+		FVector HalfExtent;			// 半分の大きさ（回転前の X, Y, Z 方向、cm）
+		double YawDegrees;			// 上下軸（Z）まわりの回転（度）
+		EToonMaterialType Material;
+		FLinearColor Albedo;		// 反射率。煙では煙の色
+		float Density = 0.0f;		// 煙の濃さ（1cm あたりに散乱する確率、本の constant_medium の density）
+	};
+
+	// 本の box(a, b) を rotate_y(Angle) で回転し、translate(Offset) で移動した箱を、中心・半分の大きさ・回転に置き換える
+	// 座標はコーネルボックスと同じく（本の x, y, z）→（UE の Y, Z, X）に置き換える。本の rotate_y は y 軸まわりなので UE の Z 軸まわりの回転になる
+	FToonBox MakeBookBox(const FVector& BookSize, double AngleDegrees, const FVector& BookOffset, EToonMaterialType Material, const FLinearColor& Albedo, float Density = 0.0f)
+	{
+		// 本の rotate_y は角（原点）まわりに回すので、箱の中心も角まわりに回してから移動する
+		const double Angle = FMath::DegreesToRadians(AngleDegrees);
+		const FVector BookCenter = BookSize * 0.5;
+		const FVector RotatedCenter(
+			FMath::Cos(Angle) * BookCenter.X + FMath::Sin(Angle) * BookCenter.Z,
+			BookCenter.Y,
+			-FMath::Sin(Angle) * BookCenter.X + FMath::Cos(Angle) * BookCenter.Z);
+		const FVector BookWorldCenter = RotatedCenter + BookOffset;
+
+		FToonBox Box;
+		Box.Center = FVector(BookWorldCenter.Z, BookWorldCenter.X, BookWorldCenter.Y);
+		Box.HalfExtent = FVector(BookSize.Z, BookSize.X, BookSize.Y) * 0.5;
+		Box.YawDegrees = AngleDegrees;
+		Box.Material = Material;
+		Box.Albedo = Albedo;
+		Box.Density = Density;
+		return Box;
+	}
+
+	// 『The Next Week』第8章のコーネルボックス：白い箱を 2 つ置く（本の box(0,0,0)-(165,330,165) を 15 度、box(0,0,0)-(165,165,165) を -18 度）
+	const FToonBox GCornellBoxBoxes[] =
+	{
+		MakeBookBox(FVector(165.0, 330.0, 165.0), 15.0, FVector(265.0, 0.0, 295.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f)),
+		MakeBookBox(FVector(165.0, 165.0, 165.0), -18.0, FVector(130.0, 0.0, 65.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f)),
+	};
+
+	// 『The Next Week』第9章の cornell_smoke：天井のライトを大きく暗くし、2 つの箱を黒い煙と白い煙にする（濃さ 0.01）
+	const FToonQuad GCornellSmokeQuads[] =
+	{
+		{ FVector(0.0, 555.0, 0.0), FVector(0.0, 0.0, 555.0), FVector(555.0, 0.0, 0.0), EToonMaterialType::Lambertian, FLinearColor(0.12f, 0.45f, 0.15f) },
+		{ FVector(0.0, 0.0, 0.0), FVector(0.0, 0.0, 555.0), FVector(555.0, 0.0, 0.0), EToonMaterialType::Lambertian, FLinearColor(0.65f, 0.05f, 0.05f) },
+		// 本の quad(point3(113,554,127), vec3(330,0,0), vec3(0,0,305), light(7,7,7))
+		{ FVector(127.0, 113.0, 554.0), FVector(0.0, 330.0, 0.0), FVector(305.0, 0.0, 0.0), EToonMaterialType::DiffuseLight, FLinearColor(7.0f, 7.0f, 7.0f) },
+		{ FVector(0.0, 0.0, 0.0), FVector(0.0, 555.0, 0.0), FVector(555.0, 0.0, 0.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f) },
+		{ FVector(555.0, 555.0, 555.0), FVector(0.0, -555.0, 0.0), FVector(-555.0, 0.0, 0.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f) },
+		{ FVector(555.0, 0.0, 0.0), FVector(0.0, 555.0, 0.0), FVector(0.0, 0.0, 555.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f) },
+	};
+	const FToonBox GCornellSmokeBoxes[] =
+	{
+		MakeBookBox(FVector(165.0, 330.0, 165.0), 15.0, FVector(265.0, 0.0, 295.0), EToonMaterialType::Volume, FLinearColor(0.0f, 0.0f, 0.0f), 0.01f),
+		MakeBookBox(FVector(165.0, 165.0, 165.0), -18.0, FVector(130.0, 0.0, 65.0), EToonMaterialType::Volume, FLinearColor(1.0f, 1.0f, 1.0f), 0.01f),
+	};
+
 	// 解析的な物体のシーン（r.ToonRayTracer.AnalyticScene で選ぶ）
 	struct FToonAnalyticScene
 	{
 		TConstArrayView<FToonSphere> Spheres;
 		TConstArrayView<FToonQuad> Quads;
+		TConstArrayView<FToonBox> Boxes;
 		bool bBlackBackground;		// 光る物体だけで照らすシーンでは背景を黒にする
 	};
 
@@ -412,11 +473,15 @@ namespace
 		switch (SceneIndex)
 		{
 		case 1:
-			return { MakeArrayView(GSimpleLightSpheres), MakeArrayView(GSimpleLightQuads), true };
+			return { MakeArrayView(GSimpleLightSpheres), MakeArrayView(GSimpleLightQuads), TConstArrayView<FToonBox>(), true };
 		case 2:
-			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellBoxQuads), true };
+			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellBoxQuads), TConstArrayView<FToonBox>(), true };
+		case 3:
+			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellBoxQuads), MakeArrayView(GCornellBoxBoxes), true };
+		case 4:
+			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellSmokeQuads), MakeArrayView(GCornellSmokeBoxes), true };
 		default:
-			return { MakeArrayView(GToonSpheres), TConstArrayView<FToonQuad>(), false };
+			return { MakeArrayView(GToonSpheres), TConstArrayView<FToonQuad>(), TConstArrayView<FToonBox>(), false };
 		}
 	}
 }
@@ -876,7 +941,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	// 球の中心をワールド空間から Translated World 空間に変換して渡す
 	// （double で引き算してから float にすることで、カメラから遠い位置でも精度を保つ）
 	const FToonAnalyticScene AnalyticScene = GetAnalyticScene(AnalyticSceneIndex);
-	check(AnalyticScene.Spheres.Num() <= FToonRayGenShader::MaxSpheres && AnalyticScene.Quads.Num() <= FToonRayGenShader::MaxQuads);
+	check(AnalyticScene.Spheres.Num() <= FToonRayGenShader::MaxSpheres && AnalyticScene.Quads.Num() <= FToonRayGenShader::MaxQuads
+		&& AnalyticScene.Boxes.Num() <= FToonRayGenShader::MaxBoxes);
 	const FVector PreViewTranslation = View.ViewMatrices.GetPreViewTranslation();
 	for (int32 Index = 0; Index < AnalyticScene.Spheres.Num(); ++Index)
 	{
@@ -903,6 +969,17 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		PassParameters->QuadAlbedo[Index] = FVector4f(Quad.Albedo.R, Quad.Albedo.G, Quad.Albedo.B, 0.0f);
 	}
 	PassParameters->NumQuads = AnalyticScene.Quads.Num();
+
+	// 『The Next Week』第8〜9章：箱も中心だけ Translated World 空間に変換する
+	for (int32 Index = 0; Index < AnalyticScene.Boxes.Num(); ++Index)
+	{
+		const FToonBox& Box = AnalyticScene.Boxes[Index];
+		PassParameters->BoxCenter[Index] = FVector4f(FVector3f(Box.Center + PreViewTranslation), static_cast<float>(FMath::DegreesToRadians(Box.YawDegrees)));
+		PassParameters->BoxHalfExtent[Index] = FVector4f(FVector3f(Box.HalfExtent), 0.0f);
+		PassParameters->BoxMaterialParams[Index] = FVector4f(static_cast<float>(Box.Material), Box.Density, 0.0f, 0.0f);
+		PassParameters->BoxAlbedo[Index] = FVector4f(Box.Albedo.R, Box.Albedo.G, Box.Albedo.B, 0.0f);
+	}
+	PassParameters->NumBoxes = AnalyticScene.Boxes.Num();
 	PassParameters->bBlackBackground = TraceMode == 0 && AnalyticScene.bBlackBackground ? 1u : 0u;
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());

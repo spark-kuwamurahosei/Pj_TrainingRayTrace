@@ -31,6 +31,8 @@ enum class EToonRayTracerAnalyticScene : uint8
 	OneWeekend = 0		UMETA(DisplayName = "本の第11章のシーン（第4〜5章のテクスチャ付き）"),
 	SimpleLight = 1		UMETA(DisplayName = "The Next Week 第7章：simple_light"),
 	CornellBox = 2		UMETA(DisplayName = "The Next Week 第7章：コーネルボックス"),
+	CornellBoxBoxes = 3	UMETA(DisplayName = "The Next Week 第8章：箱を置いたコーネルボックス"),
+	CornellSmoke = 4	UMETA(DisplayName = "The Next Week 第9章：煙の箱（cornell_smoke）"),
 };
 
 /**

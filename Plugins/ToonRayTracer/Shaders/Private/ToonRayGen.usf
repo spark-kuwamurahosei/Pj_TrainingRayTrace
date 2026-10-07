@@ -182,6 +182,14 @@ float4 QuadMaterialParams[TOON_MAX_QUADS];
 float4 QuadAlbedo[TOON_MAX_QUADS];
 uint NumQuads;
 
+// 『The Next Week』第8〜9章：箱（xyz: Translated World 空間の中心, w: 上下軸まわりの回転（ラジアン））、半分の大きさ（xyz）とマテリアル
+float4 BoxCenter[TOON_MAX_BOXES];
+float4 BoxHalfExtent[TOON_MAX_BOXES];
+// x: 種類, y: 煙の濃さ（1cm あたりに散乱する確率）, w: トゥーンのハイライトとリムライトの強さ
+float4 BoxMaterialParams[TOON_MAX_BOXES];
+float4 BoxAlbedo[TOON_MAX_BOXES];
+uint NumBoxes;
+
 // 『The Next Week』第7章：1 なら背景を空ではなく黒にする（光る物体だけで照らすシーン）
 uint bBlackBackground;
 
@@ -197,6 +205,7 @@ uint bBlackBackground;
 #define TOON_MATERIAL_METAL			2	// 金属（本の metal）
 #define TOON_MATERIAL_DIELECTRIC	3	// ガラスなどの誘電体（本の dielectric）
 #define TOON_MATERIAL_DIFFUSE_LIGHT	4	// 『The Next Week』第7章の光る素材（本の diffuse_light）。Albedo が放つ光の色と強さ
+#define TOON_MATERIAL_VOLUME		5	// 『The Next Week』第9章の煙や霧（本の constant_medium と isotropic）。Albedo が煙の色
 
 // 本の material クラスに相当
 struct FToonMaterial
@@ -213,6 +222,8 @@ struct FToonMaterial
 	float RimStrength;
 	// トゥーン T6：このメッシュの線の太さ（ピクセル、0 なら線を引かない）
 	float OutlineWidth;
+	// 『The Next Week』第9章：煙の濃さ（1cm あたりに散乱する確率）
+	float Density;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -354,6 +365,8 @@ struct FToonHitRecord
 	FToonMaterial Material;
 	// 『The Next Week』第4章：テクスチャ座標（本の u, v）。解析的な球でだけ求める
 	float2 UV;
+	// 『The Next Week』第9章：煙の箱から出る位置までの距離（煙では T が箱に入る位置）
+	float VolumeExitT;
 	// 当たった物体の識別番号（シーンでは GPUScene のインスタンス番号、解析的な球では球の番号）。アウトラインの判定に使う
 	uint ObjectId;
 
@@ -537,7 +550,84 @@ bool HitQuad(float3 Q, float3 U, float3 V, FToonRay Ray, float TMin, float TMax,
 	return true;
 }
 
-bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+// 『The Next Week』第8章：レイと回転した箱の交差判定（本の box + rotate_y + translate）
+// 本は物体を動かす代わりにレイを逆向きに動かす（インスタンス）。ここでも、レイを箱の中心が原点で回転していない空間に移し、
+// 各軸の 2 枚の平面の間にいる区間（スラブ）の重なりから、箱に入る距離 TNear と出る距離 TFar を求める
+bool IntersectBox(uint Index, FToonRay Ray, out float TNear, out float TFar, out float3 NearNormal, out float3 FarNormal)
+{
+	float Yaw = BoxCenter[Index].w;
+	float CosYaw = cos(Yaw);
+	float SinYaw = sin(Yaw);
+	float3 Half = BoxHalfExtent[Index].xyz;
+
+	// ワールド → 箱の空間（上下軸まわりに -Yaw 回転）
+	float3 O = Ray.Origin - BoxCenter[Index].xyz;
+	float3 LocalOrigin = float3(CosYaw * O.x + SinYaw * O.y, -SinYaw * O.x + CosYaw * O.y, O.z);
+	float3 LocalDirection = float3(CosYaw * Ray.Direction.x + SinYaw * Ray.Direction.y, -SinYaw * Ray.Direction.x + CosYaw * Ray.Direction.y, Ray.Direction.z);
+	LocalDirection = select(abs(LocalDirection) < 1.0e-8f, (float3)1.0e-8f, LocalDirection);
+
+	float3 InvDirection = 1.0f / LocalDirection;
+	float3 T0 = (-Half - LocalOrigin) * InvDirection;
+	float3 T1 = (Half - LocalOrigin) * InvDirection;
+	float3 TMin3 = min(T0, T1);
+	float3 TMax3 = max(T0, T1);
+	TNear = max(max(TMin3.x, TMin3.y), TMin3.z);
+	TFar = min(min(TMax3.x, TMax3.y), TMax3.z);
+
+	// 入る面と出る面の外向きの法線（箱の空間）
+	float3 LocalNear = TMin3.x >= TMin3.y && TMin3.x >= TMin3.z ? float3(-sign(LocalDirection.x), 0, 0)
+		: (TMin3.y >= TMin3.z ? float3(0, -sign(LocalDirection.y), 0) : float3(0, 0, -sign(LocalDirection.z)));
+	float3 LocalFar = TMax3.x <= TMax3.y && TMax3.x <= TMax3.z ? float3(sign(LocalDirection.x), 0, 0)
+		: (TMax3.y <= TMax3.z ? float3(0, sign(LocalDirection.y), 0) : float3(0, 0, sign(LocalDirection.z)));
+
+	// 箱の空間 → ワールド（上下軸まわりに +Yaw 回転）
+	NearNormal = float3(CosYaw * LocalNear.x - SinYaw * LocalNear.y, SinYaw * LocalNear.x + CosYaw * LocalNear.y, LocalNear.z);
+	FarNormal = float3(CosYaw * LocalFar.x - SinYaw * LocalFar.y, SinYaw * LocalFar.x + CosYaw * LocalFar.y, LocalFar.z);
+	return TNear <= TFar;
+}
+
+// 箱との交差判定。普通の素材は表面に当たる。煙は箱に入る位置を T、出る位置を VolumeExitT に入れる
+// （散乱するかどうかは呼び出し側で決める。確認用モードは本と同じく確率的に、トゥーンは通る距離から透過率を求める）
+bool HitBox(uint Index, FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	float TNear, TFar;
+	float3 NearNormal, FarNormal;
+	if (!IntersectBox(Index, Ray, TNear, TFar, NearNormal, FarNormal))
+	{
+		return false;
+	}
+
+	if ((uint)round(BoxMaterialParams[Index].x) == TOON_MATERIAL_VOLUME)
+	{
+		// レイの始点が箱の中なら、始点から煙の中を進む
+		float Entry = max(TNear, TMin);
+		if (TFar <= Entry || TMax <= Entry)
+		{
+			return false;
+		}
+		Rec.T = Entry;
+		Rec.VolumeExitT = TFar;
+		Rec.Position = Ray.At(Entry);
+		// 煙の中の点には面の向きがないため、レイと逆向きを仮の法線にする（本でも任意の値）
+		Rec.Normal = -Ray.Direction;
+		Rec.bFrontFace = true;
+		return true;
+	}
+
+	// 普通の素材：手前の面、始点が箱の中なら奥の面に当たる
+	float T = TNear > TMin ? TNear : TFar;
+	if (T <= TMin || TMax <= T)
+	{
+		return false;
+	}
+	Rec.T = T;
+	Rec.Position = Ray.At(T);
+	Rec.SetFaceNormal(Ray, TNear > TMin ? NearNormal : FarNormal);
+	return true;
+}
+
+// bIncludeVolumes が false なら煙を無視する（シャドウレイなど）
+bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bool bIncludeVolumes = true)
 {
 	bool bHitAnything = false;
 	float ClosestSoFar = TMax;
@@ -579,6 +669,33 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 			Rec.Material.RimStrength = QuadMaterialParams[QuadIndex].w;
 			Rec.Material.OutlineWidth = ToonOutlineWidth;
 			Rec.ObjectId = NumSpheres + QuadIndex;
+		}
+	}
+
+	// 箱の識別番号は四角形の後ろに続ける
+	for (uint BoxIndex = 0; BoxIndex < NumBoxes; ++BoxIndex)
+	{
+		uint Type = (uint)round(BoxMaterialParams[BoxIndex].x);
+		if (!bIncludeVolumes && Type == TOON_MATERIAL_VOLUME)
+		{
+			continue;
+		}
+
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		if (HitBox(BoxIndex, Ray, TMin, ClosestSoFar, TempRec))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = Type;
+			Rec.Material.Albedo = BoxAlbedo[BoxIndex].rgb;
+			Rec.Material.RefractionIndex = 1.0f;
+			Rec.Material.Density = BoxMaterialParams[BoxIndex].y;
+			Rec.Material.HighlightStrength = BoxMaterialParams[BoxIndex].w;
+			Rec.Material.RimStrength = BoxMaterialParams[BoxIndex].w;
+			// 煙は輪郭を持たないため線を引かない
+			Rec.Material.OutlineWidth = Type == TOON_MATERIAL_VOLUME ? 0.0f : ToonOutlineWidth;
+			Rec.ObjectId = NumSpheres + NumQuads + BoxIndex;
 		}
 	}
 
@@ -765,6 +882,16 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 // 反射したレイが、出発した面自身に当たってしまう問題（shadow acne）を避けるための最小距離（cm）
 // 本の interval(0.001, infinity) に相当。本の 1 単位 ≒ 1m なので、cm に換算して少し余裕を持たせる
 #define TOON_RAY_TMIN 0.01f
+
+// 『The Next Week』第9章：煙の箱に入ってから出るまでの間に、普通の物体（床など）があるかを探す
+// 箱の底面と床がぴったり重なっている場合も見つけられるよう、出る位置より少し先まで探す
+// 見つかれば Solid にその当たりを入れて true を返す（煙はその手前で終わる）
+#define TOON_VOLUME_EXIT_MARGIN 0.1f
+bool FindSolidInsideVolume(FToonRay Ray, FToonHitRecord VolumeRec, out FToonHitRecord Solid)
+{
+	Solid = (FToonHitRecord)0;
+	return HitWorld(Ray, VolumeRec.T, VolumeRec.VolumeExitT + TOON_VOLUME_EXIT_MARGIN, Solid, false);
+}
 
 // 解析的な球またはシーンのメッシュとの交差判定（TraceMode で切り替え）
 // SmoothDistance が 0 より大きければ、シーンのメッシュの法線をその間隔でなめらかにする（解析的な球は常になめらか）
@@ -1209,6 +1336,36 @@ float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 			Radiance += Attenuation * Rec.Material.Albedo;
 		}
 
+		// 『The Next Week』第9章：煙（本の constant_medium）
+		// 煙の中を進む距離ごとに一定の確率で散乱する。散乱するまでの距離は指数分布になる（-ln(乱数) / 濃さ）
+		// 箱を出るまでに散乱しなければ、そのまま通り抜ける。散乱したら、その点からランダムな方向へ進む（本の isotropic）
+		// 煙の中に普通の物体（床など）があれば、煙はその手前で終わる（本でも、散乱する点と物体の近いほうが当たりになる）
+		if (Rec.Material.Type == TOON_MATERIAL_VOLUME)
+		{
+			FToonHitRecord Solid;
+			bool bSolidInside = FindSolidInsideVolume(Ray, Rec, Solid);
+			float InsideDistance = (bSolidInside ? Solid.T : Rec.VolumeExitT) - Rec.T;
+			float HitDistance = -log(max(1.0f - ToonRandomFloat(RandomState), 1.0e-6f)) / max(Rec.Material.Density, 1.0e-6f);
+			if (HitDistance < InsideDistance)
+			{
+				Attenuation *= Rec.Material.Albedo;
+				Ray.Origin = Ray.At(Rec.T + HitDistance);
+				Ray.Direction = RandomUnitVector(RandomState);
+				continue;
+			}
+			if (!bSolidInside)
+			{
+				Ray.Origin = Ray.At(Rec.VolumeExitT);
+				continue;
+			}
+			// 散乱せずに中の物体まで届いた。以降はその物体に当たったものとして続ける
+			Rec = Solid;
+			if (Rec.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+			{
+				Radiance += Attenuation * Rec.Material.Albedo;
+			}
+		}
+
 		float3 ScatterAttenuation;
 		FToonRay Scattered;
 		if (!Scatter(Rec.Material, Ray, Rec, RandomState, ScatterAttenuation, Scattered))
@@ -1276,9 +1433,15 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 	if (TraceMode == 0)
 	{
 		// 球は中心からの位置、四角形は角からの位置
-		return Rec.ObjectId < NumSpheres
-			? Rec.Position - Spheres[Rec.ObjectId].xyz
-			: Rec.Position - QuadQ[Rec.ObjectId - NumSpheres].xyz;
+		if (Rec.ObjectId < NumSpheres)
+		{
+			return Rec.Position - Spheres[Rec.ObjectId].xyz;
+		}
+		if (Rec.ObjectId < NumSpheres + NumQuads)
+		{
+			return Rec.Position - QuadQ[Rec.ObjectId - NumSpheres].xyz;
+		}
+		return Rec.Position - BoxCenter[Rec.ObjectId - NumSpheres - NumQuads].xyz;
 	}
 
 	FInstanceSceneData InstanceData = GetInstanceSceneData(Rec.ObjectId);
@@ -1297,8 +1460,9 @@ bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
 
 	if (TraceMode == 0)
 	{
+		// 煙は光を少しずつしか遮らないため、トゥーンのくっきりした影には含めない
 		FToonHitRecord Rec = (FToonHitRecord)0;
-		return !HitWorld(ShadowRay, TOON_RAY_TMIN, 1.0e8f, Rec);
+		return !HitWorld(ShadowRay, TOON_RAY_TMIN, 1.0e8f, Rec, false);
 	}
 
 	RayDesc Desc;
@@ -1527,6 +1691,17 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
 	return Color;
 }
 
+// 『The Next Week』第9章の応用：煙の不透明度（0 ～ 1）を段階化する（0, 1/3, 2/3, 1 の 4 段階）
+// 段階の境目は陰影と同じぼかし幅でなめらかにする
+#define TOON_VOLUME_STEPS 3.0f
+float ToonVolumeOpacity(float Opacity)
+{
+	float Scaled = saturate(Opacity) * TOON_VOLUME_STEPS;
+	float Step = floor(Scaled);
+	float Softness = max(ToonEdgeSoftness * TOON_VOLUME_STEPS, 1.0e-3f);
+	return saturate((Step + smoothstep(1.0f - Softness, 1.0f, Scaled - Step)) / TOON_VOLUME_STEPS);
+}
+
 // トゥーン T7：反射・屈折を追いかけるための「レイの順番待ちリスト」の1件
 struct FToonPendingRay
 {
@@ -1599,6 +1774,59 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 		{
 			Color += Current.Throughput * Rec.Material.Albedo;
 			continue;
+		}
+
+		// 『The Next Week』第9章の応用：セル画風の霧
+		// 本のように確率的に散乱させるとノイズが出るため、煙の中を通る距離から透過率（exp(-濃さ × 距離)）を求め、
+		// 不透明度を段階化して煙の色を重ね、残りの割合で奥を描く
+		// 煙の色は、通る区間の真ん中から光源が見えるかで、明るい面か影の色にする
+		if (Rec.Material.Type == TOON_MATERIAL_VOLUME)
+		{
+			// 煙の中に普通の物体（床など）があれば、煙はその手前で終わり、その物体を続けて描く
+			FToonHitRecord Solid;
+			bool bSolidInside = FindSolidInsideVolume(Current.Ray, Rec, Solid);
+			float InsideDistance = (bSolidInside ? Solid.T : Rec.VolumeExitT) - Rec.T;
+			float Opacity = ToonVolumeOpacity(1.0f - exp(-Rec.Material.Density * InsideDistance));
+
+			float LightLevel = 1.0f;
+			if (bHasDirectionalLight == 0)
+			{
+				LightLevel = 0.0f;
+			}
+			else if (bToonCastShadows != 0 && !IsLightVisible(Current.Ray.At(Rec.T + 0.5f * InsideDistance), false))
+			{
+				LightLevel = 0.0f;
+			}
+			float3 VolumeColor = lerp(Rec.Material.Albedo * ToonShadowColor, Rec.Material.Albedo * ToonLightColor, LightLevel);
+			Color += Current.Throughput * Opacity * VolumeColor;
+
+			if (bSolidInside)
+			{
+				// 煙を通して見える中の物体を、残りの割合で続けて描く（下の普通の物体の処理へ進む）
+				Current.Throughput *= 1.0f - Opacity;
+				Rec = Solid;
+				GeometricNormal = Solid.Normal;
+			}
+			else
+			{
+			// 奥へ進むレイ（カメラから直接見える面ではなくなるので、反射・屈折の先と同じ扱いにする）
+			float3 BehindThroughput = Current.Throughput * (1.0f - Opacity);
+			if (dot(BehindThroughput, BehindThroughput) > TOON_MIN_THROUGHPUT * TOON_MIN_THROUGHPUT && NumPending < TOON_MAX_PENDING_RAYS)
+			{
+				Pending[NumPending].Ray.Origin = Current.Ray.At(Rec.VolumeExitT);
+				Pending[NumPending].Ray.Direction = Current.Ray.Direction;
+				Pending[NumPending].Throughput = BehindThroughput;
+				Pending[NumPending].Depth = Current.Depth + 1;
+				++NumPending;
+			}
+			continue;
+			}
+
+			if (Rec.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+			{
+				Color += Current.Throughput * Rec.Material.Albedo;
+				continue;
+			}
 		}
 
 		bool bReflective = Rec.Material.Type == TOON_MATERIAL_METAL || Rec.Material.Type == TOON_MATERIAL_DIELECTRIC;
