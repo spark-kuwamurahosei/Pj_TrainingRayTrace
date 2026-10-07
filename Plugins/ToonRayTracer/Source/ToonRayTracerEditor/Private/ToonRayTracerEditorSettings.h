@@ -33,6 +33,7 @@ enum class EToonRayTracerAnalyticScene : uint8
 	CornellBox = 2		UMETA(DisplayName = "The Next Week 第7章：コーネルボックス"),
 	CornellBoxBoxes = 3	UMETA(DisplayName = "The Next Week 第8章：箱を置いたコーネルボックス"),
 	CornellSmoke = 4	UMETA(DisplayName = "The Next Week 第9章：煙の箱（cornell_smoke）"),
+	FinalScene = 5		UMETA(DisplayName = "The Next Week 第10章：final_scene（簡易版）"),
 };
 
 /**

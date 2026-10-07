@@ -51,8 +51,14 @@ uint DebugMotion;
 // シーンの TLAS（Translated World 空間で構築されている）
 RaytracingAccelerationStructure TLAS;
 
-// 0: 解析的な球（本の第6章）、1: シーンの TLAS に TraceRay
-uint TraceMode;
+// 0: 解析的な物体（本のシーン）、1: シーンの TLAS に TraceRay
+// シェーダーのパーミュテーション（TOON_ANALYTIC_SCENE）で決まる定数にして、使わない側のコードをコンパイル時に取り除く
+// （レイトレーシングのシェーダーは TraceRay を呼ぶ箇所が多いほど、ドライバーの組み立てと実行が急激に重くなるため）
+#if TOON_ANALYTIC_SCENE
+static const uint TraceMode = 0;
+#else
+static const uint TraceMode = 1;
+#endif
 
 // 1ピクセルあたりのサンプル数（アンチエイリアス）
 uint SamplesPerPixel;
@@ -61,8 +67,13 @@ uint SamplesPerPixel;
 // 動いている間は負荷を下げ、止まったらフレームをまたいだ蓄積でアンチエイリアスを補う
 uint MotionSamplesPerPixel;
 
-// 0: 法線の可視化、1: 拡散反射（本の第9章）
+// 0: 法線の可視化、1: 本の第9〜11章のマテリアル、2: N・L、3: トゥーン
+// トゥーンはパーミュテーション（TOON_SHADING）で分け、確認用の表示モードのコードを含めない
+#if TOON_SHADING
+static const uint ShadingMode = 3;
+#else
 uint ShadingMode;
+#endif
 
 // レイが反射する最大回数（本の max_depth）
 uint MaxDepth;
@@ -189,6 +200,13 @@ float4 BoxHalfExtent[TOON_MAX_BOXES];
 float4 BoxMaterialParams[TOON_MAX_BOXES];
 float4 BoxAlbedo[TOON_MAX_BOXES];
 uint NumBoxes;
+
+// 『The Next Week』第10章：地面に敷き詰めた箱の格子（本の final_scene の boxes1）
+// 格子の左下の角（xyz: Translated World 空間）と 1 マスの大きさ（w）、マスの数（xy）と箱の高さの範囲（zw）、色
+float4 GroundGridOrigin;
+float4 GroundGridParams;
+float4 GroundGridAlbedo;
+uint bGroundGrid;
 
 // 『The Next Week』第7章：1 なら背景を空ではなく黒にする（光る物体だけで照らすシーン）
 uint bBlackBackground;
@@ -441,6 +459,34 @@ float ToonPerlinTurbulence(float3 P, int Depth)
 	return abs(Accum);
 }
 
+// 『The Next Week』第10章：球の形の煙（本の constant_medium の境界が球のもの）。箱の煙と同じく、入る位置と出る位置を求める
+bool HitSphereVolume(float3 Center, float Radius, FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	float3 OC = Ray.Origin - Center;
+	float B = dot(OC, Ray.Direction);
+	float3 QC = OC - B * Ray.Direction;
+	float QCLength = length(QC);
+	float Discriminant = (Radius - QCLength) * (Radius + QCLength);
+	if (Discriminant < 0.0f)
+	{
+		return false;
+	}
+
+	float SqrtD = sqrt(Discriminant);
+	float Entry = max(-B - SqrtD, TMin);
+	float Exit = -B + SqrtD;
+	if (Exit <= Entry || TMax <= Entry)
+	{
+		return false;
+	}
+	Rec.T = Entry;
+	Rec.VolumeExitT = Exit;
+	Rec.Position = Ray.At(Entry);
+	Rec.Normal = -Ray.Direction;
+	Rec.bFrontFace = true;
+	return true;
+}
+
 // 『The Next Week』第4章：テクスチャの色を求める（本の texture::value）
 // LocalPosition は球の中心からの位置。Translated World 空間の位置をそのまま使うと、カメラが動くたびに模様がずれるため
 float3 SampleSphereTexture(uint Index, float2 UV, float3 LocalPosition)
@@ -465,8 +511,9 @@ float3 SampleSphereTexture(uint Index, float2 UV, float3 LocalPosition)
 	if (Type == TOON_TEXTURE_MARBLE)
 	{
 		// 本の noise_texture：color(.5, .5, .5) * (1 + sin(scale * p.z + 10 * turb(p, 7)))
-		// 本の 1 単位は 1m なので m に直して計算する。本の z（奥行き）は UE の X に当たる
-		float3 P = LocalPosition / 100.0f;
+		// 本の 1 単位の長さ（cm、z に入れる。未設定なら 1m）に直して計算する。本の z（奥行き）は UE の X に当たる
+		float UnitLength = SphereTextureParams[Index].z > 0.0f ? SphereTextureParams[Index].z : 100.0f;
+		float3 P = LocalPosition / UnitLength;
 		return Even * 0.5f * (1.0f + sin(Scale * P.x + 10.0f * ToonPerlinTurbulence(P, 7)));
 	}
 	return Even;
@@ -626,33 +673,155 @@ bool HitBox(uint Index, FToonRay Ray, float TMin, float TMax, inout FToonHitReco
 	return true;
 }
 
+// 軸に沿った箱（Min ～ Max）とレイの交差判定（スラブ法）。入る距離と出る距離、入る面の外向きの法線を返す
+bool IntersectAxisAlignedBox(float3 BoxMin, float3 BoxMax, FToonRay Ray, out float TNear, out float TFar, out float3 NearNormal)
+{
+	float3 Direction = select(abs(Ray.Direction) < 1.0e-8f, (float3)1.0e-8f, Ray.Direction);
+	float3 InvDirection = 1.0f / Direction;
+	float3 T0 = (BoxMin - Ray.Origin) * InvDirection;
+	float3 T1 = (BoxMax - Ray.Origin) * InvDirection;
+	float3 TMin3 = min(T0, T1);
+	float3 TMax3 = max(T0, T1);
+	TNear = max(max(TMin3.x, TMin3.y), TMin3.z);
+	TFar = min(min(TMax3.x, TMax3.y), TMax3.z);
+	NearNormal = TMin3.x >= TMin3.y && TMin3.x >= TMin3.z ? float3(-sign(Direction.x), 0, 0)
+		: (TMin3.y >= TMin3.z ? float3(0, -sign(Direction.y), 0) : float3(0, 0, -sign(Direction.z)));
+	return TNear <= TFar;
+}
+
+// 格子のマスの箱の高さ（本は random_double(1, 101)。ここではマスの番号をハッシュ関数に通して、毎回同じ高さにする）
+float GroundGridBoxHeight(int2 Cell)
+{
+	uint Hash = ToonPcgHash((uint)Cell.x + ToonPcgHash((uint)Cell.y + 0x9E3779B9u));
+	return lerp(GroundGridParams.z, GroundGridParams.w, ToonRandomFloat(Hash));
+}
+
+// 地面の箱の格子の 1 辺あたりのマスの数の上限
+#define TOON_GROUND_GRID_MAX_CELLS 64
+
+// 『The Next Week』第10章：地面に敷き詰めた箱の格子との交差判定
+// 本は 400 個の箱を BVH（第3章）で探すが、ここでは箱が 1 マスに 1 つずつ並んでいることを使い、
+// レイが通るマスを手前から順にたどり（DDA）、そのマスの箱だけを調べる。箱はマスからはみ出さないので、最初に当たった箱が一番近い
+bool HitGroundGrid(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, out uint CellIndex)
+{
+	CellIndex = 0;
+	float3 Origin = GroundGridOrigin.xyz;
+	float CellSize = max(GroundGridOrigin.w, 1.0f);
+	// 値が壊れていてもループが必ず終わるよう、マスの数に上限を設ける
+	int2 Count = clamp((int2)GroundGridParams.xy, int2(1, 1), int2(TOON_GROUND_GRID_MAX_CELLS, TOON_GROUND_GRID_MAX_CELLS));
+
+	// 格子全体を包む箱と交差しなければ当たらない
+	float TNear, TFar;
+	float3 Normal;
+	float3 RegionMax = Origin + float3(Count * CellSize, GroundGridParams.w);
+	if (!IntersectAxisAlignedBox(Origin, RegionMax, Ray, TNear, TFar, Normal))
+	{
+		return false;
+	}
+	float TStart = max(TNear, TMin);
+	float TEnd = min(TFar, TMax);
+	if (TEnd <= TStart)
+	{
+		return false;
+	}
+
+	// 入ったマスから、X と Y の境目を越えるたびに隣のマスへ進む
+	float2 StartPosition = (Ray.At(TStart).xy - Origin.xy) / CellSize;
+	int2 Cell = clamp((int2)floor(StartPosition), int2(0, 0), Count - 1);
+	float2 Direction = select(abs(Ray.Direction.xy) < 1.0e-8f, (float2)1.0e-8f, Ray.Direction.xy);
+	int2 Step = int2(Direction.x > 0.0f ? 1 : -1, Direction.y > 0.0f ? 1 : -1);
+	float2 TDelta = abs(CellSize / Direction);
+	float2 NextBoundary = Origin.xy + (float2(Cell) + float2(Step > 0)) * CellSize;
+	float2 TNext = (NextBoundary - Ray.Origin.xy) / Direction;
+
+	[loop]
+	for (int Iteration = 0; Iteration < Count.x + Count.y + 1; ++Iteration)
+	{
+		float3 BoxMin = Origin + float3(float2(Cell) * CellSize, 0.0f);
+		float3 BoxMax = BoxMin + float3(CellSize, CellSize, GroundGridBoxHeight(Cell));
+		float BoxNear, BoxFar;
+		float3 BoxNormal;
+		if (IntersectAxisAlignedBox(BoxMin, BoxMax, Ray, BoxNear, BoxFar, BoxNormal) && BoxNear > TMin && BoxNear < TMax)
+		{
+			Rec.T = BoxNear;
+			Rec.Position = Ray.At(BoxNear);
+			Rec.SetFaceNormal(Ray, BoxNormal);
+			CellIndex = (uint)(Cell.y * Count.x + Cell.x);
+			return true;
+		}
+
+		// 次のマスへ
+		if (TNext.x < TNext.y)
+		{
+			if (TNext.x > TEnd) break;
+			Cell.x += Step.x;
+			TNext.x += TDelta.x;
+		}
+		else
+		{
+			if (TNext.y > TEnd) break;
+			Cell.y += Step.y;
+			TNext.y += TDelta.y;
+		}
+		if (any(Cell < 0) || any(Cell >= Count))
+		{
+			break;
+		}
+	}
+	return false;
+}
+
+// 交差判定（レイを飛ばす処理）を含むループには [loop] を付け、コンパイラーにループを展開させない
+// HLSL では関数がすべて呼び出し元に展開されるため、回数の決まったループが展開されると交差判定が何十か所にもコピーされ、
+// シェーダーが巨大になってドライバーのパイプライン構築が終わらなくなる（エディタが起動しない、GPU が応答しなくなる）
+
 // bIncludeVolumes が false なら煙を無視する（シャドウレイなど）
 bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bool bIncludeVolumes = true)
 {
 	bool bHitAnything = false;
 	float ClosestSoFar = TMax;
 
+	[loop]
 	for (uint Index = 0; Index < NumSpheres; ++Index)
 	{
+		// 『The Next Week』第10章：球の形の煙
+		uint SphereType = (uint)round(SphereMaterialParams[Index].x);
+		bool bVolume = SphereType == TOON_MATERIAL_VOLUME;
+		if (bVolume && !bIncludeVolumes)
+		{
+			continue;
+		}
+
 		FToonHitRecord TempRec = (FToonHitRecord)0;
-		if (HitSphere(Spheres[Index].xyz, Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec))
+		bool bHitSphere;
+		if (bVolume)
+		{
+			bHitSphere = HitSphereVolume(Spheres[Index].xyz, Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec);
+		}
+		else
+		{
+			bHitSphere = HitSphere(Spheres[Index].xyz, Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec);
+		}
+		if (bHitSphere)
 		{
 			bHitAnything = true;
 			ClosestSoFar = TempRec.T;
 			Rec = TempRec;
-			Rec.Material.Type = (uint)round(SphereMaterialParams[Index].x);
+			Rec.Material.Type = SphereType;
+			Rec.Material.Density = SphereTextureParams[Index].w;
 			Rec.Material.Albedo = SampleSphereTexture(Index, Rec.UV, Rec.Position - Spheres[Index].xyz);
 			Rec.Material.Fuzz = SphereMaterialParams[Index].y;
 			Rec.Material.RefractionIndex = SphereMaterialParams[Index].z;
 			// w：トゥーンのハイライトとリムライトの強さ（地面は 0）
 			Rec.Material.HighlightStrength = SphereMaterialParams[Index].w;
 			Rec.Material.RimStrength = SphereMaterialParams[Index].w;
-			Rec.Material.OutlineWidth = ToonOutlineWidth;
+			Rec.Material.OutlineWidth = bVolume ? 0.0f : ToonOutlineWidth;
 			Rec.ObjectId = Index;
 		}
 	}
 
 	// 四角形の識別番号は球の後ろに続ける（アウトラインで別の物体として扱うため）
+	[loop]
 	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
 	{
 		FToonHitRecord TempRec = (FToonHitRecord)0;
@@ -673,6 +842,7 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bo
 	}
 
 	// 箱の識別番号は四角形の後ろに続ける
+	[loop]
 	for (uint BoxIndex = 0; BoxIndex < NumBoxes; ++BoxIndex)
 	{
 		uint Type = (uint)round(BoxMaterialParams[BoxIndex].x);
@@ -696,6 +866,24 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bo
 			// 煙は輪郭を持たないため線を引かない
 			Rec.Material.OutlineWidth = Type == TOON_MATERIAL_VOLUME ? 0.0f : ToonOutlineWidth;
 			Rec.ObjectId = NumSpheres + NumQuads + BoxIndex;
+		}
+	}
+
+	// 地面の箱の格子。識別番号は箱の後ろに、マスごとに続ける（隣り合う箱の段差にも線が引かれる）
+	if (bGroundGrid != 0)
+	{
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		uint CellIndex;
+		if (HitGroundGrid(Ray, TMin, ClosestSoFar, TempRec, CellIndex))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = TOON_MATERIAL_LAMBERTIAN;
+			Rec.Material.Albedo = GroundGridAlbedo.rgb;
+			Rec.Material.RefractionIndex = 1.0f;
+			Rec.Material.OutlineWidth = ToonOutlineWidth;
+			Rec.ObjectId = NumSpheres + NumQuads + NumBoxes + CellIndex;
 		}
 	}
 
@@ -748,6 +936,7 @@ bool ProbeSmoothSurfaceEdge(FToonRay Ray, float3 Tangent, float ProbeSlope, floa
 	float3 ProbePositions[2] = { CenterPosition, CenterPosition };
 	bool bHit[2] = { false, false };
 
+	[loop]
 	for (int Index = 0; Index < 2; ++Index)
 	{
 		float Sign = Index == 0 ? 1.0f : -1.0f;
@@ -780,6 +969,7 @@ bool ProbeSurfaceEdge(FToonRay Ray, float3 Tangent, float ProbeSlope, float TMin
 	bool bFound = false;
 
 	// まず + 方向、同じ三角形に当たらなければ - 方向を試す
+	[loop]
 	for (int Sign = 1; Sign >= -1; Sign -= 2)
 	{
 		FToonRay ProbeRay;
@@ -978,6 +1168,7 @@ bool IsHiddenInGBuffer(float2 UV, float3 Position)
 bool HitCameraVisible(FToonRay Ray, float2 UV, inout FToonHitRecord Rec, bool bComputeNormal = true)
 {
 	float TMin = 0.0f;
+	[loop]
 	for (uint Skip = 0; Skip <= TOON_MAX_MASKED_SKIPS; ++Skip)
 	{
 		// 通り抜ける面の法線は要らないため、2 枚目以降は法線を求めずに探し、見つかった面だけ求め直す
@@ -987,7 +1178,11 @@ bool HitCameraVisible(FToonRay Ray, float2 UV, inout FToonHitRecord Rec, bool bC
 		}
 		if (bSkipMaskedSurfaces == 0 || TraceMode == 0 || Rec.Material.Type != TOON_MATERIAL_DEFAULT || !IsHiddenInGBuffer(UV, Rec.Position))
 		{
-			return Skip == 0 || !bComputeNormal || HitAnything(Ray, TMin, Rec);
+			if (Skip == 0 || !bComputeNormal)
+			{
+				return true;
+			}
+			return HitAnything(Ray, TMin, Rec);
 		}
 		TMin = Rec.T + TOON_RAY_TMIN;
 		Rec = (FToonHitRecord)0;
@@ -1312,6 +1507,7 @@ float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 	// 『The Next Week』第7章：途中で当たった光る物体からの光を足していく（本の color_from_emission）
 	float3 Radiance = 0.0f;
 
+	[loop]
 	for (uint Depth = 0; Depth < MaxDepth; ++Depth)
 	{
 		FToonHitRecord Rec = (FToonHitRecord)0;
@@ -1441,7 +1637,11 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 		{
 			return Rec.Position - QuadQ[Rec.ObjectId - NumSpheres].xyz;
 		}
-		return Rec.Position - BoxCenter[Rec.ObjectId - NumSpheres - NumQuads].xyz;
+		if (Rec.ObjectId < NumSpheres + NumQuads + NumBoxes)
+		{
+			return Rec.Position - BoxCenter[Rec.ObjectId - NumSpheres - NumQuads].xyz;
+		}
+		return Rec.Position - GroundGridOrigin.xyz;
 	}
 
 	FInstanceSceneData InstanceData = GetInstanceSceneData(Rec.ObjectId);
@@ -1515,6 +1715,7 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 	// ポリゴンごとの法線だと、浅い角度で見た輪郭付近でばらつき、輪郭の内側にかすれた線が出るため
 	float3 CenterNormal = Rec.Normal;
 
+	[loop]
 	for (uint Index = 0; Index < 4; ++Index)
 	{
 		float2 NeighborUV = UV + Directions[Index] * OffsetUV;
@@ -1522,16 +1723,25 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 
 		// 補助レイでも面の向きが必要。カメラから直接見える点なので、GBuffer の法線に置き換えられる場合は
 		// 法線を求める補助レイを省き（負荷の大半はここ）、置き換えられない場合だけ法線まで求め直す
+		// 解析的な物体では、煙（輪郭を持たない）を無視して、その奥の物体で線を判定する
 		FToonHitRecord NeighborRec = (FToonHitRecord)0;
-		if (!HitCameraVisible(NeighborRay, NeighborUV, NeighborRec, false))
+		bool bNeighborHit;
+		if (TraceMode == 0)
+		{
+			bNeighborHit = HitWorld(NeighborRay, 0.0f, 1.0e8f, NeighborRec, false);
+		}
+		else
+		{
+			bNeighborHit = HitCameraVisible(NeighborRay, NeighborUV, NeighborRec, false);
+			if (bNeighborHit && !(bUseGBufferNormal != 0 && IsGBufferSamePoint(NeighborUV, NeighborRec.Position, NeighborRec.T)))
+			{
+				NeighborRec = (FToonHitRecord)0;
+				HitCameraVisible(NeighborRay, NeighborUV, NeighborRec);
+			}
+		}
+		if (!bNeighborHit)
 		{
 			return 1.0f;
-		}
-		bool bHasGBufferNormal = TraceMode != 0 && bUseGBufferNormal != 0 && IsGBufferSamePoint(NeighborUV, NeighborRec.Position, NeighborRec.T);
-		if (!bHasGBufferNormal)
-		{
-			NeighborRec = (FToonHitRecord)0;
-			HitCameraVisible(NeighborRay, NeighborUV, NeighborRec);
 		}
 		ApplyGBufferSurface(NeighborUV, NeighborRay, NeighborRec);
 
@@ -1694,6 +1904,8 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
 // 『The Next Week』第9章の応用：煙の不透明度（0 ～ 1）を段階化する（0, 1/3, 2/3, 1 の 4 段階）
 // 段階の境目は陰影と同じぼかし幅でなめらかにする
 #define TOON_VOLUME_STEPS 3.0f
+// 煙の明暗を判定する点の、煙に入った位置からの距離（cm）
+#define TOON_VOLUME_LIGHT_SAMPLE_DEPTH 1.0f
 float ToonVolumeOpacity(float Opacity)
 {
 	float Scaled = saturate(Opacity) * TOON_VOLUME_STEPS;
@@ -1732,6 +1944,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 	float Outline = 0.0f;
 
 	// 1本のレイから最大2本に分かれるため、処理するレイの総数にも上限を設ける
+	[loop]
 	for (uint Step = 0; Step < TOON_MAX_PENDING_RAYS * 2 && NumPending > 0; ++Step)
 	{
 		--NumPending;
@@ -1742,9 +1955,16 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 		// （面ごとの法線のままだと、映り込んだ物体の明暗の境目がポリゴンに沿って階段状になる）
 		// カメラのレイは、透過で抜けている面を通り抜ける
 		FToonHitRecord Rec = (FToonHitRecord)0;
-		bool bHit = bCameraRay
-			? HitCameraVisible(Current.Ray, UV, Rec)
-			: HitAnything(Current.Ray, TOON_RAY_TMIN, Rec, ReflectionNormalSmoothing);
+		// 引数を書き換える関数どうしなので、三項演算子（両方が評価されることがある）ではなく if で分ける
+		bool bHit;
+		if (bCameraRay)
+		{
+			bHit = HitCameraVisible(Current.Ray, UV, Rec);
+		}
+		else
+		{
+			bHit = HitAnything(Current.Ray, TOON_RAY_TMIN, Rec, ReflectionNormalSmoothing);
+		}
 		if (!bHit)
 		{
 			Color += Current.Throughput * SkyColor(Current.Ray);
@@ -1760,7 +1980,15 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 			// トゥーン T6：アウトライン（最後に、陰影や映り込みの上に描く）
 			if (bToonOutline != 0)
 			{
-				Outline = ToonOutline(UV, Current.Ray, Rec);
+				// 煙に当たった場合は、煙を無視したその奥の物体で線を判定する（シーン全体を包む霧の中でも線を引くため）
+				FToonHitRecord OutlineRec = Rec;
+				bool bOutlineHit = true;
+				if (Rec.Material.Type == TOON_MATERIAL_VOLUME)
+				{
+					OutlineRec = (FToonHitRecord)0;
+					bOutlineHit = HitWorld(Current.Ray, 0.0f, 1.0e8f, OutlineRec, false);
+				}
+				Outline = bOutlineHit ? ToonOutline(UV, Current.Ray, OutlineRec) : 0.0f;
 			}
 		}
 		else
@@ -1779,7 +2007,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 		// 『The Next Week』第9章の応用：セル画風の霧
 		// 本のように確率的に散乱させるとノイズが出るため、煙の中を通る距離から透過率（exp(-濃さ × 距離)）を求め、
 		// 不透明度を段階化して煙の色を重ね、残りの割合で奥を描く
-		// 煙の色は、通る区間の真ん中から光源が見えるかで、明るい面か影の色にする
+		// 煙の色は、煙に入った位置のすぐ先から光源が見えるかで、明るい面か影の色にする
 		if (Rec.Material.Type == TOON_MATERIAL_VOLUME)
 		{
 			// 煙の中に普通の物体（床など）があれば、煙はその手前で終わり、その物体を続けて描く
@@ -1793,7 +2021,9 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 			{
 				LightLevel = 0.0f;
 			}
-			else if (bToonCastShadows != 0 && !IsLightVisible(Current.Ray.At(Rec.T + 0.5f * InsideDistance), false))
+			// 判定する点は、煙に入った位置のすぐ先にする（通る区間の真ん中にすると、全体を包む霧では点が何十 m も先になり、
+			// 映り込みの向きのわずかな違いで明暗が入れ替わって点々になったり、遠くの物体の影が背景に浮いたりするため）
+			else if (bToonCastShadows != 0 && !IsLightVisible(Current.Ray.At(Rec.T + min(TOON_VOLUME_LIGHT_SAMPLE_DEPTH, 0.5f * InsideDistance)), false))
 			{
 				LightLevel = 0.0f;
 			}
@@ -1890,6 +2120,10 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 
 float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
 {
+	// トゥーンのパーミュテーションには確認用の表示モードを、確認用のパーミュテーションにはトゥーンを含めない
+#if TOON_SHADING
+	return RayColorToon(UV, Ray);
+#else
 	if (ShadingMode == 0)
 	{
 		return RayColorNormal(UV, Ray);
@@ -1898,11 +2132,8 @@ float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
 	{
 		return RayColorDirectLight(UV, Ray);
 	}
-	if (ShadingMode == 3)
-	{
-		return RayColorToon(UV, Ray);
-	}
 	return RayColorMaterial(UV, Ray, RandomState);
+#endif
 }
 
 // レイトレーシングのエントリーポイント
@@ -2076,6 +2307,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		uint ValidSamples = 0;
 		// カメラが動いている間（蓄積をやり直したピクセル）と物体が動いている間は、サンプル数を減らして負荷を下げる
 		uint NumSamples = (HistoryFrames == 0 || bSceneMoving) ? MotionSamplesPerPixel : SamplesPerPixel;
+		[loop]
 		for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
 		{
 			// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）

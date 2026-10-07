@@ -31,7 +31,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerAnalyticScene(
 		TEXT("r.ToonRayTracer.AnalyticScene"),
 		0,
-		TEXT("Scene used when TraceMode is 0. 0: One Weekend chapter 11 (with Next Week textures), 1: Next Week chapter 7 simple light, 2: Next Week chapter 7 Cornell box, 3: Next Week chapter 8 Cornell box with boxes, 4: Next Week chapter 9 Cornell smoke"),
+		TEXT("Scene used when TraceMode is 0. 0: One Weekend chapter 11 (with Next Week textures), 1: Next Week chapter 7 simple light, 2: Next Week chapter 7 Cornell box, 3: Next Week chapter 8 Cornell box with boxes, 4: Next Week chapter 9 Cornell smoke, 5: Next Week chapter 10 final scene (simplified)"),
 		ECVF_RenderThreadSafe);
 
 	// 本の第8章（アンチエイリアス）の samples_per_pixel に相当
@@ -335,6 +335,8 @@ namespace
 		EToonTextureType Texture = EToonTextureType::Solid;
 		float TextureScale = 1.0f;	// チェッカー：1 マスの辺の長さ（cm）、UV のチェッカー：経度方向のマスの数、大理石：1m あたりの縞の細かさ
 		FLinearColor Albedo2 = FLinearColor::Black;	// チェッカーのもう一方の色
+		float TextureUnitLength = 100.0f;	// 大理石：本の 1 単位の長さ（cm）。第5章のシーンは 1m、第10章は本の単位をそのまま cm にしている
+		float Density = 0.0f;		// 煙の濃さ（1cm あたりに散乱する確率、本の constant_medium の density）
 	};
 
 	// 『Ray Tracing in One Weekend』第11章のシーンをUEの単位系（cm, Z-up）に置き換えたもの
@@ -459,6 +461,63 @@ namespace
 		MakeBookBox(FVector(165.0, 165.0, 165.0), -18.0, FVector(130.0, 0.0, 65.0), EToonMaterialType::Volume, FLinearColor(1.0f, 1.0f, 1.0f), 0.01f),
 	};
 
+	// 『The Next Week』第10章：地面に敷き詰めた箱の格子（本の final_scene の boxes1）
+	struct FToonGroundGrid
+	{
+		bool bEnabled = false;
+		FVector Origin = FVector::ZeroVector;	// 格子の角（ワールド座標、cm）
+		double CellSize = 100.0;		// 1 マスの大きさ（cm）
+		FIntPoint Count = FIntPoint(20, 20);	// マスの数
+		float MinHeight = 1.0f;			// 箱の高さの範囲（cm）
+		float MaxHeight = 101.0f;
+		FLinearColor Albedo = FLinearColor::White;
+	};
+
+	// 『The Next Week』第10章の final_scene（簡易版）
+	// 本の単位をそのまま cm にし、座標は（本の x, y, z）→（UE の Y, Z, X）に置き換えている
+	// 本のカメラは (478, 278, -600) から (278, 278, 0) を見ている。UE では (-600, 478, 278) から Yaw -18.4 度の方向を見る位置
+	// 省いたもの：動く球の移動ブラー（第2章、止めた状態で置く）、地球の画像（UV のチェッカーで代用）、1000 個の小さな球
+	const FToonSphere GFinalSceneSpheres[] =
+	{
+		// 本では移動ブラーで動く、オレンジのランバートの球
+		{ FVector(200.0, 400.0, 400.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.7f, 0.3f, 0.1f), 0.0f, 1.0f },
+		// ガラスの球
+		{ FVector(45.0, 260.0, 150.0), 50.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.5f },
+		// ぼけの強い金属の球
+		{ FVector(145.0, 0.0, 150.0), 50.0, EToonMaterialType::Metal, FLinearColor(0.8f, 0.8f, 0.9f), 1.0f, 1.0f },
+		// 中が青く濁ったガラスの球（ガラスの球と、同じ大きさの青い煙の球を重ねる）
+		{ FVector(145.0, 360.0, 150.0), 70.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.5f },
+		{ FVector(145.0, 360.0, 150.0), 70.0, EToonMaterialType::Volume, FLinearColor(0.2f, 0.4f, 0.9f), 0.0f, 1.0f,
+			EToonTextureType::Solid, 1.0f, FLinearColor::Black, 100.0f, 0.2f },
+		// シーン全体を包む薄い霧
+		{ FVector(0.0, 0.0, 0.0), 5000.0, EToonMaterialType::Volume, FLinearColor::White, 0.0f, 1.0f,
+			EToonTextureType::Solid, 1.0f, FLinearColor::Black, 100.0f, 0.0001f },
+		// 地球の画像の代わりに、UV のチェッカーの球
+		{ FVector(400.0, 400.0, 200.0), 100.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.3f, 0.7f), 0.0f, 1.0f,
+			EToonTextureType::SphereUVChecker, 16.0f, FLinearColor(0.2f, 0.6f, 0.2f) },
+		// 大理石の球（本の noise_texture(0.2)。本の 1 単位 = 1cm）
+		{ FVector(300.0, 220.0, 280.0), 80.0, EToonMaterialType::Lambertian, FLinearColor::White, 0.0f, 1.0f,
+			EToonTextureType::Marble, 0.2f, FLinearColor::Black, 1.0f },
+	};
+	const FToonQuad GFinalSceneQuads[] =
+	{
+		// 本の quad(point3(123,554,147), vec3(300,0,0), vec3(0,0,265), light(7,7,7))
+		{ FVector(147.0, 123.0, 554.0), FVector(0.0, 300.0, 0.0), FVector(265.0, 0.0, 0.0), EToonMaterialType::DiffuseLight, FLinearColor(7.0f, 7.0f, 7.0f) },
+	};
+	FToonGroundGrid MakeFinalSceneGroundGrid()
+	{
+		// 本は x, z を -1000 から 100 ずつ 20 個、高さ 1 ～ 101 の緑の箱を並べる
+		FToonGroundGrid Grid;
+		Grid.bEnabled = true;
+		Grid.Origin = FVector(-1000.0, -1000.0, 0.0);
+		Grid.CellSize = 100.0;
+		Grid.Count = FIntPoint(20, 20);
+		Grid.MinHeight = 1.0f;
+		Grid.MaxHeight = 101.0f;
+		Grid.Albedo = FLinearColor(0.48f, 0.83f, 0.53f);
+		return Grid;
+	}
+
 	// 解析的な物体のシーン（r.ToonRayTracer.AnalyticScene で選ぶ）
 	struct FToonAnalyticScene
 	{
@@ -466,6 +525,7 @@ namespace
 		TConstArrayView<FToonQuad> Quads;
 		TConstArrayView<FToonBox> Boxes;
 		bool bBlackBackground;		// 光る物体だけで照らすシーンでは背景を黒にする
+		FToonGroundGrid GroundGrid = {};
 	};
 
 	FToonAnalyticScene GetAnalyticScene(int32 SceneIndex)
@@ -480,6 +540,8 @@ namespace
 			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellBoxQuads), MakeArrayView(GCornellBoxBoxes), true };
 		case 4:
 			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellSmokeQuads), MakeArrayView(GCornellSmokeBoxes), true };
+		case 5:
+			return { MakeArrayView(GFinalSceneSpheres), MakeArrayView(GFinalSceneQuads), TConstArrayView<FToonBox>(), true, MakeFinalSceneGroundGrid() };
 		default:
 			return { MakeArrayView(GToonSpheres), TConstArrayView<FToonQuad>(), TConstArrayView<FToonBox>(), false };
 		}
@@ -950,10 +1012,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		const FVector TranslatedCenter = Sphere.Center + PreViewTranslation;
 		PassParameters->Spheres[Index] = FVector4f(FVector3f(TranslatedCenter), static_cast<float>(Sphere.Radius));
 		// w：トゥーンのハイライトとリムライトの強さ。平らに近い地面（巨大な球）には出さない
-		const float ToonAccentStrength = Index == 0 ? 0.0f : 1.0f;
+		const float ToonAccentStrength = Sphere.Radius > 1000.0 ? 0.0f : 1.0f;
 		PassParameters->SphereMaterialParams[Index] = FVector4f(static_cast<float>(Sphere.Material), Sphere.Fuzz, Sphere.RefractionIndex, ToonAccentStrength);
 		PassParameters->SphereAlbedo[Index] = FVector4f(Sphere.Albedo.R, Sphere.Albedo.G, Sphere.Albedo.B, 0.0f);
-		PassParameters->SphereTextureParams[Index] = FVector4f(static_cast<float>(Sphere.Texture), Sphere.TextureScale, 0.0f, 0.0f);
+		PassParameters->SphereTextureParams[Index] = FVector4f(static_cast<float>(Sphere.Texture), Sphere.TextureScale, Sphere.TextureUnitLength, Sphere.Density);
 		PassParameters->SphereAlbedo2[Index] = FVector4f(Sphere.Albedo2.R, Sphere.Albedo2.G, Sphere.Albedo2.B, 0.0f);
 	}
 	PassParameters->NumSpheres = AnalyticScene.Spheres.Num();
@@ -980,10 +1042,21 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		PassParameters->BoxAlbedo[Index] = FVector4f(Box.Albedo.R, Box.Albedo.G, Box.Albedo.B, 0.0f);
 	}
 	PassParameters->NumBoxes = AnalyticScene.Boxes.Num();
+
+	// 『The Next Week』第10章：地面の箱の格子
+	const FToonGroundGrid& Grid = AnalyticScene.GroundGrid;
+	PassParameters->bGroundGrid = Grid.bEnabled ? 1u : 0u;
+	PassParameters->GroundGridOrigin = FVector4f(FVector3f(Grid.Origin + PreViewTranslation), static_cast<float>(Grid.CellSize));
+	PassParameters->GroundGridParams = FVector4f(static_cast<float>(Grid.Count.X), static_cast<float>(Grid.Count.Y), Grid.MinHeight, Grid.MaxHeight);
+	PassParameters->GroundGridAlbedo = FVector4f(Grid.Albedo.R, Grid.Albedo.G, Grid.Albedo.B, 0.0f);
 	PassParameters->bBlackBackground = TraceMode == 0 && AnalyticScene.bBlackBackground ? 1u : 0u;
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
-	TShaderMapRef<FToonRayGenShader> RayGenShader(ShaderMap);
+	// 使う組み合わせのシェーダーだけを選ぶ（ShadingMode 3 がトゥーン）
+	FToonRayGenShader::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FToonRayGenShader::FAnalyticSceneDim>(TraceMode == 0);
+	PermutationVector.Set<FToonRayGenShader::FToonShadingDim>(ShadingMode == 3);
+	TShaderMapRef<FToonRayGenShader> RayGenShader(ShaderMap, PermutationVector);
 	TShaderMapRef<FToonClosestHitShader> ClosestHitShader(ShaderMap);
 	TShaderMapRef<FToonMissShader> MissShader(ShaderMap);
 	
