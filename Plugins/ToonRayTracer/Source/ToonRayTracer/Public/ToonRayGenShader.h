@@ -75,6 +75,9 @@ class FToonRayGenShader : public FGlobalShader
 		// 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率, w: トゥーンのハイライトとリムライトの強さ）と反射率（rgb）
 		SHADER_PARAMETER_ARRAY(FVector4f, SphereMaterialParams, [MaxSpheres])
 		SHADER_PARAMETER_ARRAY(FVector4f, SphereAlbedo, [MaxSpheres])
+		// 『The Next Week』第4章：球のテクスチャ（x: 種類, y: 大きさ）と、チェッカーのもう一方の色（rgb）
+		SHADER_PARAMETER_ARRAY(FVector4f, SphereTextureParams, [MaxSpheres])
+		SHADER_PARAMETER_ARRAY(FVector4f, SphereAlbedo2, [MaxSpheres])
 		SHADER_PARAMETER(uint32, NumSpheres)
 		// カメラから最初に当たった面の法線を、通常描画の GBuffer から読むためのテクスチャ
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferATexture)
