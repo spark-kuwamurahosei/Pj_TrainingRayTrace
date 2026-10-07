@@ -32,6 +32,8 @@ class FToonRayGenShader : public FGlobalShader
 	static constexpr int32 MaxSpheres = 8;
 	// シェーダーに渡せる四角形の最大数（『The Next Week』第6章）
 	static constexpr int32 MaxQuads = 8;
+	// シェーダーに渡せる箱の最大数（『The Next Week』第8〜9章）
+	static constexpr int32 MaxBoxes = 4;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
@@ -87,6 +89,12 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FVector4f, QuadMaterialParams, [MaxQuads])
 		SHADER_PARAMETER_ARRAY(FVector4f, QuadAlbedo, [MaxQuads])
 		SHADER_PARAMETER(uint32, NumQuads)
+		// 『The Next Week』第8〜9章：箱（xyz: Translated World 空間の中心, w: 上下軸まわりの回転（ラジアン））、半分の大きさ、マテリアル
+		SHADER_PARAMETER_ARRAY(FVector4f, BoxCenter, [MaxBoxes])
+		SHADER_PARAMETER_ARRAY(FVector4f, BoxHalfExtent, [MaxBoxes])
+		SHADER_PARAMETER_ARRAY(FVector4f, BoxMaterialParams, [MaxBoxes])
+		SHADER_PARAMETER_ARRAY(FVector4f, BoxAlbedo, [MaxBoxes])
+		SHADER_PARAMETER(uint32, NumBoxes)
 		// 『The Next Week』第7章：1 なら背景を黒にする
 		SHADER_PARAMETER(uint32, bBlackBackground)
 		SHADER_PARAMETER(uint32, NumSpheres)
@@ -165,6 +173,7 @@ class FToonRayGenShader : public FGlobalShader
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_SPHERES"), MaxSpheres);
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_QUADS"), MaxQuads);
+		OutEnvironment.SetDefine(TEXT("TOON_MAX_BOXES"), MaxBoxes);
 		// GetPrimitiveData() を Primitive ユニフォームバッファではなく GPUScene のバッファから読むようにする
 		// （未定義だとメッシュ描画用の Primitive ユニフォームバッファを参照してしまい、グローバルシェーダーではバインドできない）
 		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
