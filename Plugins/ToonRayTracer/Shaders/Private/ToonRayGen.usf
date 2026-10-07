@@ -159,7 +159,15 @@ float4 Spheres[TOON_MAX_SPHERES];
 // 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率, w: トゥーンのハイライトとリムライトの強さ）と反射率（rgb）
 float4 SphereMaterialParams[TOON_MAX_SPHERES];
 float4 SphereAlbedo[TOON_MAX_SPHERES];
+// 『The Next Week』第4章：球のテクスチャ（x: 種類, y: 大きさ）と、チェッカーのもう一方の色（rgb）
+float4 SphereTextureParams[TOON_MAX_SPHERES];
+float4 SphereAlbedo2[TOON_MAX_SPHERES];
 uint NumSpheres;
+
+// テクスチャの種類（C++ 側の EToonTextureType と一致させる）
+#define TOON_TEXTURE_SOLID				0	// 単色（本の solid_color）
+#define TOON_TEXTURE_CHECKER			1	// 空間のチェッカー（本の checker_texture）。大きさは 1 マスの辺の長さ（cm）
+#define TOON_TEXTURE_SPHERE_UV_CHECKER	2	// 球のテクスチャ座標（UV）上のチェッカー。大きさは経度方向のマスの数
 
 // マテリアルの種類（C++ 側の EToonMaterialType と一致させる）
 #define TOON_MATERIAL_DEFAULT		0	// 未設定（灰色のランバート反射）
@@ -321,6 +329,8 @@ struct FToonHitRecord
 	float T;
 	bool bFrontFace;	// レイが表面の外側から当たったか
 	FToonMaterial Material;
+	// 『The Next Week』第4章：テクスチャ座標（本の u, v）。解析的な球でだけ求める
+	float2 UV;
 	// 当たった物体の識別番号（シーンでは GPUScene のインスタンス番号、解析的な球では球の番号）。アウトラインの判定に使う
 	uint ObjectId;
 
@@ -330,6 +340,39 @@ struct FToonHitRecord
 		Normal = bFrontFace ? OutwardNormal : -OutwardNormal;
 	}
 };
+
+// 『The Next Week』第4章：球の表面の点（中心からの単位ベクトル）からテクスチャ座標を求める（本の get_sphere_uv）
+// U：経度（0 ～ 1）、V：緯度（0：南極 ～ 1：北極）。本は Y が上だが、UE は Z が上なので軸を置き換えている
+float2 GetSphereUV(float3 P)
+{
+	float Theta = acos(clamp(-P.z, -1.0f, 1.0f));
+	float Phi = atan2(-P.y, P.x) + PI;
+	return float2(Phi / (2.0f * PI), Theta / PI);
+}
+
+// 『The Next Week』第4章：テクスチャの色を求める（本の texture::value）
+// LocalPosition は球の中心からの位置。Translated World 空間の位置をそのまま使うと、カメラが動くたびに模様がずれるため
+float3 SampleSphereTexture(uint Index, float2 UV, float3 LocalPosition)
+{
+	uint Type = (uint)round(SphereTextureParams[Index].x);
+	float Scale = max(SphereTextureParams[Index].y, 1.0e-3f);
+	float3 Even = SphereAlbedo[Index].rgb;
+	float3 Odd = SphereAlbedo2[Index].rgb;
+
+	if (Type == TOON_TEXTURE_CHECKER)
+	{
+		// 3 軸それぞれのマスの番号の和が偶数か奇数かで色を変える（立体の市松模様を表面で切り取った形になる）
+		int3 Cell = (int3)floor(LocalPosition / Scale);
+		return ((Cell.x + Cell.y + Cell.z) & 1) == 0 ? Even : Odd;
+	}
+	if (Type == TOON_TEXTURE_SPHERE_UV_CHECKER)
+	{
+		// 経度方向に Scale マス、緯度方向にその半分のマス（マスがほぼ正方形になる）
+		int2 Cell = (int2)floor(UV * float2(Scale, Scale * 0.5f));
+		return ((Cell.x + Cell.y) & 1) == 0 ? Even : Odd;
+	}
+	return Even;
+}
 
 // レイと球の交差判定（本の hit_sphere / sphere::hit に相当）
 // Ray.Direction は正規化済みである前提
@@ -362,7 +405,9 @@ bool HitSphere(float3 Center, float Radius, FToonRay Ray, float TMin, float TMax
 
 	Rec.T = Root;
 	Rec.Position = Ray.At(Root);
-	Rec.SetFaceNormal(Ray, (Rec.Position - Center) / Radius);
+	float3 OutwardNormal = (Rec.Position - Center) / Radius;
+	Rec.SetFaceNormal(Ray, OutwardNormal);
+	Rec.UV = GetSphereUV(OutwardNormal);
 	return true;
 }
 
@@ -381,7 +426,7 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 			ClosestSoFar = TempRec.T;
 			Rec = TempRec;
 			Rec.Material.Type = (uint)round(SphereMaterialParams[Index].x);
-			Rec.Material.Albedo = SphereAlbedo[Index].rgb;
+			Rec.Material.Albedo = SampleSphereTexture(Index, Rec.UV, Rec.Position - Spheres[Index].xyz);
 			Rec.Material.Fuzz = SphereMaterialParams[Index].y;
 			Rec.Material.RefractionIndex = SphereMaterialParams[Index].z;
 			// w：トゥーンのハイライトとリムライトの強さ（地面は 0）

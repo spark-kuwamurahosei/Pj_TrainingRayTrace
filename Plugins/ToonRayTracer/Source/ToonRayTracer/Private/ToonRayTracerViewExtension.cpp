@@ -292,6 +292,14 @@ namespace
 		Dielectric = 3,	// ガラスなどの誘電体（本の dielectric）
 	};
 
+	// テクスチャの種類（シェーダー側の TOON_TEXTURE_* と一致させる）
+	enum class EToonTextureType : uint32
+	{
+		Solid = 0,				// 単色（本の solid_color）
+		Checker = 1,			// 空間のチェッカー（本の checker_texture）
+		SphereUVChecker = 2,	// 球のテクスチャ座標（UV）上のチェッカー
+	};
+
 	struct FToonSphere
 	{
 		FVector Center;				// ワールド座標（cm）
@@ -300,6 +308,10 @@ namespace
 		FLinearColor Albedo;		// 反射率（本の albedo）
 		float Fuzz;					// 金属の反射のぼけ具合（0 ～ 1）
 		float RefractionIndex;		// 誘電体の屈折率（本の refraction_index）
+		// 『The Next Week』第4章：テクスチャ
+		EToonTextureType Texture = EToonTextureType::Solid;
+		float TextureScale = 1.0f;	// チェッカー：1 マスの辺の長さ（cm）、UV のチェッカー：経度方向のマスの数
+		FLinearColor Albedo2 = FLinearColor::Black;	// チェッカーのもう一方の色
 	};
 
 	// 『Ray Tracing in One Weekend』第11章のシーンをUEの単位系（cm, Z-up）に置き換えたもの
@@ -307,10 +319,12 @@ namespace
 	// 本では球の中心が y=0、地面の上面が y=-0.5 のため、全体を 50cm 持ち上げて地面の上面を z=0 にしている
 	const FToonSphere GToonSpheres[] =
 	{
-		// 地面
-		{ FVector(0.0, 0.0, -10000.0), 10000.0, EToonMaterialType::Lambertian, FLinearColor(0.8f, 0.8f, 0.0f), 0.0f, 1.0f },
-		// 中央：青いランバート
-		{ FVector(120.0, 0.0, 50.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.2f, 0.5f), 0.0f, 1.0f },
+		// 地面：『The Next Week』第4章のチェッカー（本の checker_texture(0.32, color(.2, .3, .1), color(.9, .9, .9))）
+		{ FVector(0.0, 0.0, -10000.0), 10000.0, EToonMaterialType::Lambertian, FLinearColor(0.2f, 0.3f, 0.1f), 0.0f, 1.0f,
+			EToonTextureType::Checker, 32.0f, FLinearColor(0.9f, 0.9f, 0.9f) },
+		// 中央：青いランバート。第4章の球のテクスチャ座標の確認用に、UV 上のチェッカーにしている
+		{ FVector(120.0, 0.0, 50.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.2f, 0.5f), 0.0f, 1.0f,
+			EToonTextureType::SphereUVChecker, 16.0f, FLinearColor(0.8f, 0.8f, 0.8f) },
 		// 左：中空のガラス球（外側はガラス、内側の一回り小さい球は「ガラスの中の空気」）
 		{ FVector(100.0, -100.0, 50.0), 50.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.5f },
 		{ FVector(100.0, -100.0, 50.0), 40.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.0f / 1.5f },
@@ -772,6 +786,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		const float ToonAccentStrength = Index == 0 ? 0.0f : 1.0f;
 		PassParameters->SphereMaterialParams[Index] = FVector4f(static_cast<float>(Sphere.Material), Sphere.Fuzz, Sphere.RefractionIndex, ToonAccentStrength);
 		PassParameters->SphereAlbedo[Index] = FVector4f(Sphere.Albedo.R, Sphere.Albedo.G, Sphere.Albedo.B, 0.0f);
+		PassParameters->SphereTextureParams[Index] = FVector4f(static_cast<float>(Sphere.Texture), Sphere.TextureScale, 0.0f, 0.0f);
+		PassParameters->SphereAlbedo2[Index] = FVector4f(Sphere.Albedo2.R, Sphere.Albedo2.G, Sphere.Albedo2.B, 0.0f);
 	}
 	PassParameters->NumSpheres = UE_ARRAY_COUNT(GToonSpheres);
 
