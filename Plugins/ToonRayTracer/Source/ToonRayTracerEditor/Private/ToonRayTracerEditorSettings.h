@@ -24,6 +24,15 @@ enum class EToonRayTracerTraceMode : uint8
 	AnalyticSpheres = 0	UMETA(DisplayName = "解析的な球（本の第11章のシーン）"),
 };
 
+// 解析的な物体のシーン（r.ToonRayTracer.AnalyticScene の値と一致させる）
+UENUM()
+enum class EToonRayTracerAnalyticScene : uint8
+{
+	OneWeekend = 0		UMETA(DisplayName = "本の第11章のシーン（第4〜5章のテクスチャ付き）"),
+	SimpleLight = 1		UMETA(DisplayName = "The Next Week 第7章：simple_light"),
+	CornellBox = 2		UMETA(DisplayName = "The Next Week 第7章：コーネルボックス"),
+};
+
 /**
  * ToonRayTracer のエディタパネルに表示する設定。
  * 値を変えると対応するコンソール変数（r.ToonRayTracer.*）にすぐ反映され、プロジェクトのユーザー設定に保存される。
@@ -45,6 +54,10 @@ public:
 	/** 交差判定の対象 */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "交差判定の対象"))
 	EToonRayTracerTraceMode TraceMode;
+
+	/** 交差判定の対象が「解析的な球」のときに表示するシーン */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "解析的な物体のシーン", EditCondition = "TraceMode == EToonRayTracerTraceMode::AnalyticSpheres"))
+	EToonRayTracerAnalyticScene AnalyticScene;
 
 	/** 1 ピクセルあたりのサンプル数（アンチエイリアス） */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "サンプル数", ClampMin = "1", ClampMax = "64", UIMin = "1", UIMax = "16"))
