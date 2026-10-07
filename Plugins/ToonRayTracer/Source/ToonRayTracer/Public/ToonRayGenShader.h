@@ -28,6 +28,13 @@ class FToonRayGenShader : public FGlobalShader
 	DECLARE_GLOBAL_SHADER(FToonRayGenShader);
 	SHADER_USE_ROOT_PARAMETER_STRUCT(FToonRayGenShader, FGlobalShader);
 
+	// 交差判定の対象（解析的な物体 / シーンの TLAS）と、表示モード（トゥーン / 確認用）でシェーダーを分ける
+	// 1 つのシェーダーに全部入れると TraceRay を呼ぶ箇所が増えすぎ、ドライバーの組み立てに数分かかり、
+	// 実行時にも GPU が応答しなくなる（TDR）ため、使う組み合わせのコードだけを含むようにする
+	class FAnalyticSceneDim : SHADER_PERMUTATION_BOOL("TOON_ANALYTIC_SCENE");
+	class FToonShadingDim : SHADER_PERMUTATION_BOOL("TOON_SHADING");
+	using FPermutationDomain = TShaderPermutationDomain<FAnalyticSceneDim, FToonShadingDim>;
+
 	// シェーダーに渡せる球の最大数
 	static constexpr int32 MaxSpheres = 8;
 	// シェーダーに渡せる四角形の最大数（『The Next Week』第6章）
@@ -95,6 +102,11 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FVector4f, BoxMaterialParams, [MaxBoxes])
 		SHADER_PARAMETER_ARRAY(FVector4f, BoxAlbedo, [MaxBoxes])
 		SHADER_PARAMETER(uint32, NumBoxes)
+		// 『The Next Week』第10章：地面に敷き詰めた箱の格子（角の位置と 1 マスの大きさ、マスの数と高さの範囲、色）
+		SHADER_PARAMETER(FVector4f, GroundGridOrigin)
+		SHADER_PARAMETER(FVector4f, GroundGridParams)
+		SHADER_PARAMETER(FVector4f, GroundGridAlbedo)
+		SHADER_PARAMETER(uint32, bGroundGrid)
 		// 『The Next Week』第7章：1 なら背景を黒にする
 		SHADER_PARAMETER(uint32, bBlackBackground)
 		SHADER_PARAMETER(uint32, NumSpheres)
