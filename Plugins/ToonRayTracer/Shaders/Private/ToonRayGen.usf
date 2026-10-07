@@ -168,6 +168,7 @@ uint NumSpheres;
 #define TOON_TEXTURE_SOLID				0	// 単色（本の solid_color）
 #define TOON_TEXTURE_CHECKER			1	// 空間のチェッカー（本の checker_texture）。大きさは 1 マスの辺の長さ（cm）
 #define TOON_TEXTURE_SPHERE_UV_CHECKER	2	// 球のテクスチャ座標（UV）上のチェッカー。大きさは経度方向のマスの数
+#define TOON_TEXTURE_MARBLE				3	// 『The Next Week』第5章の大理石模様（本の noise_texture）。大きさは 1m あたりの縞の細かさ（本の scale）
 
 // マテリアルの種類（C++ 側の EToonMaterialType と一致させる）
 #define TOON_MATERIAL_DEFAULT		0	// 未設定（灰色のランバート反射）
@@ -350,6 +351,61 @@ float2 GetSphereUV(float3 P)
 	return float2(Phi / (2.0f * PI), Theta / PI);
 }
 
+// 『The Next Week』第5章：Perlin ノイズ
+// 本では 256 個の乱数と、軸ごとの並べ替え表（perm_x / perm_y / perm_z）で格子点ごとの乱数を決めている。
+// シェーダーでは表を持たず、格子点の整数座標をハッシュ関数に通して同じ役割をさせる（同じ格子点からは常に同じ値になる）
+
+// 格子点に置くランダムな向きの単位ベクトル（本の randvec）
+float3 ToonPerlinGradient(int3 Cell)
+{
+	uint Hash = ToonPcgHash((uint)Cell.x + ToonPcgHash((uint)Cell.y + ToonPcgHash((uint)Cell.z)));
+	float Z = ToonRandomFloat(Hash) * 2.0f - 1.0f;
+	float Phi = ToonRandomFloat(Hash) * 2.0f * PI;
+	float R = sqrt(max(1.0f - Z * Z, 0.0f));
+	return float3(R * cos(Phi), R * sin(Phi), Z);
+}
+
+// Perlin ノイズ（本の perlin::noise と perlin_interp）。値はおよそ -1 ～ 1
+// 周りの 8 つの格子点のベクトルと、格子点から P へのベクトルの内積を、エルミート曲線でなめらかにした重みで混ぜる
+// （格子点の値をそのまま補間すると格子に沿った模様が目立つため、ベクトルとの内積にして最大・最小を格子点からずらす）
+float ToonPerlinNoise(float3 P)
+{
+	float3 Cell = floor(P);
+	float3 Frac = P - Cell;
+	// エルミート曲線（3t^2 - 2t^3）で、格子の境目で傾きが 0 になるようにする（マッハバンドの対策）
+	float3 Weight = Frac * Frac * (3.0f - 2.0f * Frac);
+
+	float Accum = 0.0f;
+	for (int I = 0; I < 2; ++I)
+	{
+		for (int J = 0; J < 2; ++J)
+		{
+			for (int K = 0; K < 2; ++K)
+			{
+				float3 Corner = float3(I, J, K);
+				float3 W = Corner * Weight + (1.0f - Corner) * (1.0f - Weight);
+				float3 Gradient = ToonPerlinGradient((int3)Cell + int3(I, J, K));
+				Accum += W.x * W.y * W.z * dot(Gradient, Frac - Corner);
+			}
+		}
+	}
+	return Accum;
+}
+
+// 乱流（本の perlin::turb）：周波数を 2 倍、強さを半分にしながらノイズを Depth 回重ねる
+float ToonPerlinTurbulence(float3 P, int Depth)
+{
+	float Accum = 0.0f;
+	float Weight = 1.0f;
+	for (int Index = 0; Index < Depth; ++Index)
+	{
+		Accum += Weight * ToonPerlinNoise(P);
+		Weight *= 0.5f;
+		P *= 2.0f;
+	}
+	return abs(Accum);
+}
+
 // 『The Next Week』第4章：テクスチャの色を求める（本の texture::value）
 // LocalPosition は球の中心からの位置。Translated World 空間の位置をそのまま使うと、カメラが動くたびに模様がずれるため
 float3 SampleSphereTexture(uint Index, float2 UV, float3 LocalPosition)
@@ -370,6 +426,13 @@ float3 SampleSphereTexture(uint Index, float2 UV, float3 LocalPosition)
 		// 経度方向に Scale マス、緯度方向にその半分のマス（マスがほぼ正方形になる）
 		int2 Cell = (int2)floor(UV * float2(Scale, Scale * 0.5f));
 		return ((Cell.x + Cell.y) & 1) == 0 ? Even : Odd;
+	}
+	if (Type == TOON_TEXTURE_MARBLE)
+	{
+		// 本の noise_texture：color(.5, .5, .5) * (1 + sin(scale * p.z + 10 * turb(p, 7)))
+		// 本の 1 単位は 1m なので m に直して計算する。本の z（奥行き）は UE の X に当たる
+		float3 P = LocalPosition / 100.0f;
+		return Even * 0.5f * (1.0f + sin(Scale * P.x + 10.0f * ToonPerlinTurbulence(P, 7)));
 	}
 	return Even;
 }

@@ -298,6 +298,7 @@ namespace
 		Solid = 0,				// 単色（本の solid_color）
 		Checker = 1,			// 空間のチェッカー（本の checker_texture）
 		SphereUVChecker = 2,	// 球のテクスチャ座標（UV）上のチェッカー
+		Marble = 3,				// 『The Next Week』第5章の大理石模様（本の noise_texture）
 	};
 
 	struct FToonSphere
@@ -310,7 +311,7 @@ namespace
 		float RefractionIndex;		// 誘電体の屈折率（本の refraction_index）
 		// 『The Next Week』第4章：テクスチャ
 		EToonTextureType Texture = EToonTextureType::Solid;
-		float TextureScale = 1.0f;	// チェッカー：1 マスの辺の長さ（cm）、UV のチェッカー：経度方向のマスの数
+		float TextureScale = 1.0f;	// チェッカー：1 マスの辺の長さ（cm）、UV のチェッカー：経度方向のマスの数、大理石：1m あたりの縞の細かさ
 		FLinearColor Albedo2 = FLinearColor::Black;	// チェッカーのもう一方の色
 	};
 
@@ -322,9 +323,11 @@ namespace
 		// 地面：『The Next Week』第4章のチェッカー（本の checker_texture(0.32, color(.2, .3, .1), color(.9, .9, .9))）
 		{ FVector(0.0, 0.0, -10000.0), 10000.0, EToonMaterialType::Lambertian, FLinearColor(0.2f, 0.3f, 0.1f), 0.0f, 1.0f,
 			EToonTextureType::Checker, 32.0f, FLinearColor(0.9f, 0.9f, 0.9f) },
-		// 中央：青いランバート。第4章の球のテクスチャ座標の確認用に、UV 上のチェッカーにしている
-		{ FVector(120.0, 0.0, 50.0), 50.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.2f, 0.5f), 0.0f, 1.0f,
-			EToonTextureType::SphereUVChecker, 16.0f, FLinearColor(0.8f, 0.8f, 0.8f) },
+		// 中央：『The Next Week』第5章の大理石模様のランバート（本の noise_texture(4)）
+		// 本の第5章の球（半径 2m）の 1/4 の大きさなので、縞の細かさを 4 倍にして同じくらいの本数の縞が見えるようにしている
+		// 第4章の球のテクスチャ座標の確認には EToonTextureType::SphereUVChecker（大きさ 16）を使う
+		{ FVector(120.0, 0.0, 50.0), 50.0, EToonMaterialType::Lambertian, FLinearColor::White, 0.0f, 1.0f,
+			EToonTextureType::Marble, 16.0f },
 		// 左：中空のガラス球（外側はガラス、内側の一回り小さい球は「ガラスの中の空気」）
 		{ FVector(100.0, -100.0, 50.0), 50.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.5f },
 		{ FVector(100.0, -100.0, 50.0), 40.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.0f / 1.5f },
