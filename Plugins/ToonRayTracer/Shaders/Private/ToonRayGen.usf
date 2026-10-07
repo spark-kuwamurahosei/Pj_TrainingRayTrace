@@ -124,6 +124,15 @@ float3 ToonLightColor;
 // トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
 uint bToonCastShadows;
 float ToonShadowBias;
+// Perlin ノイズの応用：影の境目を手描き風に揺らす強さ（0 なら揺らさない）と、揺れの大きさ（cm）
+float ToonShadowNoiseStrength;
+float ToonShadowNoiseSize;
+// シャドウレイの始点をずらす量の倍率（強さ × 揺れの大きさ × この値 cm だけずらす）
+// 大きすぎるとずれの変化がノイズの模様より急になり、境目が折り返して点々になる
+#define TOON_SHADOW_NOISE_OFFSET_SCALE 2.0f
+// メッシュのローカル座標を求めるための、Translated World 空間の原点のワールド座標（double を High と Low に分けたもの）
+float3 PreViewTranslationHigh;
+float3 PreViewTranslationLow;
 // トゥーン T5：ハイライト（NdotH のしきい値、強さ）とリムライト（1 - NdotV のしきい値、強さ、光が当たる側だけか）
 float ToonHighlightThreshold;
 float ToonHighlightStrength;
@@ -1162,6 +1171,23 @@ float ToonLightLevel(float NdotL)
 	return 0.5f * (ShadowToNext + MidToLit);
 }
 
+// Perlin ノイズの応用：ノイズを計算する位置（物体に貼り付いた座標）
+// カメラ基準の Translated World 空間の位置のままだと、カメラや物体が動くたびに模様が滑るため、
+// シーンのメッシュはメッシュのローカル座標、解析的な球は球の中心からの位置を使う
+// ローカル座標にはメッシュのスケールを掛け戻す（軸ごとに大きく拡大・縮小した壁などで、ノイズが一方向だけ細かくなって
+// 砂をまいたような模様になるのを防ぐ）。物体には貼り付いたまま、揺れの大きさはどのメッシュでも同じ cm になる
+float3 GetStableNoisePosition(FToonHitRecord Rec)
+{
+	if (TraceMode == 0)
+	{
+		return Rec.Position - Spheres[Rec.ObjectId].xyz;
+	}
+
+	FInstanceSceneData InstanceData = GetInstanceSceneData(Rec.ObjectId);
+	float4x4 TranslatedWorldToLocal = DFFastToTranslatedWorld(InstanceData.WorldToLocal, MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow));
+	return mul(float4(Rec.Position, 1.0f), TranslatedWorldToLocal).xyz * abs(InstanceData.NonUniformScale.xyz);
+}
+
 // トゥーン T3：Origin から光源の方向へシャドウレイを飛ばし、光が届くかどうかを返す
 // 「何かに当たったか」だけ分かればよいので、最初の交差で打ち切り、ClosestHit も呼ばない
 // bIgnoreBackFaces が true なら、裏から当たった面を無視する（シャドウターミネーター問題の対策）
@@ -1288,12 +1314,37 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal)
 	}
 
 	float NdotL = dot(Rec.Normal, ToLightDirection);
+
+	// Perlin ノイズの応用：影の境目を手描き風に揺らす
+	// ・面の向きによる明暗の境目：NdotL にノイズを足して、境目の位置を前後させる
+	// ・シャドウレイによる影の境目：シャドウレイの始点を、面に沿ってノイズの分だけずらす
+	//   （光源の方向を傾けると、影を落とす物体が遠いほど境目のずれが大きくなり、細かい点々に散らばってしまう。
+	//     始点をずらす方法なら、距離に関係なく境目は「揺れの大きさ × 強さ」だけずれる）
+	// ノイズは物体に貼り付いた座標で計算するので、カメラや物体が動いても揺れの模様は滑らない
+	float3 ShadowOffset = 0.0f;
+	if (ToonShadowNoiseStrength > 0.0f)
+	{
+		float NoiseSize = max(ToonShadowNoiseSize, 1.0e-3f);
+		float3 NoisePosition = GetStableNoisePosition(Rec) / NoiseSize;
+		// 大きな揺れに半分の大きさの揺れを重ねて、なめらかすぎない筆の跡のような形にする
+		float Noise = ToonPerlinNoise(NoisePosition) + 0.5f * ToonPerlinNoise(NoisePosition * 2.0f + 17.0f);
+		NdotL += ToonShadowNoiseStrength * Noise;
+
+		float3 Shift = float3(
+			ToonPerlinNoise(NoisePosition + float3(31.0f, 0.0f, 0.0f)),
+			ToonPerlinNoise(NoisePosition + float3(0.0f, 47.0f, 0.0f)),
+			ToonPerlinNoise(NoisePosition + float3(0.0f, 0.0f, 73.0f)));
+		// 面の中に収まるよう、面に垂直な成分を取り除く
+		Shift -= GeometricNormal * dot(Shift, GeometricNormal);
+		ShadowOffset = Shift * (ToonShadowNoiseStrength * NoiseSize * TOON_SHADOW_NOISE_OFFSET_SCALE);
+	}
+
 	float LightLevel = ToonLightLevel(NdotL);
 
 	// 始点を実際の面の向きへ少し浮かせ、滑らかな法線とポリゴンの向きのずれによる自己遮蔽（黒い斑点）を防ぐ
 	if (bToonCastShadows != 0 && LightLevel > 0.0f)
 	{
-		float3 ShadowOrigin = Rec.Position + GeometricNormal * ToonShadowBias;
+		float3 ShadowOrigin = Rec.Position + ShadowOffset + GeometricNormal * ToonShadowBias;
 
 		// シャドウターミネーター問題の対策：
 		// 滑らかな法線では光を向いていても、ポリゴン自体は光と反対を向いている点（明暗の境目付近）では、

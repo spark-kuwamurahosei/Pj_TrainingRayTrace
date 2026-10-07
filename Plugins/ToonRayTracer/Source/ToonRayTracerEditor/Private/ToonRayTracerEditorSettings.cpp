@@ -122,6 +122,8 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 
 	bCastShadows = true;
 	ShadowBias = 2.0f;
+	ShadowNoiseStrength = 0.0f;
+	ShadowNoiseSize = 40.0f;
 
 	HighlightThreshold = 0.97f;
 	HighlightStrength = 1.0f;
@@ -166,6 +168,8 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 
 	SetBool(TEXT("r.ToonRayTracer.Toon.CastShadows"), bCastShadows);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowBias"), ShadowBias);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"), ShadowNoiseStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseSize"), ShadowNoiseSize);
 
 	SetFloat(TEXT("r.ToonRayTracer.Toon.HighlightThreshold"), HighlightThreshold);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.HighlightStrength"), HighlightStrength);
@@ -210,6 +214,8 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 
 	GetBool(TEXT("r.ToonRayTracer.Toon.CastShadows"), bCastShadows);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowBias"), ShadowBias);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"), ShadowNoiseStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseSize"), ShadowNoiseSize);
 
 	GetFloat(TEXT("r.ToonRayTracer.Toon.HighlightThreshold"), HighlightThreshold);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.HighlightStrength"), HighlightStrength);

@@ -117,6 +117,12 @@ class FToonRayGenShader : public FGlobalShader
 		// トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
 		SHADER_PARAMETER(uint32, bToonCastShadows)
 		SHADER_PARAMETER(float, ToonShadowBias)
+		// Perlin ノイズの応用：影の境目を揺らす強さと、揺れの大きさ（cm）
+		SHADER_PARAMETER(float, ToonShadowNoiseStrength)
+		SHADER_PARAMETER(float, ToonShadowNoiseSize)
+		// Translated World 空間の原点のワールド座標（メッシュのローカル座標を求めるため、double を High と Low に分けたもの）
+		SHADER_PARAMETER(FVector3f, PreViewTranslationHigh)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationLow)
 		// トゥーン T5：ハイライト（NdotH のしきい値、強さ）とリムライト（1 - NdotV のしきい値、強さ、光が当たる側だけか）
 		SHADER_PARAMETER(float, ToonHighlightThreshold)
 		SHADER_PARAMETER(float, ToonHighlightStrength)

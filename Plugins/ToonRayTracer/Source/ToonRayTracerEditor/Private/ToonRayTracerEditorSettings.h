@@ -138,6 +138,14 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "影のバイアス（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "10.0", EditCondition = "bCastShadows"))
 	float ShadowBias;
 
+	/** 影の境目を Perlin ノイズで手描き風に揺らす強さ。0 なら揺らさない（0.1 で控えめ、0.3 で強め） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "影の境目の揺れの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "0.5"))
+	float ShadowNoiseStrength;
+
+	/** 揺れの大きさ（cm）。大きいほどゆったりした揺れになる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "影の境目の揺れの大きさ（cm）", ClampMin = "0.1", UIMin = "1.0", UIMax = "100.0"))
+	float ShadowNoiseSize;
+
 	// ---- トゥーン：ハイライトとリムライト ----
 
 	/** ハイライトのしきい値（N・H）。1 に近いほど小さい */
