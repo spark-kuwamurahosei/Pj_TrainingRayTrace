@@ -244,6 +244,12 @@ uint bBlackBackground;
 #define TOON_TEXTURE_CHECKER			1	// 空間のチェッカー（本の checker_texture）。大きさは 1 マスの辺の長さ（cm）
 #define TOON_TEXTURE_SPHERE_UV_CHECKER	2	// 球のテクスチャ座標（UV）上のチェッカー。大きさは経度方向のマスの数
 #define TOON_TEXTURE_MARBLE				3	// 『The Next Week』第5章の大理石模様（本の noise_texture）。大きさは 1m あたりの縞の細かさ（本の scale）
+#define TOON_TEXTURE_IMAGE				4	// 『The Next Week』第4章の画像テクスチャ（本の image_texture）。画像がなければ UV のチェッカーで代用する
+
+// 『The Next Week』第4章：球に貼る画像（本の earthmap.jpg）。bImageTexture が 0 なら画像がない
+Texture2D ImageTexture;
+SamplerState ImageTextureSampler;
+uint bImageTexture;
 
 // マテリアルの種類（C++ 側の EToonMaterialType と一致させる）
 #define TOON_MATERIAL_DEFAULT		0	// 未設定（灰色のランバート反射）
@@ -424,11 +430,12 @@ struct FToonHitRecord
 };
 
 // 『The Next Week』第4章：球の表面の点（中心からの単位ベクトル）からテクスチャ座標を求める（本の get_sphere_uv）
-// U：経度（0 ～ 1）、V：緯度（0：南極 ～ 1：北極）。本は Y が上だが、UE は Z が上なので軸を置き換えている
+// U：経度（0 ～ 1）、V：緯度（0：南極 ～ 1：北極）
+// 本の式 theta = acos(-y), phi = atan2(-z, x) + pi を、シーンと同じ置き換え（本の x, y, z → UE の Y, Z, X）で書き直している
 float2 GetSphereUV(float3 P)
 {
 	float Theta = acos(clamp(-P.z, -1.0f, 1.0f));
-	float Phi = atan2(-P.y, P.x) + PI;
+	float Phi = atan2(-P.x, P.y) + PI;
 	return float2(Phi / (2.0f * PI), Theta / PI);
 }
 
@@ -530,7 +537,13 @@ float3 SampleSphereTexture(uint Index, float2 UV, float3 LocalPosition)
 		int3 Cell = (int3)floor(LocalPosition / Scale);
 		return ((Cell.x + Cell.y + Cell.z) & 1) == 0 ? Even : Odd;
 	}
-	if (Type == TOON_TEXTURE_SPHERE_UV_CHECKER)
+	if (Type == TOON_TEXTURE_IMAGE && bImageTexture != 0)
+	{
+		// 本の image_texture：テクスチャ座標で画像を読む。画像は上が北なので、V（0：南極 ～ 1：北極）を上下反転する
+		// （テクスチャは sRGB として読み込まれるため、読んだ時点で線形の色になっている）
+		return ImageTexture.SampleLevel(ImageTextureSampler, float2(UV.x, 1.0f - UV.y), 0).rgb;
+	}
+	if (Type == TOON_TEXTURE_SPHERE_UV_CHECKER || Type == TOON_TEXTURE_IMAGE)
 	{
 		// 経度方向に Scale マス、緯度方向にその半分のマス（マスがほぼ正方形になる）
 		int2 Cell = (int2)floor(UV * float2(Scale, Scale * 0.5f));

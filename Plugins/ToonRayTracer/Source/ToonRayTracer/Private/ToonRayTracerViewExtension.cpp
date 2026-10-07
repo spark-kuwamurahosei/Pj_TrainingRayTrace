@@ -12,6 +12,9 @@
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 #include "RenderingThread.h"
+#include "Engine/Texture2D.h"
+#include "TextureResource.h"
+#include "RHIStaticStates.h"
 #include "RenderGraphUtils.h"
 #include "Algo/Sort.h"
 #include "ProfilingDebugging/RealtimeGPUProfiler.h"
@@ -187,6 +190,17 @@ namespace
 		ECVF_RenderThreadSafe);
 
 	// 文字列型のため ECVF_RenderThreadSafe は付けられない。ゲームスレッドで読んでレンダースレッドへ渡す
+	// 『The Next Week』第4章：第10章のシーンで球に貼る画像（本の earthmap.jpg）のアセットのパス
+	// 見つからなければ UV のチェッカーで代用する。文字列型のためゲームスレッドで読む
+	TAutoConsoleVariable<FString> CVarToonRayTracerImageTexture(
+		TEXT("r.ToonRayTracer.ImageTexture"),
+		TEXT("/ToonRayTracer/Textures/T_EarthMap.T_EarthMap"),
+		TEXT("Texture asset path of the image texture used by the Next Week final scene (the book's earthmap.jpg). A UV checker is used when it is not found"),
+		ECVF_Default);
+
+	// 球に貼る画像のすべてのミップをメモリに置く指示の有効時間（秒）。毎フレーム延長する
+	constexpr float ImageTextureResidentSeconds = 30.0f;
+
 	TAutoConsoleVariable<FString> CVarToonRayTracerToonOutlineColor(
 		TEXT("r.ToonRayTracer.Toon.OutlineColor"),
 		TEXT("0.02,0.02,0.04"),
@@ -322,6 +336,7 @@ namespace
 		Checker = 1,			// 空間のチェッカー（本の checker_texture）
 		SphereUVChecker = 2,	// 球のテクスチャ座標（UV）上のチェッカー
 		Marble = 3,				// 『The Next Week』第5章の大理石模様（本の noise_texture）
+		Image = 4,				// 『The Next Week』第4章の画像テクスチャ（本の image_texture）。画像がなければ UV のチェッカーで代用
 	};
 
 	struct FToonSphere
@@ -498,7 +513,7 @@ namespace
 			EToonTextureType::Solid, 1.0f, FLinearColor::Black, 100.0f, 0.0001f },
 		// 地球の画像の代わりに、UV のチェッカーの球
 		{ FVector(400.0, 400.0, 200.0), 100.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.3f, 0.7f), 0.0f, 1.0f,
-			EToonTextureType::SphereUVChecker, 16.0f, FLinearColor(0.2f, 0.6f, 0.2f) },
+			EToonTextureType::Image, 16.0f, FLinearColor(0.2f, 0.6f, 0.2f) },
 		// 大理石の球（本の noise_texture(0.2)。本の 1 単位 = 1cm）
 		{ FVector(300.0, 220.0, 280.0), 80.0, EToonMaterialType::Lambertian, FLinearColor::White, 0.0f, 1.0f,
 			EToonTextureType::Marble, 0.2f, FLinearColor::Black, 1.0f },
@@ -698,12 +713,34 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	// 文字列型のコンソール変数もゲームスレッドでしか読めないため、ここで色に変換して一緒に渡す
 	const FLinearColor ShadowColor = ParseLinearColor(CVarToonRayTracerToonShadowColor.GetValueOnGameThread(), DefaultToonShadowColor);
 	const FLinearColor OutlineColor = ParseLinearColor(CVarToonRayTracerToonOutlineColor.GetValueOnGameThread(), DefaultToonOutlineColor);
+
+	// 『The Next Week』第4章：球に貼る画像のアセットは、パスが変わったときだけ読み込む（見つからなければ何度も試さない）
+	const FString Path = CVarToonRayTracerImageTexture.GetValueOnGameThread();
+	if (Path != ImageTexturePath)
+	{
+		ImageTexturePath = Path;
+		UTexture2D* Loaded = Path.IsEmpty() ? nullptr : LoadObject<UTexture2D>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
+		ImageTexture.Reset(Loaded);
+		if (!Loaded && !Path.IsEmpty())
+		{
+			UE_LOG(LogTemp, Log, TEXT("[ToonRayTracer] Image texture '%s' was not found. A UV checker is used instead"), *Path);
+		}
+	}
+	if (ImageTexture.IsValid())
+	{
+		// マテリアルから使われていないテクスチャは、テクスチャストリーミングで低い解像度（ミップ）だけが残され、ぼやけてしまう
+		// シェーダーから直接読むので、すべてのミップを常にメモリに置くよう指示し続ける（指示は指定した秒数で切れる）
+		ImageTexture->SetForceMipLevelsToBeResident(ImageTextureResidentSeconds);
+	}
+	FTextureResource* ImageResource = ImageTexture.IsValid() ? ImageTexture->GetResource() : nullptr;
+
 	ENQUEUE_RENDER_COMMAND(ToonRayTracerUpdateGameThreadState)(
-		[this, Light, ShadowColor, OutlineColor](FRHICommandListImmediate&)
+		[this, Light, ShadowColor, OutlineColor, ImageResource](FRHICommandListImmediate&)
 		{
 			DirectionalLight_RenderThread = Light;
 			ToonShadowColor_RenderThread = ShadowColor;
 			ToonOutlineColor_RenderThread = OutlineColor;
+			ImageTextureResource_RenderThread = ImageResource;
 		});
 }
 
@@ -1110,6 +1147,15 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		PassParameters->SphereAlbedo2[Index] = FVector4f(Sphere.Albedo2.R, Sphere.Albedo2.G, Sphere.Albedo2.B, 0.0f);
 		PassParameters->SphereMotion[Index] = FVector4f(FVector3f(Sphere.Motion), 0.0f);
 	}
+
+	// 『The Next Week』第4章：球に貼る画像（読み込めていなければ黒のダミーを渡し、シェーダー側で UV のチェッカーにする）
+	FRHITexture* ImageTextureRHI = ImageTextureResource_RenderThread ? ImageTextureResource_RenderThread->GetTexture2DRHI() : nullptr;
+	PassParameters->bImageTexture = ImageTextureRHI ? 1u : 0u;
+	PassParameters->ImageTexture = ImageTextureRHI
+		? RegisterExternalTexture(GraphBuilder, ImageTextureRHI, TEXT("ToonRayTracerImageTexture"))
+		: GSystemTextures.GetBlackDummy(GraphBuilder);
+	// 横（経度）方向はつながっているので繰り返し、縦（緯度）方向は端で止める
+	PassParameters->ImageTextureSampler = TStaticSamplerState<SF_Bilinear, AM_Wrap, AM_Clamp, AM_Clamp>::GetRHI();
 	PassParameters->NumSpheres = AnalyticScene.Spheres.Num();
 
 	// 『The Next Week』第6章：四角形も角の位置だけ Translated World 空間に変換する（2 辺は向きと長さなのでそのまま）

@@ -91,6 +91,10 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FVector4f, SphereAlbedo2, [MaxSpheres])
 		// 『The Next Week』第2章：シャッターが開いている間に球が動く量（xyz、cm）
 		SHADER_PARAMETER_ARRAY(FVector4f, SphereMotion, [MaxSpheres])
+		// 『The Next Week』第4章：球に貼る画像（本の earthmap.jpg）。bImageTexture が 0 なら画像がない
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ImageTexture)
+		SHADER_PARAMETER_SAMPLER(SamplerState, ImageTextureSampler)
+		SHADER_PARAMETER(uint32, bImageTexture)
 		// 『The Next Week』第6章：四角形（Translated World 空間の角の位置と 2 辺）とマテリアル
 		SHADER_PARAMETER_ARRAY(FVector4f, QuadQ, [MaxQuads])
 		SHADER_PARAMETER_ARRAY(FVector4f, QuadU, [MaxQuads])
