@@ -29,8 +29,22 @@ uint bDetectMotion;
 // 動いている物体があるフレームでの蓄積数の上限（影や映り込みの残像を短くする）
 uint MotionMaxAccumulatedFrames;
 
+// 1 なら、蓄積をやり直した理由を色で表示する（確認用）
+uint DebugMotion;
+
+// 蓄積をやり直した理由（DebugMotion の表示に使う）
+#define TOON_RESET_ALL			1u	// カメラや設定が変わった
+#define TOON_RESET_VELOCITY		2u	// 動いている物体が見えている
+#define TOON_RESET_DEPTH		4u	// 見えている物体の深度が変わった
+#define TOON_RESET_SIGNATURE	8u	// 見えている物体・影・反射の先が変わった
+
 // 動いているとみなす速度（ピクセル / フレーム）
 #define TOON_MOTION_MIN_PIXELS 0.05f
+// シーン内で物体が動いているとみなす、深度が変わったピクセルの割合（画面全体に対して）
+// 髪の毛先などの 1 ピクセルより細い部分は、TAA のジッターで描かれたり描かれなかったりして深度の変化と誤検出されるため、
+// 数ピクセルだけの変化では「動いている」としない（速度による検出は誤検出しないので 1 ピクセルでも動いているとする）
+#define TOON_MOTION_DEPTH_PIXEL_RATIO 0.0005f
+
 // 見えている物体が変わったとみなす深度の差（割合）
 #define TOON_MOTION_DEPTH_TOLERANCE 0.01f
 
@@ -492,7 +506,9 @@ bool ProbeSurfaceEdge(FToonRay Ray, float3 Tangent, float ProbeSlope, float TMin
 // 三角形の面の法線（フラットシェーディング相当）を求める
 // カメラレイだけでなく、反射後のレイにも使えるよう、補助レイはレイ自身の向きを傾けて作る
 // SmoothDistance が 0 より大きければ、補助レイをその間隔（cm）で両側に飛ばし、ポリゴンをまたいだなめらかな法線にする
-bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDistance = 0.0f)
+// bComputeNormal が false なら、補助レイを飛ばさず法線を求めない（Normal はレイと逆向きの仮の値になる）
+// GBuffer の法線に置き換える予定の点など、面の向きが要らない場合に使う（1 点あたりのレイが 3 本から 1 本になる）
+bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDistance = 0.0f, bool bComputeNormal = true)
 {
 	FDefaultPayload CenterPayload;
 	if (!TraceScene(Ray, TMin, CenterPayload))
@@ -504,6 +520,13 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 	Rec.Position = Ray.At(CenterPayload.HitT);
 	Rec.Material = GetSceneMaterial(CenterPayload.InstanceID);
 	Rec.ObjectId = CenterPayload.InstanceID;
+
+	if (!bComputeNormal)
+	{
+		Rec.Normal = -Ray.Direction;
+		Rec.bFrontFace = !IsPayloadBackFace(CenterPayload);
+		return true;
+	}
 
 	// レイの向きに垂直な2方向を作る
 	float3 Up = abs(Ray.Direction.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
@@ -551,14 +574,14 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 
 // 解析的な球またはシーンのメッシュとの交差判定（TraceMode で切り替え）
 // SmoothDistance が 0 より大きければ、シーンのメッシュの法線をその間隔でなめらかにする（解析的な球は常になめらか）
-bool HitAnything(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDistance = 0.0f)
+bool HitAnything(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDistance = 0.0f, bool bComputeNormal = true)
 {
 	// 三項演算子は両辺とも評価されるため、不要な TraceRay を避けるように if で分ける
 	if (TraceMode == 0)
 	{
 		return HitWorld(Ray, TMin, 1.0e8f, Rec);
 	}
-	return HitScene(Ray, TMin, Rec, SmoothDistance);
+	return HitScene(Ray, TMin, Rec, SmoothDistance, bComputeNormal);
 }
 
 // GBuffer の深度から復元した位置と、レイのヒット位置がどれだけずれていたら別の面とみなすか
@@ -630,23 +653,25 @@ bool IsHiddenInGBuffer(float2 UV, float3 Position)
 // カメラのレイ（中心のレイとアウトラインの補助レイ）の交差判定
 // GBuffer に描かれていない面（透過で抜けている部分）に当たったら、その先へ通り抜けて次の面を探す
 // Custom Primitive Data でマテリアルを指定したメッシュ（ガラスなど）は通り抜けない
-bool HitCameraVisible(FToonRay Ray, float2 UV, inout FToonHitRecord Rec)
+// bComputeNormal が false なら法線を求めない（HitScene を参照）
+bool HitCameraVisible(FToonRay Ray, float2 UV, inout FToonHitRecord Rec, bool bComputeNormal = true)
 {
 	float TMin = 0.0f;
 	for (uint Skip = 0; Skip <= TOON_MAX_MASKED_SKIPS; ++Skip)
 	{
-		if (!HitAnything(Ray, TMin, Rec))
+		// 通り抜ける面の法線は要らないため、2 枚目以降は法線を求めずに探し、見つかった面だけ求め直す
+		if (!HitAnything(Ray, TMin, Rec, 0.0f, bComputeNormal && Skip == 0))
 		{
 			return false;
 		}
 		if (bSkipMaskedSurfaces == 0 || TraceMode == 0 || Rec.Material.Type != TOON_MATERIAL_DEFAULT || !IsHiddenInGBuffer(UV, Rec.Position))
 		{
-			return true;
+			return Skip == 0 || !bComputeNormal || HitAnything(Ray, TMin, Rec);
 		}
 		TMin = Rec.T + TOON_RAY_TMIN;
 		Rec = (FToonHitRecord)0;
 	}
-	return HitAnything(Ray, TMin, Rec);
+	return HitAnything(Ray, TMin, Rec, 0.0f, bComputeNormal);
 }
 
 // GBuffer のピクセルから、マテリアルの色と金属の判定を読んで Rec に反映する
@@ -1095,11 +1120,18 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 		float2 NeighborUV = UV + Directions[Index] * OffsetUV;
 		FToonRay NeighborRay = GenerateCameraRay(NeighborUV);
 
-		// 補助レイでも面の向きが必要なため、法線まで求める交差判定を使い、カメラから直接見える点なので GBuffer の法線に置き換える
+		// 補助レイでも面の向きが必要。カメラから直接見える点なので、GBuffer の法線に置き換えられる場合は
+		// 法線を求める補助レイを省き（負荷の大半はここ）、置き換えられない場合だけ法線まで求め直す
 		FToonHitRecord NeighborRec = (FToonHitRecord)0;
-		if (!HitCameraVisible(NeighborRay, NeighborUV, NeighborRec))
+		if (!HitCameraVisible(NeighborRay, NeighborUV, NeighborRec, false))
 		{
 			return 1.0f;
+		}
+		bool bHasGBufferNormal = TraceMode != 0 && bUseGBufferNormal != 0 && IsGBufferSamePoint(NeighborUV, NeighborRec.Position, NeighborRec.T);
+		if (!bHasGBufferNormal)
+		{
+			NeighborRec = (FToonHitRecord)0;
+			HitCameraVisible(NeighborRay, NeighborUV, NeighborRec);
 		}
 		ApplyGBufferSurface(NeighborUV, NeighborRay, NeighborRec);
 
@@ -1467,6 +1499,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	// AccumulatedFrames が 0（カメラや設定が変わった直後）なら、全ピクセルを最初からやり直す
 	float4 History = 0.0f;
 	uint HistoryFrames = 0;
+	uint ResetReason = AccumulatedFrames > 0 ? 0u : TOON_RESET_ALL;
 	if (AccumulatedFrames > 0)
 	{
 		History = AccumulationTexture[LocalPixel];
@@ -1479,16 +1512,20 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	bool bSceneMoving = false;
 	if (bDetectMotion != 0)
 	{
-		bSceneMoving = PreviousSceneMotion[0] != 0;
+		// [0]：動いている物体が見えていたピクセル数、[1]：深度が変わったピクセル数（前のフレーム）
+		uint DepthPixelThreshold = (uint)((float)(ViewRectSize.x * ViewRectSize.y) * TOON_MOTION_DEPTH_PIXEL_RATIO);
+		bSceneMoving = PreviousSceneMotion[0] > 0 || PreviousSceneMotion[1] > DepthPixelThreshold;
 
 		float CurrentDeviceZ;
 		bool bDepthChanged = HasDepthChanged(CenterUV, AccumulationDepthTexture[LocalPixel], CurrentDeviceZ);
 		AccumulationDepthTexture[LocalPixel] = CurrentDeviceZ;
 
-		if (AccumulatedFrames > 0 && (bDepthChanged || IsNeighborhoodMoving(CenterUV)))
+		bool bMoving = IsNeighborhoodMoving(CenterUV);
+		if (AccumulatedFrames > 0 && (bDepthChanged || bMoving))
 		{
 			HistoryFrames = 0;
-			InterlockedOr(SceneMotion[0], 1u);
+			InterlockedAdd(SceneMotion[bMoving ? 0 : 1], 1u);
+			ResetReason |= (bMoving ? TOON_RESET_VELOCITY : 0u) | (bDepthChanged ? TOON_RESET_DEPTH : 0u);
 		}
 
 		// 物体が動いている間と、蓄積をやり直すピクセルでは、何が見えているかの要約を作って前のフレームと比べる
@@ -1499,6 +1536,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			if (Signature != AccumulationSignatureTexture[LocalPixel])
 			{
 				HistoryFrames = 0;
+				ResetReason |= AccumulatedFrames > 0 ? TOON_RESET_SIGNATURE : 0u;
 			}
 			AccumulationSignatureTexture[LocalPixel] = Signature;
 		}
@@ -1562,6 +1600,29 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	if (ShadingMode != 0)
 	{
 		Color = sqrt(max(Color, 0.0f));
+	}
+
+	// 確認用：蓄積をやり直した理由を色で表示する
+	// 白：カメラや設定の変更、赤：動いている物体、緑：深度の変化、青：見えている物体・影・反射の先の変化
+	// 理由がないピクセルは暗い灰色。物体が動いている間（蓄積数を抑えている間）は紫がかった灰色
+	if (DebugMotion != 0)
+	{
+		float3 Gray = dot(Color, 1.0f / 3.0f) * 0.4f;
+		if ((ResetReason & TOON_RESET_ALL) != 0)
+		{
+			Color = 1.0f;
+		}
+		else if (ResetReason != 0)
+		{
+			Color = float3(
+				(ResetReason & TOON_RESET_VELOCITY) != 0 ? 1.0f : 0.0f,
+				(ResetReason & TOON_RESET_DEPTH) != 0 ? 1.0f : 0.0f,
+				(ResetReason & TOON_RESET_SIGNATURE) != 0 ? 1.0f : 0.0f);
+		}
+		else
+		{
+			Color = Gray + (bSceneMoving ? float3(0.2f, 0.0f, 0.25f) : 0.0f);
+		}
 	}
 
 	// テクスチャに書き込み

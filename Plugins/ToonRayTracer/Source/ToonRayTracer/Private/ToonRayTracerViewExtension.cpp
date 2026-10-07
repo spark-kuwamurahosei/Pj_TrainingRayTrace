@@ -242,7 +242,7 @@ namespace
 
 	TAutoConsoleVariable<int32> CVarToonRayTracerMaxAccumulatedFrames(
 		TEXT("r.ToonRayTracer.MaxAccumulatedFrames"),
-		1024,
+		64,
 		TEXT("Upper limit of accumulated frames. After reaching it, the accumulated result is shown without tracing new rays"),
 		ECVF_RenderThreadSafe);
 
@@ -264,6 +264,13 @@ namespace
 		TEXT("r.ToonRayTracer.MotionMaxAccumulatedFrames"),
 		8,
 		TEXT("Upper limit of accumulated frames while something is moving in the scene. Smaller values shorten the trails of moving shadows and reflections"),
+		ECVF_RenderThreadSafe);
+
+	// 確認用：蓄積をやり直した理由を色で表示し、カメラや設定の変更による全体のリセットをログに出す
+	TAutoConsoleVariable<int32> CVarToonRayTracerDebugMotion(
+		TEXT("r.ToonRayTracer.Debug.Motion"),
+		0,
+		TEXT("Debug view of accumulation resets. White: camera/settings, red: moving object, green: depth change, blue: signature change. Also logs the reason of full resets"),
 		ECVF_RenderThreadSafe);
 
 	// この数のフレームで使われなかったビューの蓄積状態は破棄する
@@ -514,16 +521,22 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		}
 		AccumulationState = StatePtr.Get();
 
-		const bool bCameraOrSettingsChanged =
-			!AccumulationState->WorldToView.Equals(WorldToView, 0.0)
-			|| !AccumulationState->ViewToClipNoAA.Equals(ViewToClipNoAA, 0.0)
-			|| AccumulationState->ViewRectSize != ViewRectSize
-			|| AccumulationState->SettingsHash != SettingsHash
-			|| !AccumulationState->Texture.IsValid()
+		const bool bCameraChanged = !AccumulationState->WorldToView.Equals(WorldToView, 0.0);
+		const bool bProjectionChanged = !AccumulationState->ViewToClipNoAA.Equals(ViewToClipNoAA, 0.0);
+		const bool bViewRectChanged = AccumulationState->ViewRectSize != ViewRectSize;
+		const bool bSettingsChanged = AccumulationState->SettingsHash != SettingsHash;
+		const bool bHistoryMissing = !AccumulationState->Texture.IsValid()
 			|| !AccumulationState->DepthTexture.IsValid()
 			|| !AccumulationState->SignatureTexture.IsValid();
+		const bool bCameraOrSettingsChanged = bCameraChanged || bProjectionChanged || bViewRectChanged || bSettingsChanged || bHistoryMissing;
 		if (bCameraOrSettingsChanged)
 		{
+			if (CVarToonRayTracerDebugMotion.GetValueOnRenderThread() != 0)
+			{
+				UE_LOG(LogTemp, Log, TEXT("[ToonRayTracer] Accumulation reset (frame %u): camera=%d projection=%d viewrect=%d settings=%d history=%d"),
+					FrameNumber, bCameraChanged, bProjectionChanged, bViewRectChanged, bSettingsChanged, bHistoryMissing);
+			}
+
 			AccumulationState->AccumulatedFrames = 0;
 			AccumulationState->WorldToView = WorldToView;
 			AccumulationState->ViewToClipNoAA = ViewToClipNoAA;
@@ -629,7 +642,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 
 	// 動く物体への対応：シーン内で物体が動いていたかのフラグ
 	// このフレームの結果は次のフレームで使う（前のフレームのものがなければ「動いていない」として 0 のバッファを使う）
-	const FRDGBufferDesc SceneMotionDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1);
+	// [0]：動いている物体が見えていたピクセル数、[1]：深度が変わったピクセル数
+	const FRDGBufferDesc SceneMotionDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 2);
 	FRDGBufferRef PreviousSceneMotion = nullptr;
 	if (AccumulationState && AccumulationState->SceneMotionBuffer.IsValid())
 	{
@@ -656,6 +670,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->SceneMotion = GraphBuilder.CreateUAV(SceneMotion);
 	PassParameters->bDetectMotion = bDetectMotion ? 1u : 0u;
 	PassParameters->MotionMaxAccumulatedFrames = MotionMaxAccumulatedFrames;
+	PassParameters->DebugMotion = CVarToonRayTracerDebugMotion.GetValueOnRenderThread() != 0 ? 1u : 0u;
 	PassParameters->GBufferVelocityTexture = bDetectMotion && SceneTextureParameters->GBufferVelocityTexture
 		? SceneTextureParameters->GBufferVelocityTexture
 		: GSystemTextures.GetBlackDummy(GraphBuilder);

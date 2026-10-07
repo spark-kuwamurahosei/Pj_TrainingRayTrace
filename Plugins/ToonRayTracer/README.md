@@ -104,9 +104,10 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
 | `r.ToonRayTracer.SkipMaskedSurfaces` | 1 | カメラのレイが、GBuffer に描かれていない面（マテリアルの透過で抜けた部分など）を通り抜けるか |
 | `r.ToonRayTracer.MetalRoughnessThreshold` | 0.4 | 金属として鏡面反射させるラフネスの上限。これより粗い金属は普通の塗りにする |
 | `r.ToonRayTracer.Accumulate` | 1 | カメラ静止中にフレームをまたいで結果を平均するか。0 → 1 で蓄積をリセット |
-| `r.ToonRayTracer.MaxAccumulatedFrames` | 1024 | 蓄積するフレーム数の上限。到達後は新たにレイを飛ばさず結果を表示し続ける |
+| `r.ToonRayTracer.MaxAccumulatedFrames` | 64 | 蓄積するフレーム数の上限。到達後は新たにレイを飛ばさず結果を表示し続ける（GPU 負荷がほぼ 0 になる）。トゥーン表示はアンチエイリアス分だけで十分なため小さめにしている。ノイズの多い ShadingMode 1 では 1024 程度に上げる |
 | `r.ToonRayTracer.DetectMotion` | 1 | 動いている物体を検出し、そのピクセルだけ蓄積をやり直すか（GBuffer の速度と深度の変化で判定） |
 | `r.ToonRayTracer.MotionMaxAccumulatedFrames` | 8 | 物体が動いている間の蓄積フレーム数の上限。小さいほど残像が短くなるが、止まっている物体の輪郭もざらつく |
+| `r.ToonRayTracer.Debug.Motion` | 0 | 確認用：蓄積をやり直した理由を色で表示する（白：カメラや設定の変更、赤：動いている物体、緑：深度の変化、青：見えている物体・影・反射の先の変化、紫がかった灰色：物体が動いているため蓄積数を抑えている）。全体のリセットの理由はログに出る |
 | `r.ToonRayTracer.MaxDepth` | 10 | ShadingMode 1 での反射回数の上限（1 ～ 50） |
 
 `ShadowColor` と `OutlineColor` は文字列型のため、ゲームスレッドで読んでレンダースレッドへ渡している

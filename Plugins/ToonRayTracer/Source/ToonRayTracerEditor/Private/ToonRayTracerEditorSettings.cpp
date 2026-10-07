@@ -107,7 +107,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	bSkipMaskedSurfaces = true;
 	MetalRoughnessThreshold = 0.4f;
 	bAccumulate = true;
-	MaxAccumulatedFrames = 1024;
+	MaxAccumulatedFrames = 64;
 	bDetectMotion = true;
 	MotionMaxAccumulatedFrames = 8;
 	MaxDepth = 10;
