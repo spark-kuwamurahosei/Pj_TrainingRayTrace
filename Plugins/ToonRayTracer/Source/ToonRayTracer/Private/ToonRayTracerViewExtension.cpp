@@ -27,6 +27,13 @@ namespace
 		TEXT("0: Analytic spheres in shader, 1: TraceRay against the scene TLAS"),
 		ECVF_RenderThreadSafe);
 
+	// 解析的な物体のシーン（TraceMode 0 のときに使う）
+	TAutoConsoleVariable<int32> CVarToonRayTracerAnalyticScene(
+		TEXT("r.ToonRayTracer.AnalyticScene"),
+		0,
+		TEXT("Scene used when TraceMode is 0. 0: One Weekend chapter 11 (with Next Week textures), 1: Next Week chapter 7 simple light, 2: Next Week chapter 7 Cornell box"),
+		ECVF_RenderThreadSafe);
+
 	// 本の第8章（アンチエイリアス）の samples_per_pixel に相当
 	// カメラや物体が動いている間のサンプル数（0 なら SamplesPerPixel と同じ）
 	TAutoConsoleVariable<int32> CVarToonRayTracerMotionSamplesPerPixel(
@@ -303,6 +310,7 @@ namespace
 		Lambertian = 1,	// 拡散反射（本の lambertian）
 		Metal = 2,		// 金属（本の metal）
 		Dielectric = 3,	// ガラスなどの誘電体（本の dielectric）
+		DiffuseLight = 4,	// 『The Next Week』第7章の光る素材（本の diffuse_light）
 	};
 
 	// テクスチャの種類（シェーダー側の TOON_TEXTURE_* と一致させる）
@@ -347,6 +355,70 @@ namespace
 		// 右：ぼけの強い金色の金属
 		{ FVector(100.0, 100.0, 50.0), 50.0, EToonMaterialType::Metal, FLinearColor(0.8f, 0.6f, 0.2f), 1.0f, 1.0f },
 	};
+
+	// 『The Next Week』第6章：四角形（Q を角とし、U と V を 2 辺とする平行四辺形）
+	struct FToonQuad
+	{
+		FVector Q;					// 角の位置（ワールド座標、cm）
+		FVector U;					// 角から伸びる 1 辺（cm）
+		FVector V;					// 角から伸びるもう 1 辺（cm）
+		EToonMaterialType Material;
+		FLinearColor Albedo;		// 反射率。光る素材では放つ光の色と強さ
+	};
+
+	// 『The Next Week』第7章の simple_light のシーン
+	// 本の座標（x: 右, y: 上, z: 奥）を UE（+Y: 右, +Z: 上, +X: 奥）に対応させ、本の 1 単位を 1m（100cm）にしている
+	// 本のカメラは (26, 3, 6) から (0, 2, 0) を見ている。UE では (600, 2600, 300) から (0, 0, 200) を見る位置
+	const FToonSphere GSimpleLightSpheres[] =
+	{
+		// 地面と球：本の noise_texture(4)
+		{ FVector(0.0, 0.0, -100000.0), 100000.0, EToonMaterialType::Lambertian, FLinearColor::White, 0.0f, 1.0f, EToonTextureType::Marble, 4.0f },
+		{ FVector(0.0, 0.0, 200.0), 200.0, EToonMaterialType::Lambertian, FLinearColor::White, 0.0f, 1.0f, EToonTextureType::Marble, 4.0f },
+		// 上に浮かぶ球のライト
+		{ FVector(0.0, 0.0, 700.0), 200.0, EToonMaterialType::DiffuseLight, FLinearColor(4.0f, 4.0f, 4.0f), 0.0f, 1.0f },
+	};
+	const FToonQuad GSimpleLightQuads[] =
+	{
+		// 四角形のライト（本の quad(point3(3,1,-2), vec3(2,0,0), vec3(0,2,0), difflight)）
+		{ FVector(-200.0, 300.0, 100.0), FVector(0.0, 200.0, 0.0), FVector(0.0, 0.0, 200.0), EToonMaterialType::DiffuseLight, FLinearColor(4.0f, 4.0f, 4.0f) },
+	};
+
+	// 『The Next Week』第7章のコーネルボックス
+	// 本の単位をそのまま cm にし、座標は上と同じく（本の x, y, z）→（UE の Y, Z, X）に置き換えている
+	// 本のカメラは (278, 278, -800) から +z 方向を見ている。UE では (-800, 278, 278) から +X 方向を見る位置
+	const FToonQuad GCornellBoxQuads[] =
+	{
+		// 緑の壁（右）、赤い壁（左）
+		{ FVector(0.0, 555.0, 0.0), FVector(0.0, 0.0, 555.0), FVector(555.0, 0.0, 0.0), EToonMaterialType::Lambertian, FLinearColor(0.12f, 0.45f, 0.15f) },
+		{ FVector(0.0, 0.0, 0.0), FVector(0.0, 0.0, 555.0), FVector(555.0, 0.0, 0.0), EToonMaterialType::Lambertian, FLinearColor(0.65f, 0.05f, 0.05f) },
+		// 天井のライト
+		{ FVector(332.0, 343.0, 554.0), FVector(0.0, -130.0, 0.0), FVector(-105.0, 0.0, 0.0), EToonMaterialType::DiffuseLight, FLinearColor(15.0f, 15.0f, 15.0f) },
+		// 白い床、天井、奥の壁
+		{ FVector(0.0, 0.0, 0.0), FVector(0.0, 555.0, 0.0), FVector(555.0, 0.0, 0.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f) },
+		{ FVector(555.0, 555.0, 555.0), FVector(0.0, -555.0, 0.0), FVector(-555.0, 0.0, 0.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f) },
+		{ FVector(555.0, 0.0, 0.0), FVector(0.0, 555.0, 0.0), FVector(0.0, 0.0, 555.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f) },
+	};
+
+	// 解析的な物体のシーン（r.ToonRayTracer.AnalyticScene で選ぶ）
+	struct FToonAnalyticScene
+	{
+		TConstArrayView<FToonSphere> Spheres;
+		TConstArrayView<FToonQuad> Quads;
+		bool bBlackBackground;		// 光る物体だけで照らすシーンでは背景を黒にする
+	};
+
+	FToonAnalyticScene GetAnalyticScene(int32 SceneIndex)
+	{
+		switch (SceneIndex)
+		{
+		case 1:
+			return { MakeArrayView(GSimpleLightSpheres), MakeArrayView(GSimpleLightQuads), true };
+		case 2:
+			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellBoxQuads), true };
+		default:
+			return { MakeArrayView(GToonSpheres), TConstArrayView<FToonQuad>(), false };
+		}
+	}
 }
 
 ToonRayTracerViewExtension::ToonRayTracerViewExtension(const FAutoRegister& AutoRegister)
@@ -479,6 +551,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	FScreenPassRenderTarget Output(OutputTexture, SceneColor.ViewRect, View.GetOverwriteLoadAction());
 
 	const uint32 TraceMode = static_cast<uint32>(CVarToonRayTracerTraceMode.GetValueOnRenderThread());
+	const int32 AnalyticSceneIndex = CVarToonRayTracerAnalyticScene.GetValueOnRenderThread();
 	const uint32 SamplesPerPixel = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerSamplesPerPixel.GetValueOnRenderThread(), 1, 64));
 	const uint32 ShadingMode = static_cast<uint32>(CVarToonRayTracerShadingMode.GetValueOnRenderThread());
 	const uint32 MaxDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerMaxDepth.GetValueOnRenderThread(), 1, 50));
@@ -547,7 +620,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
-		HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
+		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
 		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
 	FAccumulationState* AccumulationState = nullptr;
@@ -802,11 +875,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 
 	// 球の中心をワールド空間から Translated World 空間に変換して渡す
 	// （double で引き算してから float にすることで、カメラから遠い位置でも精度を保つ）
-	static_assert(UE_ARRAY_COUNT(GToonSpheres) <= FToonRayGenShader::MaxSpheres, "Too many spheres");
+	const FToonAnalyticScene AnalyticScene = GetAnalyticScene(AnalyticSceneIndex);
+	check(AnalyticScene.Spheres.Num() <= FToonRayGenShader::MaxSpheres && AnalyticScene.Quads.Num() <= FToonRayGenShader::MaxQuads);
 	const FVector PreViewTranslation = View.ViewMatrices.GetPreViewTranslation();
-	for (int32 Index = 0; Index < UE_ARRAY_COUNT(GToonSpheres); ++Index)
+	for (int32 Index = 0; Index < AnalyticScene.Spheres.Num(); ++Index)
 	{
-		const FToonSphere& Sphere = GToonSpheres[Index];
+		const FToonSphere& Sphere = AnalyticScene.Spheres[Index];
 		const FVector TranslatedCenter = Sphere.Center + PreViewTranslation;
 		PassParameters->Spheres[Index] = FVector4f(FVector3f(TranslatedCenter), static_cast<float>(Sphere.Radius));
 		// w：トゥーンのハイライトとリムライトの強さ。平らに近い地面（巨大な球）には出さない
@@ -816,7 +890,20 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		PassParameters->SphereTextureParams[Index] = FVector4f(static_cast<float>(Sphere.Texture), Sphere.TextureScale, 0.0f, 0.0f);
 		PassParameters->SphereAlbedo2[Index] = FVector4f(Sphere.Albedo2.R, Sphere.Albedo2.G, Sphere.Albedo2.B, 0.0f);
 	}
-	PassParameters->NumSpheres = UE_ARRAY_COUNT(GToonSpheres);
+	PassParameters->NumSpheres = AnalyticScene.Spheres.Num();
+
+	// 『The Next Week』第6章：四角形も角の位置だけ Translated World 空間に変換する（2 辺は向きと長さなのでそのまま）
+	for (int32 Index = 0; Index < AnalyticScene.Quads.Num(); ++Index)
+	{
+		const FToonQuad& Quad = AnalyticScene.Quads[Index];
+		PassParameters->QuadQ[Index] = FVector4f(FVector3f(Quad.Q + PreViewTranslation), 0.0f);
+		PassParameters->QuadU[Index] = FVector4f(FVector3f(Quad.U), 0.0f);
+		PassParameters->QuadV[Index] = FVector4f(FVector3f(Quad.V), 0.0f);
+		PassParameters->QuadMaterialParams[Index] = FVector4f(static_cast<float>(Quad.Material), 0.0f, 1.0f, 0.0f);
+		PassParameters->QuadAlbedo[Index] = FVector4f(Quad.Albedo.R, Quad.Albedo.G, Quad.Albedo.B, 0.0f);
+	}
+	PassParameters->NumQuads = AnalyticScene.Quads.Num();
+	PassParameters->bBlackBackground = TraceMode == 0 && AnalyticScene.bBlackBackground ? 1u : 0u;
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
 	TShaderMapRef<FToonRayGenShader> RayGenShader(ShaderMap);

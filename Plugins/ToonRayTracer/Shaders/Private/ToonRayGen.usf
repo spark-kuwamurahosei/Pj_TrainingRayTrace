@@ -173,6 +173,18 @@ float4 SphereTextureParams[TOON_MAX_SPHERES];
 float4 SphereAlbedo2[TOON_MAX_SPHERES];
 uint NumSpheres;
 
+// 『The Next Week』第6章：四角形（Q：角の位置、U と V：角から伸びる 2 辺。xyz を使う）とマテリアル
+float4 QuadQ[TOON_MAX_QUADS];
+float4 QuadU[TOON_MAX_QUADS];
+float4 QuadV[TOON_MAX_QUADS];
+// x: 種類, y: 金属のぼけ具合, z: 屈折率, w: トゥーンのハイライトとリムライトの強さ
+float4 QuadMaterialParams[TOON_MAX_QUADS];
+float4 QuadAlbedo[TOON_MAX_QUADS];
+uint NumQuads;
+
+// 『The Next Week』第7章：1 なら背景を空ではなく黒にする（光る物体だけで照らすシーン）
+uint bBlackBackground;
+
 // テクスチャの種類（C++ 側の EToonTextureType と一致させる）
 #define TOON_TEXTURE_SOLID				0	// 単色（本の solid_color）
 #define TOON_TEXTURE_CHECKER			1	// 空間のチェッカー（本の checker_texture）。大きさは 1 マスの辺の長さ（cm）
@@ -184,6 +196,7 @@ uint NumSpheres;
 #define TOON_MATERIAL_LAMBERTIAN	1	// 拡散反射（本の lambertian）
 #define TOON_MATERIAL_METAL			2	// 金属（本の metal）
 #define TOON_MATERIAL_DIELECTRIC	3	// ガラスなどの誘電体（本の dielectric）
+#define TOON_MATERIAL_DIFFUSE_LIGHT	4	// 『The Next Week』第7章の光る素材（本の diffuse_light）。Albedo が放つ光の色と強さ
 
 // 本の material クラスに相当
 struct FToonMaterial
@@ -484,6 +497,46 @@ bool HitSphere(float3 Center, float Radius, FToonRay Ray, float TMin, float TMax
 }
 
 // 全オブジェクトとの交差判定（本の hittable_list::hit に相当）
+// 『The Next Week』第6章：レイと四角形の交差判定（本の quad::hit）
+// Q を角とし、U と V を 2 辺とする平行四辺形。まず平面との交点を求め、その点を U・V 方向の割合（Alpha, Beta）で表して
+// どちらも 0 ～ 1 の範囲なら四角形の内側
+bool HitQuad(float3 Q, float3 U, float3 V, FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	float3 N = cross(U, V);
+	float3 Normal = normalize(N);
+	// 平面の式 dot(Normal, P) = D
+	float D = dot(Normal, Q);
+	// 交点を Alpha, Beta に分解するためのベクトル（本の w）
+	float3 W = N / dot(N, N);
+
+	// レイが平面と平行なら当たらない
+	float Denominator = dot(Normal, Ray.Direction);
+	if (abs(Denominator) < 1.0e-8f)
+	{
+		return false;
+	}
+
+	float T = (D - dot(Normal, Ray.Origin)) / Denominator;
+	if (T <= TMin || TMax <= T)
+	{
+		return false;
+	}
+
+	float3 Planar = Ray.At(T) - Q;
+	float Alpha = dot(W, cross(Planar, V));
+	float Beta = dot(W, cross(U, Planar));
+	if (Alpha < 0.0f || 1.0f < Alpha || Beta < 0.0f || 1.0f < Beta)
+	{
+		return false;
+	}
+
+	Rec.T = T;
+	Rec.Position = Ray.At(T);
+	Rec.UV = float2(Alpha, Beta);
+	Rec.SetFaceNormal(Ray, Normal);
+	return true;
+}
+
 bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 {
 	bool bHitAnything = false;
@@ -506,6 +559,26 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
 			Rec.Material.RimStrength = SphereMaterialParams[Index].w;
 			Rec.Material.OutlineWidth = ToonOutlineWidth;
 			Rec.ObjectId = Index;
+		}
+	}
+
+	// 四角形の識別番号は球の後ろに続ける（アウトラインで別の物体として扱うため）
+	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
+	{
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		if (HitQuad(QuadQ[QuadIndex].xyz, QuadU[QuadIndex].xyz, QuadV[QuadIndex].xyz, Ray, TMin, ClosestSoFar, TempRec))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = (uint)round(QuadMaterialParams[QuadIndex].x);
+			Rec.Material.Albedo = QuadAlbedo[QuadIndex].rgb;
+			Rec.Material.Fuzz = QuadMaterialParams[QuadIndex].y;
+			Rec.Material.RefractionIndex = QuadMaterialParams[QuadIndex].z;
+			Rec.Material.HighlightStrength = QuadMaterialParams[QuadIndex].w;
+			Rec.Material.RimStrength = QuadMaterialParams[QuadIndex].w;
+			Rec.Material.OutlineWidth = ToonOutlineWidth;
+			Rec.ObjectId = NumSpheres + QuadIndex;
 		}
 	}
 
@@ -990,6 +1063,12 @@ void ApplyGBufferSurfaceFromScreen(inout FToonHitRecord Rec)
 // 空のグラデーション（本の第4章）
 float3 SkyColor(FToonRay Ray)
 {
+	// 『The Next Week』第7章：光る物体だけで照らすシーンでは、背景を黒にする（本の camera::background）
+	if (bBlackBackground != 0)
+	{
+		return 0.0f;
+	}
+
 	// UEは Z-up のため、本の y 成分の代わりに z 成分を使う
 	float A = 0.5f * (Ray.Direction.z + 1.0f);
 	return lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), A);
@@ -1040,6 +1119,14 @@ bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout u
 {
 	Scattered.Origin = Rec.Position;
 	Attenuation = Material.Albedo;
+
+	// 『The Next Week』第7章：光る素材は光を放つだけで、反射しない（本の diffuse_light は scatter で false を返す）
+	if (Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+	{
+		Scattered.Direction = 0.0f;
+		Attenuation = 0.0f;
+		return false;
+	}
 
 	if (Material.Type == TOON_MATERIAL_DIELECTRIC)
 	{
@@ -1095,14 +1182,16 @@ bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout u
 float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 {
 	float3 Attenuation = 1.0f;
+	// 『The Next Week』第7章：途中で当たった光る物体からの光を足していく（本の color_from_emission）
+	float3 Radiance = 0.0f;
 
 	for (uint Depth = 0; Depth < MaxDepth; ++Depth)
 	{
 		FToonHitRecord Rec = (FToonHitRecord)0;
 		if (!HitAnything(Ray, TOON_RAY_TMIN, Rec))
 		{
-			// どこにも当たらなければ空の色が、ここまでの減衰を受けて届く
-			return Attenuation * SkyColor(Ray);
+			// どこにも当たらなければ背景の色が、ここまでの減衰を受けて届く
+			return Radiance + Attenuation * SkyColor(Ray);
 		}
 
 		// カメラから最初に当たった面は GBuffer の値を使う。反射した先も、カメラから見えている点なら GBuffer の値を使う
@@ -1115,19 +1204,25 @@ float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 			ApplyGBufferSurfaceFromScreen(Rec);
 		}
 
+		if (Rec.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+		{
+			Radiance += Attenuation * Rec.Material.Albedo;
+		}
+
 		float3 ScatterAttenuation;
 		FToonRay Scattered;
 		if (!Scatter(Rec.Material, Ray, Rec, RandomState, ScatterAttenuation, Scattered))
 		{
-			return 0.0f;
+			// 吸収された、または光る物体に当たった
+			return Radiance;
 		}
 
 		Attenuation *= ScatterAttenuation;
 		Ray = Scattered;
 	}
 
-	// 反射回数の上限に達したら、光は届かなかったものとみなす
-	return 0.0f;
+	// 反射回数の上限に達したら、それ以上の光は届かなかったものとみなす
+	return Radiance;
 }
 
 // 影の部分にも少し色が残るようにする環境光の強さ（空の色に掛ける）
@@ -1180,7 +1275,10 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 {
 	if (TraceMode == 0)
 	{
-		return Rec.Position - Spheres[Rec.ObjectId].xyz;
+		// 球は中心からの位置、四角形は角からの位置
+		return Rec.ObjectId < NumSpheres
+			? Rec.Position - Spheres[Rec.ObjectId].xyz
+			: Rec.Position - QuadQ[Rec.ObjectId - NumSpheres].xyz;
 	}
 
 	FInstanceSceneData InstanceData = GetInstanceSceneData(Rec.ObjectId);
@@ -1344,7 +1442,23 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal)
 	// 始点を実際の面の向きへ少し浮かせ、滑らかな法線とポリゴンの向きのずれによる自己遮蔽（黒い斑点）を防ぐ
 	if (bToonCastShadows != 0 && LightLevel > 0.0f)
 	{
-		float3 ShadowOrigin = Rec.Position + ShadowOffset + GeometricNormal * ToonShadowBias;
+		float3 ShadowOrigin = Rec.Position + GeometricNormal * ToonShadowBias;
+
+		// 影の境目の揺れ：ずらした始点が同じ面の上に残っているかを、面に向けた短いレイで確かめる
+		// 壁の端の近くでは、ずらした始点が面の外（箱の外など）にはみ出し、光源が見えて光が漏れるため、
+		// 同じ物体の面に当たらなければずらさない
+		if (any(ShadowOffset != 0.0f))
+		{
+			FToonRay ProbeRay;
+			ProbeRay.Origin = ShadowOrigin + ShadowOffset;
+			ProbeRay.Direction = -GeometricNormal;
+			FToonHitRecord ProbeRec = (FToonHitRecord)0;
+			float MaxProbeDistance = 2.0f * ToonShadowBias + length(ShadowOffset);
+			if (HitAnything(ProbeRay, 0.0f, ProbeRec, 0.0f, false) && ProbeRec.ObjectId == Rec.ObjectId && ProbeRec.T <= MaxProbeDistance)
+			{
+				ShadowOrigin += ShadowOffset;
+			}
+		}
 
 		// シャドウターミネーター問題の対策：
 		// 滑らかな法線では光を向いていても、ポリゴン自体は光と反対を向いている点（明暗の境目付近）では、
@@ -1478,6 +1592,13 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 		{
 			// 汎用化 G3：反射・屈折した先も、カメラから見えている点なら UE のマテリアルの色や滑らかな法線を使う
 			ApplyGBufferSurfaceFromScreen(Rec);
+		}
+
+		// 『The Next Week』第7章：光る物体は陰影を付けず、放つ光の色で塗る
+		if (Rec.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+		{
+			Color += Current.Throughput * Rec.Material.Albedo;
+			continue;
 		}
 
 		bool bReflective = Rec.Material.Type == TOON_MATERIAL_METAL || Rec.Material.Type == TOON_MATERIAL_DIELECTRIC;
