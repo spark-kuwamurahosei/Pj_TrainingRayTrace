@@ -180,6 +180,9 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonSoftShadowCosAngle)
 		SHADER_PARAMETER(uint32, ToonSoftShadowSamples)
 		SHADER_PARAMETER(uint32, ToonSoftShadowSteps)
+		// トゥーンの照り返し（間接光）の強さとレイの本数
+		SHADER_PARAMETER(float, ToonIndirectStrength)
+		SHADER_PARAMETER(uint32, ToonIndirectSamples)
 		// Perlin ノイズの応用：影の境目を揺らす強さと、揺れの大きさ（cm）
 		SHADER_PARAMETER(float, ToonShadowNoiseStrength)
 		SHADER_PARAMETER(float, ToonShadowNoiseSize)

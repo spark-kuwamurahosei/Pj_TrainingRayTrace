@@ -214,6 +214,19 @@ namespace
 		TEXT("Number of shadow rays per shading point for soft toon shadows (1-16)"),
 		ECVF_RenderThreadSafe);
 
+	// トゥーンの照り返し（間接光、『The Rest of Your Life』の応用）
+	TAutoConsoleVariable<float> CVarToonRayTracerToonIndirectStrength(
+		TEXT("r.ToonRayTracer.Toon.IndirectStrength"),
+		0.5f,
+		TEXT("Strength of the toon bounce light (color bleeding from nearby surfaces). 0: off"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonIndirectSamples(
+		TEXT("r.ToonRayTracer.Toon.IndirectSamples"),
+		2,
+		TEXT("Number of cosine-weighted rays per shading point for the toon bounce light (1-16)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonSoftShadowSteps(
 		TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"),
 		1,
@@ -1015,6 +1028,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonSoftShadowAngle = FMath::Clamp(CVarToonRayTracerToonSoftShadowAngle.GetValueOnRenderThread(), 0.0f, 90.0f);
 	const uint32 ToonSoftShadowSamples = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonSoftShadowSamples.GetValueOnRenderThread(), 1, 16));
 	const uint32 ToonSoftShadowSteps = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonSoftShadowSteps.GetValueOnRenderThread(), 0, 16));
+	const float ToonIndirectStrength = FMath::Max(CVarToonRayTracerToonIndirectStrength.GetValueOnRenderThread(), 0.0f);
+	const uint32 ToonIndirectSamples = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonIndirectSamples.GetValueOnRenderThread(), 1, 16));
 	const float ToonShadowNoiseStrength = FMath::Max(CVarToonRayTracerToonShadowNoiseStrength.GetValueOnRenderThread(), 0.0f);
 	const float ToonShadowNoiseSize = FMath::Max(CVarToonRayTracerToonShadowNoiseSize.GetValueOnRenderThread(), 0.1f);
 	const bool bToonCharacterSelfShadow = CVarToonRayTracerToonCharacterSelfShadow.GetValueOnRenderThread() != 0;
@@ -1036,7 +1051,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(GetTypeHash(DirectionalLight.Intensity), GetTypeHash(DirectionalLight.bValid)));
 	const uint32 ToonHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(ToonBands), GetTypeHash(ToonShadowThreshold)), HashCombine(GetTypeHash(ToonLitThreshold), GetTypeHash(ToonEdgeSoftness))),
-		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), HashCombine(GetTypeHash(ToonLightScale), GetTypeHash(ToonSkyTint))), HashCombine(HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonSoftShadowAngle), GetTypeHash(ToonSoftShadowSamples)), GetTypeHash(ToonSoftShadowSteps))), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
+		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), HashCombine(GetTypeHash(ToonLightScale), GetTypeHash(ToonSkyTint))), HashCombine(HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonSoftShadowAngle), GetTypeHash(ToonSoftShadowSamples)), HashCombine(GetTypeHash(ToonSoftShadowSteps), HashCombine(GetTypeHash(ToonIndirectStrength), GetTypeHash(ToonIndirectSamples))))), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
 	const uint32 ToonHighlightHash = HashCombine(
 		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
@@ -1262,6 +1277,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonSoftShadowCosAngle = FMath::Cos(FMath::DegreesToRadians(ToonSoftShadowAngle * 0.5f));
 	PassParameters->ToonSoftShadowSamples = ToonSoftShadowSamples;
 	PassParameters->ToonSoftShadowSteps = ToonSoftShadowSteps;
+	PassParameters->ToonIndirectStrength = ToonIndirectStrength;
+	PassParameters->ToonIndirectSamples = ToonIndirectSamples;
 	PassParameters->ToonShadowNoiseStrength = ToonShadowNoiseStrength;
 	PassParameters->ToonShadowNoiseSize = ToonShadowNoiseSize;
 	PassParameters->bToonCharacterSelfShadow = bToonCharacterSelfShadow ? 1u : 0u;

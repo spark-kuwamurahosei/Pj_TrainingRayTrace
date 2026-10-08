@@ -228,6 +228,14 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "やわらかい影：段階の数", ClampMin = "0", ClampMax = "16", UIMin = "0", UIMax = "8", EditCondition = "bCastShadows"))
 	int32 SoftShadowSteps;
 
+	/** 照り返し（間接光）の強さ。周りの面の色を足し、赤い壁の近くが赤みを帯びるなどの照り返しを出す。0 なら照り返しなし */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "照り返しの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
+	float IndirectStrength;
+
+	/** 照り返しを調べるレイの本数。多いほどなめらかだが重い */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "照り返しのレイの本数", ClampMin = "1", ClampMax = "16", UIMin = "1", UIMax = "16"))
+	int32 IndirectSamples;
+
 	/** 影の境目を Perlin ノイズで手描き風に揺らす強さ。0 なら揺らさない（0.1 で控えめ、0.3 で強め） */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "影の境目の揺れの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "0.5"))
 	float ShadowNoiseStrength;
