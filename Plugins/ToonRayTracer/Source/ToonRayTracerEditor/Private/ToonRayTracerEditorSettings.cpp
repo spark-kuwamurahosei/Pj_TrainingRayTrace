@@ -100,6 +100,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	TraceMode = EToonRayTracerTraceMode::Scene;
 	AnalyticScene = EToonRayTracerAnalyticScene::OneWeekend;
 	SamplesPerPixel = 4;
+	bStratifiedSampling = true;
 	MotionSamplesPerPixel = 2;
 	bUseGBufferNormal = true;
 	bUseGBufferBaseColor = true;
@@ -157,6 +158,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetInt(TEXT("r.ToonRayTracer.TraceMode"), static_cast<int32>(TraceMode));
 	SetInt(TEXT("r.ToonRayTracer.AnalyticScene"), static_cast<int32>(AnalyticScene));
 	SetInt(TEXT("r.ToonRayTracer.SamplesPerPixel"), SamplesPerPixel);
+	SetBool(TEXT("r.ToonRayTracer.StratifiedSampling"), bStratifiedSampling);
 	SetInt(TEXT("r.ToonRayTracer.MotionSamplesPerPixel"), MotionSamplesPerPixel);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferNormal"), bUseGBufferNormal);
 	SetBool(TEXT("r.ToonRayTracer.UseGBufferBaseColor"), bUseGBufferBaseColor);
@@ -214,6 +216,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetEnum(TEXT("r.ToonRayTracer.TraceMode"), TraceMode);
 	GetEnum(TEXT("r.ToonRayTracer.AnalyticScene"), AnalyticScene);
 	GetInt(TEXT("r.ToonRayTracer.SamplesPerPixel"), SamplesPerPixel);
+	GetBool(TEXT("r.ToonRayTracer.StratifiedSampling"), bStratifiedSampling);
 	GetInt(TEXT("r.ToonRayTracer.MotionSamplesPerPixel"), MotionSamplesPerPixel);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferNormal"), bUseGBufferNormal);
 	GetBool(TEXT("r.ToonRayTracer.UseGBufferBaseColor"), bUseGBufferBaseColor);

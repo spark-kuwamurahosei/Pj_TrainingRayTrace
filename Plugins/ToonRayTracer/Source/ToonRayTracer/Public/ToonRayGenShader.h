@@ -84,6 +84,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, SamplesPerPixel)
 		// 蓄積をやり直したピクセルと、物体が動いている間のサンプル数
 		SHADER_PARAMETER(uint32, MotionSamplesPerPixel)
+		// 『The Rest of Your Life』第3章：1 なら、ピクセル内のサンプル位置を層化する
+		SHADER_PARAMETER(uint32, bStratifiedSampling)
 		// 0: 法線の可視化、1: 拡散反射
 		SHADER_PARAMETER(uint32, ShadingMode)
 		// レイが反射する最大回数

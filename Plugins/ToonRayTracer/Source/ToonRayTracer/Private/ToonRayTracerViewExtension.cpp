@@ -52,6 +52,13 @@ namespace
 		TEXT("Number of jittered camera rays per pixel for anti-aliasing (1-64)"),
 		ECVF_RenderThreadSafe);
 
+	// 『The Rest of Your Life』第3章：ピクセル内のサンプル位置の層化
+	TAutoConsoleVariable<int32> CVarToonRayTracerStratifiedSampling(
+		TEXT("r.ToonRayTracer.StratifiedSampling"),
+		1,
+		TEXT("Stratify the sample positions within a pixel (one sample per cell of a sqrt(N) x sqrt(N) grid)"),
+		ECVF_RenderThreadSafe);
+
 	// 3（トゥーン）が本来の表示。0 ～ 2 は実装の確認用
 	TAutoConsoleVariable<int32> CVarToonRayTracerShadingMode(
 		TEXT("r.ToonRayTracer.ShadingMode"),
@@ -912,6 +919,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const uint32 TraceMode = static_cast<uint32>(CVarToonRayTracerTraceMode.GetValueOnRenderThread());
 	const int32 AnalyticSceneIndex = CVarToonRayTracerAnalyticScene.GetValueOnRenderThread();
 	const uint32 SamplesPerPixel = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerSamplesPerPixel.GetValueOnRenderThread(), 1, 64));
+	const bool bStratifiedSampling = CVarToonRayTracerStratifiedSampling.GetValueOnRenderThread() != 0;
 	const uint32 ShadingMode = static_cast<uint32>(CVarToonRayTracerShadingMode.GetValueOnRenderThread());
 	const uint32 MaxDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerMaxDepth.GetValueOnRenderThread(), 1, 50));
 	// TSR の前に描く場合は、フレームをまたいだ平均を TSR に任せるため、自前の蓄積と動きの判定はしない
@@ -992,7 +1000,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), GetTypeHash(ToonCharacterOutlineColorScale)))));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
-		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
+		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), HashCombine(GetTypeHash(SamplesPerPixel), GetTypeHash(bStratifiedSampling))), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
 		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
 	FAccumulationState* AccumulationState = nullptr;
@@ -1238,6 +1246,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ObjectColorFrameSums = GraphBuilder.CreateUAV(ObjectColorFrameSums);
 	PassParameters->TraceMode = TraceMode;
 	PassParameters->SamplesPerPixel = SamplesPerPixel;
+	PassParameters->bStratifiedSampling = bStratifiedSampling ? 1u : 0u;
 	// 蓄積しない場合は毎フレームやり直しになるため、常に通常のサンプル数を使う
 	const int32 MotionSamplesPerPixelSetting = CVarToonRayTracerMotionSamplesPerPixel.GetValueOnRenderThread();
 	PassParameters->MotionSamplesPerPixel = AccumulationState && MotionSamplesPerPixelSetting > 0
