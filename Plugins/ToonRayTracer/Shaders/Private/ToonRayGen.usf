@@ -195,6 +195,16 @@ float3 ToonSkinShadowColor;
 float ToonCharacterRimStrength;
 float ToonCharacterRimWidth;
 float ToonCharacterOutlineColorScale;
+// 眉毛の透け：キャラクターの髪の奥（ToonSeeThroughDistance cm 以内）に、Custom Primitive Data の [13] で指定したパーツ（眉毛など）があれば、
+// そのピクセルの色を ToonSeeThroughBrightness 倍に暗くした色を、ToonSeeThroughOpacity の割合で重ねる（0 なら透かさない）
+float ToonSeeThroughOpacity;
+float ToonSeeThroughBrightness;
+float ToonSeeThroughDistance;
+// 見せるパーツのマテリアルスロット（スロット番号 n なら 2^n のビット）。Custom Primitive Data の [13] を設定していないキャラクターに使う
+uint ToonSeeThroughSlotMask;
+// 確認用：1 なら、カメラのレイが当たった面のジオメトリ番号（マテリアルスロット）を色で表示する
+// 2 なら、眉毛の透けの判定結果を色で表示する（GetDebugSeeThroughColor を参照）
+uint bToonDebugGeometry;
 // 鳴潮風ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
 float ToonSkyTint;
 // シャドウレイの始点をずらす量の倍率（強さ × 揺れの大きさ × この値 cm だけずらす）
@@ -1091,6 +1101,14 @@ bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bo
 // ペイロードはエンジン定義の FDefaultPayload で、表裏を入れる欄がないため、
 // InstanceIndex の最上位ビットに「裏面に当たった」フラグを入れる（DXR のインスタンス番号は 24 ビットまでなので衝突しない）
 #define TOON_PAYLOAD_BACK_FACE_BIT 0x80000000u
+// 眉毛の透け：その下の 7 ビット（24 ～ 30 ビット目）に、当たったジオメトリの番号を入れる（127 以上は 127 にまとめる）
+#define TOON_PAYLOAD_GEOMETRY_SHIFT 24u
+#define TOON_PAYLOAD_GEOMETRY_MASK 0x7Fu
+
+uint GetPayloadGeometryIndex(FDefaultPayload Payload)
+{
+	return (Payload.InstanceIndex >> TOON_PAYLOAD_GEOMETRY_SHIFT) & TOON_PAYLOAD_GEOMETRY_MASK;
+}
 
 bool IsPayloadBackFace(FDefaultPayload Payload)
 {
@@ -2699,8 +2717,117 @@ float ToonCharacterRim(float2 UV, FToonHitRecord Rec)
 	return SampleDistance - length(Rec.Position) > TOON_CHARACTER_RIM_DEPTH_GAP ? 1.0f : 0.0f;
 }
 
+// 眉毛の透け：髪の奥を探すときに、通り抜ける面（髪の重なりなど）の数の上限
+#define TOON_SEE_THROUGH_MAX_SKIPS 6
+// カメラのレイが最初に当たった面を探し直すときに、手前へ戻る距離（cm）
+#define TOON_SEE_THROUGH_START_MARGIN 0.1f
+
+// 眉毛の透け：髪越しに見せるパーツ（マテリアルスロット）のビットを返す
+// 通常はパネルで指定した全体の設定を使い、Custom Primitive Data の [13] を設定したメッシュだけ、その値で上書きする
+// スロット番号 n のパーツを見せるなら 2^n を足した値（例：スロット 4 なら 16、スロット 4 と 5 なら 48）
+uint GetSeeThroughSectionMask(uint GPUSceneInstanceId)
+{
+	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+	float MaskOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 13);
+	return MaskOverride > 0.0f ? (uint)round(MaskOverride) : ToonSeeThroughSlotMask;
+}
+
+// 眉毛の透け（アニメ調のキャラクターで、前髪の上に眉毛を見せる表現）
+// カメラのレイがキャラクターの髪などに当たったとき、同じキャラクターのまま奥へ ToonSeeThroughDistance cm 以内に
+// 見せるパーツがあれば 1、なければ 0 を返す
+// 肌（顔）の奥は透かさない（横顔で、頭の向こう側の眉毛が透けて見えないようにする）
+// 確認用：判定が止まった理由
+#define TOON_SEE_THROUGH_FOUND			0	// 見せるパーツが見つかった
+#define TOON_SEE_THROUGH_NOT_TARGET		1	// キャラクターではない、または無効
+#define TOON_SEE_THROUGH_SKIN			2	// 肌なので調べない
+#define TOON_SEE_THROUGH_NO_MASK		3	// スロットが指定されていない
+#define TOON_SEE_THROUGH_VISIBLE		4	// 見せるパーツそのものが見えている
+#define TOON_SEE_THROUGH_MISS			5	// 奥に何もない
+#define TOON_SEE_THROUGH_TOO_FAR		6	// 探す距離より奥
+#define TOON_SEE_THROUGH_OTHER_OBJECT	7	// 別の物体に当たった
+#define TOON_SEE_THROUGH_TOO_MANY		8	// 通り抜ける面が多すぎる
+
+float ComputeToonSeeThrough(FToonRay Ray, FToonHitRecord Rec, out uint Reason)
+{
+	Reason = TOON_SEE_THROUGH_NOT_TARGET;
+	if (ToonSeeThroughOpacity <= 0.0f || TraceMode == 0 || Rec.Material.bCharacter == 0)
+	{
+		return 0.0f;
+	}
+	if (Rec.Material.bSkin != 0)
+	{
+		Reason = TOON_SEE_THROUGH_SKIN;
+		return 0.0f;
+	}
+	uint SectionMask = GetSeeThroughSectionMask(Rec.ObjectId);
+	if (SectionMask == 0)
+	{
+		Reason = TOON_SEE_THROUGH_NO_MASK;
+		return 0.0f;
+	}
+
+	// 最初の面から順に奥へ進む。最初の面が見せるパーツそのもの（髪に隠れていない眉毛）なら透かさない
+	float TMin = max(Rec.T - TOON_SEE_THROUGH_START_MARGIN, 0.0f);
+	float TMax = Rec.T + ToonSeeThroughDistance;
+	[loop]
+	for (uint Skip = 0; Skip <= TOON_SEE_THROUGH_MAX_SKIPS; ++Skip)
+	{
+		FDefaultPayload Payload;
+		if (!TraceScene(Ray, TMin, Payload))
+		{
+			Reason = TOON_SEE_THROUGH_MISS;
+			return 0.0f;
+		}
+		if (Payload.HitT > TMax)
+		{
+			Reason = TOON_SEE_THROUGH_TOO_FAR;
+			return 0.0f;
+		}
+		if (Payload.InstanceID != Rec.ObjectId)
+		{
+			Reason = TOON_SEE_THROUGH_OTHER_OBJECT;
+			return 0.0f;
+		}
+		if (((SectionMask >> GetPayloadGeometryIndex(Payload)) & 1u) != 0)
+		{
+			Reason = Skip == 0 ? TOON_SEE_THROUGH_VISIBLE : TOON_SEE_THROUGH_FOUND;
+			return Skip == 0 ? 0.0f : 1.0f;
+		}
+		TMin = Payload.HitT + TOON_RAY_TMIN;
+	}
+	Reason = TOON_SEE_THROUGH_TOO_MANY;
+	return 0.0f;
+}
+
+// 確認用：眉毛の透けの判定結果の色
+// 赤：見つかった、黒：キャラクター以外、青：肌、黄：スロット未指定、マゼンタ：見せるパーツそのもの、
+// 白：奥に何もない、緑：探す距離より奥、シアン：別の物体、オレンジ：通り抜ける面が多すぎる
+float3 GetDebugSeeThroughColor(uint Reason)
+{
+	const float3 Colors[9] = {
+		float3(1.0f, 0.0f, 0.0f), float3(0.0f, 0.0f, 0.0f), float3(0.0f, 0.0f, 1.0f), float3(1.0f, 1.0f, 0.0f), float3(1.0f, 0.0f, 1.0f),
+		float3(1.0f, 1.0f, 1.0f), float3(0.0f, 1.0f, 0.0f), float3(0.0f, 1.0f, 1.0f), float3(1.0f, 0.5f, 0.0f) };
+	return Colors[min(Reason, 8u)];
+}
+
+// 確認用：ジオメトリ番号ごとの色（0 赤、1 緑、2 青、3 黄、4 マゼンタ、5 シアン、6 白、7 オレンジ、8 以上は灰色）
+float3 GetDebugGeometryColor(uint GeometryIndex)
+{
+	const float3 Colors[8] = {
+		float3(1.0f, 0.0f, 0.0f), float3(0.0f, 1.0f, 0.0f), float3(0.0f, 0.0f, 1.0f), float3(1.0f, 1.0f, 0.0f),
+		float3(1.0f, 0.0f, 1.0f), float3(0.0f, 1.0f, 1.0f), float3(1.0f, 1.0f, 1.0f), float3(1.0f, 0.5f, 0.0f) };
+	return GeometryIndex < 8 ? Colors[GeometryIndex] : 0.3f;
+}
+
 float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 {
+	if (bToonDebugGeometry == 1 && TraceMode != 0)
+	{
+		FDefaultPayload DebugPayload;
+		return TraceScene(CameraRay, 0.0f, DebugPayload) ? GetDebugGeometryColor(GetPayloadGeometryIndex(DebugPayload)) : 0.0f;
+	}
+
 	FToonPendingRay Pending[TOON_MAX_PENDING_RAYS];
 	uint NumPending = 1;
 	Pending[0].Ray = CameraRay;
@@ -2712,6 +2839,8 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 	// 鳴潮風ルック フェーズ2：キャラクターでは、線の色を素材の色を暗くした色にし、リムライトを加える
 	float3 OutlineColor = ToonOutlineColor;
 	float3 CharacterRim = 0.0f;
+	// 眉毛の透け：髪の奥に眉毛などがあれば 1
+	float SeeThrough = 0.0f;
 
 	// 1本のレイから最大2本に分かれるため、処理するレイの総数にも上限を設ける
 	[loop]
@@ -2769,6 +2898,12 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 					OutlineColor = Rec.Material.Albedo * ToonCharacterOutlineColorScale;
 				}
 				CharacterRim = Rec.Material.Albedo * ToonLightColor * (ToonCharacterRimStrength * ToonCharacterRim(UV, Rec));
+				uint SeeThroughReason;
+				SeeThrough = ComputeToonSeeThrough(Current.Ray, Rec, SeeThroughReason);
+				if (bToonDebugGeometry == 2)
+				{
+					return GetDebugSeeThroughColor(SeeThroughReason);
+				}
 			}
 		}
 		else
@@ -2895,7 +3030,9 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 		}
 	}
 
-	return lerp(Color + CharacterRim, OutlineColor, Outline);
+	// 眉毛の透け：髪の色を暗くして眉毛の形を浮かび上がらせる（隠れた眉毛そのものの色は分からないため、髪の色の濃淡で表す）
+	float3 Shaded = (Color + CharacterRim) * lerp(1.0f, ToonSeeThroughBrightness, SeeThrough * ToonSeeThroughOpacity);
+	return lerp(Shaded, OutlineColor, Outline);
 }
 
 float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
@@ -3221,7 +3358,9 @@ RAY_TRACING_ENTRY_CLOSEST_HIT(ToonClosestHitMain,
 	Payload.HitT = RayTCurrent();
 	Payload.PrimitiveIndex = PrimitiveIndex();
 	// 裏面に当たった場合は最上位ビットを立てる（屈折で、物体に入るのか出るのかを判定するため）
-	Payload.InstanceIndex = InstanceIndex() | (HitKind() == HIT_KIND_TRIANGLE_BACK_FACE ? TOON_PAYLOAD_BACK_FACE_BIT : 0u);
+	// 眉毛の透け：BLAS の中のジオメトリ番号（スケルタルメッシュではセクション＝マテリアルスロットの番号）を 24 ビット目から入れる
+	Payload.InstanceIndex = InstanceIndex() | (min(GeometryIndex(), TOON_PAYLOAD_GEOMETRY_MASK) << TOON_PAYLOAD_GEOMETRY_SHIFT)
+		| (HitKind() == HIT_KIND_TRIANGLE_BACK_FACE ? TOON_PAYLOAD_BACK_FACE_BIT : 0u);
 	// インスタンスの UserData。UE では GPUScene のインスタンス番号が入っている（マテリアルの読み出しに使う）
 	Payload.InstanceID = InstanceID();
 	Payload.Barycentrics = Attributes.GetBarycentrics();

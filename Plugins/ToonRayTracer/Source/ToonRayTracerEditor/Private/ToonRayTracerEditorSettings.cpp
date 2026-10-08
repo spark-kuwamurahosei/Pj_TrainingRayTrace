@@ -126,6 +126,11 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	CharacterRimStrength = 1.5f;
 	CharacterRimWidth = 2.5f;
 	CharacterOutlineColorScale = 0.25f;
+	SeeThroughOpacity = 0.25f;
+	SeeThroughBrightness = 0.5f;
+	SeeThroughDistance = 20.0f;
+	// 確認に使っているキャラクター（Kanau）では、眉毛・目・まつ毛がエレメント 4 にある
+	SeeThroughSlots = { 4 };
 	ShadowThreshold = 0.0f;
 	LitThreshold = 0.5f;
 	EdgeSoftness = 0.02f;
@@ -189,6 +194,21 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"), CharacterRimStrength);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"), CharacterRimWidth);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"), CharacterOutlineColorScale);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughOpacity"), SeeThroughOpacity);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"), SeeThroughBrightness);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughDistance"), SeeThroughDistance);
+	{
+		// スロット番号の一覧を、シェーダーで使うビットの集まりにする（0 ～ 30 番まで）
+		int32 SlotMask = 0;
+		for (const int32 Slot : SeeThroughSlots)
+		{
+			if (Slot >= 0 && Slot <= 30)
+			{
+				SlotMask |= 1 << Slot;
+			}
+		}
+		SetInt(TEXT("r.ToonRayTracer.Toon.SeeThroughSlotMask"), SlotMask);
+	}
 	SetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);
@@ -253,6 +273,21 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"), CharacterRimStrength);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"), CharacterRimWidth);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"), CharacterOutlineColorScale);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughOpacity"), SeeThroughOpacity);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"), SeeThroughBrightness);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughDistance"), SeeThroughDistance);
+	{
+		int32 SlotMask = 0;
+		GetInt(TEXT("r.ToonRayTracer.Toon.SeeThroughSlotMask"), SlotMask);
+		SeeThroughSlots.Reset();
+		for (int32 Slot = 0; Slot <= 30; ++Slot)
+		{
+			if ((SlotMask & (1 << Slot)) != 0)
+			{
+				SeeThroughSlots.Add(Slot);
+			}
+		}
+	}
 	GetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);

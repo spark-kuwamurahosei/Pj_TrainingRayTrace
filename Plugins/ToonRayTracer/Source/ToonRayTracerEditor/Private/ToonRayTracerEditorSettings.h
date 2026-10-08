@@ -176,6 +176,22 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "線の色（素材の色の倍率）", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float CharacterOutlineColorScale;
 
+	/** 前髪の奥にある眉毛などのパーツを、髪の上に見せる割合。見せるパーツは「眉毛の透け：スロット番号」で指定する。0 なら透かさない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：濃さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float SeeThroughOpacity;
+
+	/** 眉毛が透けている部分で、髪の色を何倍に暗くするか（0 で黒、1 で変えない） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：明るさ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float SeeThroughBrightness;
+
+	/** 髪の奥を何 cm まで探すか。大きすぎると、頭の反対側のパーツまで透ける */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：探す距離（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
+	float SeeThroughDistance;
+
+	/** 髪越しに見せるパーツのマテリアルスロット番号（スケルタルメッシュのエディタのエレメント番号）。すべてのキャラクターに使う。メッシュの Custom Primitive Data の [13] を設定すると、そのメッシュだけ上書きできる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：スロット番号"))
+	TArray<int32> SeeThroughSlots;
+
 	// ---- トゥーン：陰影 ----
 
 	/** 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） */

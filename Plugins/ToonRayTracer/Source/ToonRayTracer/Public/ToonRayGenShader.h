@@ -196,6 +196,12 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonCharacterRimStrength)
 		SHADER_PARAMETER(float, ToonCharacterRimWidth)
 		SHADER_PARAMETER(float, ToonCharacterOutlineColorScale)
+		// 眉毛の透け：重ねる割合、髪の色を暗くする倍率、髪の奥を探す距離（cm）
+		SHADER_PARAMETER(float, ToonSeeThroughOpacity)
+		SHADER_PARAMETER(float, ToonSeeThroughBrightness)
+		SHADER_PARAMETER(float, ToonSeeThroughDistance)
+		SHADER_PARAMETER(uint32, ToonSeeThroughSlotMask)
+		SHADER_PARAMETER(uint32, bToonDebugGeometry)
 		// 鳴潮風ルック フェーズ3：影の面を Skylight の色にどれだけ染めるか
 		SHADER_PARAMETER(float, ToonSkyTint)
 		// Translated World 空間の原点のワールド座標（メッシュのローカル座標を求めるため、double を High と Low に分けたもの）
