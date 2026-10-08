@@ -124,6 +124,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|対象", meta = (DisplayName = "キャラクターだけトゥーンにする"))
 	bool bCharacterOnly;
 
+	/** キャラクターの面からのシャドウレイは、この距離（cm）までの遮りを無視する。服のシワなどの細かい影が消える。0 なら無視しない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "自分の影を無視する距離（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "30.0"))
+	float CharacterSelfShadowDistance;
+
 	// ---- トゥーン：陰影 ----
 
 	/** 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） */
