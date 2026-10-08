@@ -129,6 +129,25 @@ namespace
 
 	const FLinearColor DefaultToonSkinShadowColor(0.75f, 0.5f, 0.5f);
 
+	// 鳴潮風ルック フェーズ2：キャラクターのリムライトと線の色
+	TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimStrength(
+		TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"),
+		1.5f,
+		TEXT("Strength of the screen-space rim light on characters (lit-side silhouette with a constant width). 0: off"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimWidth(
+		TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"),
+		2.5f,
+		TEXT("Width in pixels of the character rim light"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterOutlineColorScale(
+		TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"),
+		0.25f,
+		TEXT("Character outlines use the material color multiplied by this value instead of OutlineColor. 0: use OutlineColor"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonLightScale(
 		TEXT("r.ToonRayTracer.Toon.LightScale"),
 		1.0f,
@@ -885,6 +904,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const bool bToonSkin = CVarToonRayTracerToonSkin.GetValueOnRenderThread() != 0;
 	const float ToonSkinShadowThreshold = CVarToonRayTracerToonSkinShadowThreshold.GetValueOnRenderThread();
 	const FLinearColor ToonSkinShadowColor = ToonSkinShadowColor_RenderThread;
+	const float ToonCharacterRimStrength = FMath::Max(CVarToonRayTracerToonCharacterRimStrength.GetValueOnRenderThread(), 0.0f);
+	const float ToonCharacterRimWidth = FMath::Max(CVarToonRayTracerToonCharacterRimWidth.GetValueOnRenderThread(), 0.0f);
+	const float ToonCharacterOutlineColorScale = FMath::Max(CVarToonRayTracerToonCharacterOutlineColorScale.GetValueOnRenderThread(), 0.0f);
 	const float ToonLightScale = FMath::Max(CVarToonRayTracerToonLightScale.GetValueOnRenderThread(), 0.0f);
 	const bool bToonCastShadows = CVarToonRayTracerToonCastShadows.GetValueOnRenderThread() != 0;
 	const float ToonShadowBias = FMath::Max(CVarToonRayTracerToonShadowBias.GetValueOnRenderThread(), 0.0f);
@@ -915,7 +937,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
 	const uint32 ToonOutlineHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
-		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
+		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
+			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), GetTypeHash(ToonCharacterOutlineColorScale)))));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
@@ -1130,6 +1153,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->bToonSkin = bToonSkin ? 1u : 0u;
 	PassParameters->ToonSkinShadowThreshold = ToonSkinShadowThreshold;
 	PassParameters->ToonSkinShadowColor = FVector3f(ToonSkinShadowColor.R, ToonSkinShadowColor.G, ToonSkinShadowColor.B);
+	PassParameters->ToonCharacterRimStrength = ToonCharacterRimStrength;
+	PassParameters->ToonCharacterRimWidth = ToonCharacterRimWidth;
+	PassParameters->ToonCharacterOutlineColorScale = ToonCharacterOutlineColorScale;
 	{
 		// double のワールド座標を float 2 つ（上位と下位）に分けて渡す（シェーダー側で MakeDFVector3 に戻す）
 		const FVector PreViewTranslationForNoise = View.ViewMatrices.GetPreViewTranslation();

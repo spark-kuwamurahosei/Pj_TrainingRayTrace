@@ -140,6 +140,18 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "肌の影色", HideAlphaChannel, EditCondition = "bSkin"))
 	FLinearColor SkinShadowColor;
 
+	/** 光源の側の輪郭に、一定の幅で入れる明るい縁（リムライト）の強さ。0 なら入れない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "リムライトの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
+	float CharacterRimStrength;
+
+	/** リムライトの幅（ピクセル） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "リムライトの幅（ピクセル）", ClampMin = "0.0", UIMin = "0.0", UIMax = "10.0"))
+	float CharacterRimWidth;
+
+	/** 線を、黒ではなく素材の色にこの値を掛けた色にする。0 なら全体の線の色 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "線の色（素材の色の倍率）", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float CharacterOutlineColorScale;
+
 	// ---- トゥーン：陰影 ----
 
 	/** 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） */
