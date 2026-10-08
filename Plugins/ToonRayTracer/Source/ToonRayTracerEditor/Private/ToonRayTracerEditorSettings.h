@@ -118,12 +118,6 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "反射回数の上限（第9〜11章モード）", ClampMin = "1", ClampMax = "50", UIMin = "1", UIMax = "50"))
 	int32 MaxDepth;
 
-	// ---- トゥーン：対象 ----
-
-	/** トゥーンで塗るのをキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする（鳴潮風のルック）。Custom Primitive Data の [12] でメッシュごとに上書きできる */
-	UPROPERTY(EditAnywhere, config, Category = "トゥーン|対象", meta = (DisplayName = "キャラクターだけトゥーンにする"))
-	bool bCharacterOnly;
-
 	// ---- トゥーン：陰影 ----
 
 	/** 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） */

@@ -4,10 +4,6 @@
 
 // C++からバインドされる書き込み用テクスチャ
 RWTexture2D<float4> OutputTexture;
-// 通常描画（トーンマップ後）の画面。キャラだけトゥーンにするとき、それ以外のピクセルにそのまま使う
-Texture2D SceneColorTexture;
-// 鳴潮風ルック フェーズ1：1 なら、トゥーンで塗るのはキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
-uint bToonCharacterOnly;
 
 // フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
 RWTexture2D<float4> AccumulationTexture;
@@ -313,7 +309,6 @@ float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
 //   [9]: トゥーンのハイライトの強さ（0 ～ 1。未設定なら出さない）
 //   [10]: トゥーンのリムライトの強さ（未設定なら出さない）
 //   [11]: トゥーンの線の太さ（ピクセル。未設定ならメッシュの種類ごとの太さ、負の値なら線を引かない）
-//   [12]: キャラだけトゥーンにするときの扱い（正の値：トゥーンで塗る、負の値：通常描画のまま。未設定ならスケルタルメッシュだけトゥーン）
 FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 {
 	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
@@ -2364,30 +2359,6 @@ uint ComputePixelSignature(float2 UV)
 	return ToonPcgHash(ToonPcgHash(Rec.ObjectId * 2u + (bLit ? 1u : 0u)) ^ ReflectedObject) | 1u;
 }
 
-// 鳴潮風ルック フェーズ1：トゥーンで塗る物体かどうか（キャラだけトゥーンにするとき）
-// スケルタルメッシュ（キャラクター）をトゥーンにする。Custom Primitive Data の [12] で個別に上書きできる
-// （キャラの小物がスタティックメッシュの場合は正の値、トゥーンにしたくないスケルタルメッシュは負の値）
-bool IsToonTargetObject(uint GPUSceneInstanceId)
-{
-	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
-	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
-	float Override = GetCustomPrimitiveDataFloat(PrimitiveData, 12);
-	if (Override != 0.0f)
-	{
-		return Override > 0.0f;
-	}
-	return (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0;
-}
-
-// 画面上の UV の位置で、カメラから見えている物体をトゥーンで塗るかどうか
-// アウトラインは手前の物体の側に引かれるため、キャラの輪郭の線もキャラのピクセルに収まる
-bool IsToonTargetPixel(float2 UV)
-{
-	FToonRay Ray = GenerateCameraRay(UV);
-	FToonHitRecord Rec = (FToonHitRecord)0;
-	return HitCameraVisible(Ray, UV, Rec, false) && IsToonTargetObject(Rec.ObjectId);
-}
-
 RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 {
 	// ディスパッチは ViewRect のサイズで行うため、ここで得られるのは ViewRect 内のローカル座標
@@ -2426,35 +2397,21 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			InterlockedAdd(SceneMotion[bMoving ? 0 : 1], 1u);
 			ResetReason |= (bMoving ? TOON_RESET_VELOCITY : 0u) | (bDepthChanged ? TOON_RESET_DEPTH : 0u);
 		}
+
+		// 物体が動いている間と、蓄積をやり直すピクセルでは、何が見えているかの要約を作って前のフレームと比べる
+		// 動く物体の影や映り込みが変わったピクセルだけやり直し、それ以外（止まっている物体の輪郭など）は蓄積を続ける
+		if (bSceneMoving || HistoryFrames == 0)
+		{
+			uint Signature = ComputePixelSignature(CenterUV);
+			if (Signature != AccumulationSignatureTexture[LocalPixel])
+			{
+				HistoryFrames = 0;
+				ResetReason |= AccumulatedFrames > 0 ? TOON_RESET_SIGNATURE : 0u;
+			}
+			AccumulationSignatureTexture[LocalPixel] = Signature;
+		}
 	}
 	uint MaxFrames = bSceneMoving ? clamp(MotionMaxAccumulatedFrames, 1u, MaxAccumulatedFrames) : MaxAccumulatedFrames;
-
-	// 鳴潮風ルック フェーズ1：キャラだけトゥーンにする場合、それ以外のピクセルは通常描画の画面をそのまま出す
-	// 蓄積を終えたピクセル（トゥーンで塗ったピクセル）は、動きでやり直すまで判定を省く
-	// 背景のピクセルも、上の動きの判定（速度と深度）には含める（動く背景の物体がキャラに落とす影の変化に気付くため）
-	if (bToonCharacterOnly != 0 && TraceMode != 0 && ShadingMode == 3 && (bSceneMoving || HistoryFrames < MaxFrames)
-		&& !IsToonTargetPixel(CenterUV))
-	{
-		// 背景の色は、キャラへの映り込みで画面外の物体の色に使うため、引き続き記録する
-		RecordObjectColorAtPixel(LocalPixel);
-		// 次にキャラが映ったときは、蓄積を最初からやり直す
-		AccumulationTexture[LocalPixel] = 0.0f;
-		OutputTexture[ViewRectMin + LocalPixel] = SceneColorTexture.Load(int3(ViewRectMin + LocalPixel, 0));
-		return;
-	}
-
-	// 物体が動いている間と、蓄積をやり直すピクセルでは、何が見えているかの要約を作って前のフレームと比べる
-	// 動く物体の影や映り込みが変わったピクセルだけやり直し、それ以外（止まっている物体の輪郭など）は蓄積を続ける
-	if (bDetectMotion != 0 && (bSceneMoving || HistoryFrames == 0))
-	{
-		uint Signature = ComputePixelSignature(CenterUV);
-		if (Signature != AccumulationSignatureTexture[LocalPixel])
-		{
-			HistoryFrames = 0;
-			ResetReason |= AccumulatedFrames > 0 ? TOON_RESET_SIGNATURE : 0u;
-		}
-		AccumulationSignatureTexture[LocalPixel] = Signature;
-	}
 
 	float3 Color;
 	if (!bSceneMoving && HistoryFrames >= MaxFrames)

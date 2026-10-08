@@ -44,10 +44,6 @@ class FToonRayGenShader : public FGlobalShader
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
-		// 通常描画（トーンマップ後）の画面。キャラだけトゥーンにするとき、それ以外のピクセルにそのまま使う
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneColorTexture)
-		// 1 なら、トゥーンで塗るのはキャラクター（スケルタルメッシュ）だけにする
-		SHADER_PARAMETER(uint32, bToonCharacterOnly)
 		// フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, AccumulationTexture)
 		// AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）

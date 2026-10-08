@@ -66,13 +66,6 @@ namespace
 		TEXT("Maximum number of ray bounces (1-50) for ShadingMode 1. Toon shading uses r.ToonRayTracer.Toon.ReflectionDepth instead"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮風ルック フェーズ1：トゥーンで塗るのをキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
-	TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterOnly(
-		TEXT("r.ToonRayTracer.Toon.CharacterOnly"),
-		0,
-		TEXT("Apply toon shading only to characters (skeletal meshes, or meshes with Custom Primitive Data [12] > 0). Other pixels keep the regular rendering"),
-		ECVF_RenderThreadSafe);
-
 	// トゥーン T2：段階的な陰影の設定
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonBands(
 		TEXT("r.ToonRayTracer.Toon.Bands"),
@@ -847,7 +840,6 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const uint32 FrameNumber = View.Family->FrameNumber;
 	// トゥーンの設定
 	const uint32 ToonBands = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonBands.GetValueOnRenderThread(), 2, 3));
-	const bool bToonCharacterOnly = CVarToonRayTracerToonCharacterOnly.GetValueOnRenderThread() != 0;
 	const float ToonShadowThreshold = CVarToonRayTracerToonShadowThreshold.GetValueOnRenderThread();
 	const float ToonLitThreshold = CVarToonRayTracerToonLitThreshold.GetValueOnRenderThread();
 	const float ToonEdgeSoftness = FMath::Max(CVarToonRayTracerToonEdgeSoftness.GetValueOnRenderThread(), 0.0f);
@@ -884,7 +876,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), GetTypeHash(ToonReflectionDepth)));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), GetTypeHash(SamplesPerPixel)), HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth))),
-		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
+		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), ToonOutlineHash))
 		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
@@ -1035,8 +1027,6 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 
 	FToonRayGenShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FToonRayGenShader::FParameters>();
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(Output.Texture);
-	PassParameters->SceneColorTexture = SceneColor.Texture;
-	PassParameters->bToonCharacterOnly = bToonCharacterOnly ? 1u : 0u;
 	PassParameters->AccumulationTexture = GraphBuilder.CreateUAV(AccumulationTexture);
 	PassParameters->AccumulatedFrames = AccumulatedFrames;
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
@@ -1052,7 +1042,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		? SceneTextureParameters->GBufferVelocityTexture
 		: GSystemTextures.GetBlackDummy(GraphBuilder);
 	PassParameters->TLAS = TLAS;
-	if (bUseGBufferNormal || bUseGBufferBaseColor || bUseGBufferMetal || bUseGBufferForReflections || bDetectMotion || bSkipMaskedSurfaces || bToonCharacterOnly)
+	if (bUseGBufferNormal || bUseGBufferBaseColor || bUseGBufferMetal || bUseGBufferForReflections || bDetectMotion || bSkipMaskedSurfaces)
 	{
 		// GBuffer は描画解像度で作られるため、アップスケール前の描画範囲を渡す
 		const FIntRect GBufferViewRect = UE::FXRenderingUtils::GetRawViewRectUnsafe(View);
