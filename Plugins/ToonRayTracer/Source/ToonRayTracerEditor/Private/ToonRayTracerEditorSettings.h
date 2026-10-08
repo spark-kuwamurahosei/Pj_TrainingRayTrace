@@ -42,6 +42,7 @@ enum class EToonRayTracerScatterSampling : uint8
 {
 	UnitVector = 0			UMETA(DisplayName = "法線＋単位球上の点（One Weekend）"),
 	UniformHemisphere = 1	UMETA(DisplayName = "半球上で一様（第6章の比較用）"),
+	Cosine = 2				UMETA(DisplayName = "コサイン分布（第7〜8章）"),
 };
 
 /**

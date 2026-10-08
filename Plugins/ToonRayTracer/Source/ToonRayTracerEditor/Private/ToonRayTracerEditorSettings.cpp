@@ -114,7 +114,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	bDetectMotion = true;
 	MotionMaxAccumulatedFrames = 8;
 	MaxDepth = 10;
-	ScatterSampling = EToonRayTracerScatterSampling::UnitVector;
+	ScatterSampling = EToonRayTracerScatterSampling::Cosine;
 
 	Bands = 2;
 	bCharacterOnly = false;

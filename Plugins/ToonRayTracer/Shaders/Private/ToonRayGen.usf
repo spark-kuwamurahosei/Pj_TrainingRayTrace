@@ -87,8 +87,10 @@ uint bStratifiedSampling;
 // 『The Rest of Your Life』：拡散反射（ランバート）で、反射したレイの方向をどう選ぶか（r.ToonRayTracer.ScatterSampling）
 //   0：法線＋単位球上のランダムな点（『One Weekend』の方法。結果的にコサイン分布になる）
 //   1：半球上で一様（第6章の比較用。平均は同じだが、ノイズが増える）
+//   2：コサイン分布（第7〜8章。法線を基準にした正規直交基底で、cosθ に比例した方向を直接作る）
 #define TOON_SCATTER_SAMPLING_UNIT_VECTOR		0
 #define TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE	1
+#define TOON_SCATTER_SAMPLING_COSINE			2
 uint ScatterSampling;
 
 // 0: 法線の可視化、1: 本の第9〜11章のマテリアル、2: N・L、3: トゥーン
@@ -1698,6 +1700,43 @@ float LambertScatteringPdf(float3 Normal, float3 Direction)
 	return max(dot(Normal, Direction), 0.0f) / PI;
 }
 
+// 『The Rest of Your Life』第7章：z 軸のまわりで、cosθ に比例した確率でランダムな方向を作る（本の random_cosine_direction）
+// 2 つの一様乱数から直接作る。z（= cosθ）が大きい、真上に近い方向ほど選ばれやすい
+float3 RandomCosineDirection(inout uint RandomState)
+{
+	float R1 = ToonRandomFloat(RandomState);
+	float R2 = ToonRandomFloat(RandomState);
+	float Phi = 2.0f * PI * R1;
+	float SqrtR2 = sqrt(R2);
+	return float3(cos(Phi) * SqrtR2, sin(Phi) * SqrtR2, sqrt(max(1.0f - R2, 0.0f)));
+}
+
+// 『The Rest of Your Life』第8章：正規直交基底（本の onb）
+// W を法線にした互いに直交する 3 軸。z 軸のまわりで作った方向を、法線のまわりの方向に変換するために使う
+struct FToonOnb
+{
+	float3 U;
+	float3 V;
+	float3 W;
+};
+
+FToonOnb MakeOnb(float3 Normal)
+{
+	FToonOnb Onb;
+	Onb.W = Normal;
+	// 法線とほぼ平行な軸を使うと外積が 0 に近づくため、法線の x 成分が大きいときは y 軸を使う
+	float3 A = abs(Normal.x) > 0.9f ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+	Onb.V = normalize(cross(Onb.W, A));
+	Onb.U = cross(Onb.W, Onb.V);
+	return Onb;
+}
+
+// 基底の座標（u, v, w）で表した方向を、ワールドの方向にする（本の onb::transform）
+float3 OnbTransform(FToonOnb Onb, float3 Local)
+{
+	return Local.x * Onb.U + Local.y * Onb.V + Local.z * Onb.W;
+}
+
 // 『The Rest of Your Life』第6〜8章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
 // 色は「素材の色 × 散乱の PDF ÷ 選んだ方向の PDF」で重み付けする（本の ray_color）
 // 選び方を変えても平均（最終的な明るさ）は同じで、変わるのはノイズの量だけ
@@ -1713,6 +1752,15 @@ float3 SampleScatterDirection(float3 Normal, inout uint RandomState, out float S
 			Direction = -Direction;
 		}
 		SamplingPdf = 1.0f / (2.0f * PI);
+		return Direction;
+	}
+
+	if (ScatterSampling == TOON_SCATTER_SAMPLING_COSINE)
+	{
+		// 第7〜8章：z 軸のまわりのコサイン分布の方向を、法線を基準にした正規直交基底で変換する（本の cosine_pdf）
+		// PDF は散乱の PDF と同じ cosθ / π。重みは「素材の色」そのものになる
+		Direction = SafeNormalize(OnbTransform(MakeOnb(Normal), RandomCosineDirection(RandomState)), Normal);
+		SamplingPdf = LambertScatteringPdf(Normal, Direction);
 		return Direction;
 	}
 
