@@ -201,6 +201,25 @@ namespace
 		TEXT("Offset (cm) of the shadow ray origin along the geometric normal, to avoid self-shadowing artifacts"),
 		ECVF_RenderThreadSafe);
 
+	// トゥーンの面光源のやわらかい影（『The Rest of Your Life』の応用）
+	TAutoConsoleVariable<float> CVarToonRayTracerToonSoftShadowAngle(
+		TEXT("r.ToonRayTracer.Toon.SoftShadowAngle"),
+		5.0f,
+		TEXT("Apparent size of the light in degrees (cone angle) for soft toon shadows. 0: hard shadows with a single shadow ray"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonSoftShadowSamples(
+		TEXT("r.ToonRayTracer.Toon.SoftShadowSamples"),
+		4,
+		TEXT("Number of shadow rays per shading point for soft toon shadows (1-16)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonSoftShadowSteps(
+		TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"),
+		1,
+		TEXT("Quantize the soft shadow visibility into this many steps (0 or 1: smooth gradient, 2 or more: toon steps)"),
+		ECVF_RenderThreadSafe);
+
 	// Perlin ノイズの応用：影の境目を手描き風に揺らす
 	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowNoiseStrength(
 		TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"),
@@ -993,6 +1012,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonSkyTint = FMath::Clamp(CVarToonRayTracerToonSkyTint.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const bool bToonCastShadows = CVarToonRayTracerToonCastShadows.GetValueOnRenderThread() != 0;
 	const float ToonShadowBias = FMath::Max(CVarToonRayTracerToonShadowBias.GetValueOnRenderThread(), 0.0f);
+	const float ToonSoftShadowAngle = FMath::Clamp(CVarToonRayTracerToonSoftShadowAngle.GetValueOnRenderThread(), 0.0f, 90.0f);
+	const uint32 ToonSoftShadowSamples = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonSoftShadowSamples.GetValueOnRenderThread(), 1, 16));
+	const uint32 ToonSoftShadowSteps = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonSoftShadowSteps.GetValueOnRenderThread(), 0, 16));
 	const float ToonShadowNoiseStrength = FMath::Max(CVarToonRayTracerToonShadowNoiseStrength.GetValueOnRenderThread(), 0.0f);
 	const float ToonShadowNoiseSize = FMath::Max(CVarToonRayTracerToonShadowNoiseSize.GetValueOnRenderThread(), 0.1f);
 	const bool bToonCharacterSelfShadow = CVarToonRayTracerToonCharacterSelfShadow.GetValueOnRenderThread() != 0;
@@ -1014,7 +1036,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(GetTypeHash(DirectionalLight.Intensity), GetTypeHash(DirectionalLight.bValid)));
 	const uint32 ToonHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(ToonBands), GetTypeHash(ToonShadowThreshold)), HashCombine(GetTypeHash(ToonLitThreshold), GetTypeHash(ToonEdgeSoftness))),
-		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), HashCombine(GetTypeHash(ToonLightScale), GetTypeHash(ToonSkyTint))), HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
+		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), HashCombine(GetTypeHash(ToonLightScale), GetTypeHash(ToonSkyTint))), HashCombine(HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonSoftShadowAngle), GetTypeHash(ToonSoftShadowSamples)), GetTypeHash(ToonSoftShadowSteps))), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
 	const uint32 ToonHighlightHash = HashCombine(
 		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
@@ -1184,7 +1206,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->AccumulationTexture = GraphBuilder.CreateUAV(AccumulationTexture);
 	PassParameters->AccumulatedFrames = AccumulatedFrames;
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
-	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : 0;
+	// TSR の前に描く場合は自前の蓄積がないため、フレーム番号で乱数を変え、TSR に平均させる（面光源のやわらかい影など）
+	PassParameters->RandomSeed = AccumulationState ? AccumulationState->RandomSeed : (bBeforeTSR ? View.Family->FrameNumber : 0u);
 	PassParameters->AccumulationDepthTexture = GraphBuilder.CreateUAV(AccumulationDepthTexture);
 	PassParameters->AccumulationSignatureTexture = GraphBuilder.CreateUAV(AccumulationSignatureTexture);
 	PassParameters->PreviousSceneMotion = GraphBuilder.CreateSRV(PreviousSceneMotion);
@@ -1235,6 +1258,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonSkyTint = ToonSkyTint;
 	PassParameters->bToonCastShadows = bToonCastShadows ? 1u : 0u;
 	PassParameters->ToonShadowBias = ToonShadowBias;
+	// 円錐の全体の角度（度）から、半角の cos にする
+	PassParameters->ToonSoftShadowCosAngle = FMath::Cos(FMath::DegreesToRadians(ToonSoftShadowAngle * 0.5f));
+	PassParameters->ToonSoftShadowSamples = ToonSoftShadowSamples;
+	PassParameters->ToonSoftShadowSteps = ToonSoftShadowSteps;
 	PassParameters->ToonShadowNoiseStrength = ToonShadowNoiseStrength;
 	PassParameters->ToonShadowNoiseSize = ToonShadowNoiseSize;
 	PassParameters->bToonCharacterSelfShadow = bToonCharacterSelfShadow ? 1u : 0u;

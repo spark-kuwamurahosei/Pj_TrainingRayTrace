@@ -135,6 +135,9 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 
 	bCastShadows = true;
 	ShadowBias = 2.0f;
+	SoftShadowAngle = 5.0f;
+	SoftShadowSamples = 4;
+	SoftShadowSteps = 1;
 	ShadowNoiseStrength = 0.0f;
 	ShadowNoiseSize = 40.0f;
 
@@ -194,6 +197,9 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 
 	SetBool(TEXT("r.ToonRayTracer.Toon.CastShadows"), bCastShadows);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowBias"), ShadowBias);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.SoftShadowAngle"), SoftShadowAngle);
+	SetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSamples"), SoftShadowSamples);
+	SetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"), SoftShadowSteps);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"), ShadowNoiseStrength);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseSize"), ShadowNoiseSize);
 
@@ -253,6 +259,9 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 
 	GetBool(TEXT("r.ToonRayTracer.Toon.CastShadows"), bCastShadows);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowBias"), ShadowBias);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.SoftShadowAngle"), SoftShadowAngle);
+	GetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSamples"), SoftShadowSamples);
+	GetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"), SoftShadowSteps);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"), ShadowNoiseStrength);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseSize"), ShadowNoiseSize);
 

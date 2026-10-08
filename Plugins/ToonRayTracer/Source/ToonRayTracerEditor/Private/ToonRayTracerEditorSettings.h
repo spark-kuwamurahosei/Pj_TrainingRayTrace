@@ -216,6 +216,18 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "影のバイアス（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "10.0", EditCondition = "bCastShadows"))
 	float ShadowBias;
 
+	/** 光源の見かけの大きさ（度）。0 より大きいと、影を落とす物体から離れるほど影の境目がぼける（面光源のやわらかい影）。0 ならくっきりした影 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "やわらかい影：光源の大きさ（度）", ClampMin = "0.0", ClampMax = "90.0", UIMin = "0.0", UIMax = "20.0", EditCondition = "bCastShadows"))
+	float SoftShadowAngle;
+
+	/** やわらかい影のシャドウレイの本数。多いほどなめらかだが重い */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "やわらかい影：シャドウレイの本数", ClampMin = "1", ClampMax = "16", UIMin = "1", UIMax = "16", EditCondition = "bCastShadows"))
+	int32 SoftShadowSamples;
+
+	/** やわらかい影を何段階に区切るか。0 か 1 ならなめらかなグラデーション、2 以上ならトゥーンらしい段階 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "やわらかい影：段階の数", ClampMin = "0", ClampMax = "16", UIMin = "0", UIMax = "8", EditCondition = "bCastShadows"))
+	int32 SoftShadowSteps;
+
 	/** 影の境目を Perlin ノイズで手描き風に揺らす強さ。0 なら揺らさない（0.1 で控えめ、0.3 で強め） */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "影の境目の揺れの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "0.5"))
 	float ShadowNoiseStrength;
