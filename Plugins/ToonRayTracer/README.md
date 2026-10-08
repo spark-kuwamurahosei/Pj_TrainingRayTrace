@@ -157,6 +157,7 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
 | `r.ToonRayTracer.DetectMotion` | 1 | 動いている物体を検出し、そのピクセルだけ蓄積をやり直すか（GBuffer の速度と深度の変化で判定） |
 | `r.ToonRayTracer.MotionMaxAccumulatedFrames` | 8 | 物体が動いている間の蓄積フレーム数の上限。小さいほど残像が短くなるが、止まっている物体の輪郭もざらつく |
 | `r.ToonRayTracer.Debug.Motion` | 0 | 確認用：蓄積をやり直した理由を色で表示する（白：カメラや設定の変更、赤：動いている物体、緑：深度の変化、青：見えている物体・影・反射の先の変化、紫がかった灰色：物体が動いているため蓄積数を抑えている）。全体のリセットの理由はログに出る |
+| `r.ToonRayTracer.Debug.LogPasses` | 0 | 負荷の確認用：パスが呼ばれるたびに、ビュー（フレーム番号、解像度、シーンキャプチャかどうかなど）をログに出す。`stat gpu` の `ToonRayTracer`（パス全体）と `ToonRayTracerRayGen`（レイトレーシング本体）とあわせて使う |
 | `r.ToonRayTracer.MaxDepth` | 10 | ShadingMode 1 での反射回数の上限（1 ～ 50） |
 
 `ShadowColor`、`SkinShadowColor`、`OutlineColor` は文字列型のため、ゲームスレッドで読んでレンダースレッドへ渡している
