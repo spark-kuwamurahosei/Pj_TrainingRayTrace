@@ -137,6 +137,7 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
 | 変数 | 既定値 | 内容 |
 |---|---|---|
 | `r.ToonRayTracer.SamplesPerPixel` | 4 | 1 ピクセルあたりのサンプル数（アンチエイリアス、1 ～ 64） |
+| `r.ToonRayTracer.ScatterSampling` | 0 | 確認用の「本の第9〜11章」モードで、拡散反射の方向をどう選ぶか（『The Rest of Your Life』）。0：法線＋単位球上の点（One Weekend の方法。コサイン分布になる）、1：半球上で一様（第6章の比較用）。色は「素材の色 × 散乱の PDF ÷ 選んだ方向の PDF」で重み付けするため、平均の明るさは同じでノイズの量だけが変わる |
 | `r.ToonRayTracer.StratifiedSampling` | 1 | 『The Rest of Your Life』第3章の層化。ピクセルを √N × √N のマスに分け、各マスのランダムな位置に 1 本ずつ飛ばす（N はそのフレームのサンプル数。平方数でないときの残りは完全なランダム） |
 | `r.ToonRayTracer.MotionSamplesPerPixel` | 2 | カメラや物体が動いている間のサンプル数（0 なら `SamplesPerPixel` と同じ）。動いている間の負荷を下げ、止まったら蓄積でアンチエイリアスを補う。蓄積しない設定では使わない |
 | `r.ToonRayTracer.UseGBufferNormal` | 1 | カメラから見えている面に GBuffer の滑らかな法線を使うか |

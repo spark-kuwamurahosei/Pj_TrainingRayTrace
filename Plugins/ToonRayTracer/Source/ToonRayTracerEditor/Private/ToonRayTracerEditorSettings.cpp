@@ -114,6 +114,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	bDetectMotion = true;
 	MotionMaxAccumulatedFrames = 8;
 	MaxDepth = 10;
+	ScatterSampling = EToonRayTracerScatterSampling::UnitVector;
 
 	Bands = 2;
 	bCharacterOnly = false;
@@ -172,6 +173,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetBool(TEXT("r.ToonRayTracer.DetectMotion"), bDetectMotion);
 	SetInt(TEXT("r.ToonRayTracer.MotionMaxAccumulatedFrames"), MotionMaxAccumulatedFrames);
 	SetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
+	SetInt(TEXT("r.ToonRayTracer.ScatterSampling"), static_cast<int32>(ScatterSampling));
 
 	SetBool(TEXT("r.ToonRayTracer.Toon.CharacterOnly"), bCharacterOnly);
 	SetBool(TEXT("r.ToonRayTracer.Toon.BeforeTSR"), bBeforeTSR);
@@ -230,6 +232,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetBool(TEXT("r.ToonRayTracer.DetectMotion"), bDetectMotion);
 	GetInt(TEXT("r.ToonRayTracer.MotionMaxAccumulatedFrames"), MotionMaxAccumulatedFrames);
 	GetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
+	GetEnum(TEXT("r.ToonRayTracer.ScatterSampling"), ScatterSampling);
 
 	GetBool(TEXT("r.ToonRayTracer.Toon.CharacterOnly"), bCharacterOnly);
 	GetBool(TEXT("r.ToonRayTracer.Toon.BeforeTSR"), bBeforeTSR);
