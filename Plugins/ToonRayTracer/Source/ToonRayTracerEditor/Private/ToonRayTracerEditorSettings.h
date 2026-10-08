@@ -44,6 +44,7 @@ enum class EToonRayTracerScatterSampling : uint8
 	UniformHemisphere = 1	UMETA(DisplayName = "半球上で一様（第6章の比較用）"),
 	Cosine = 2				UMETA(DisplayName = "コサイン分布（第7〜8章）"),
 	Light = 3				UMETA(DisplayName = "ライトを直接狙う（第9章）"),
+	Mixture = 4				UMETA(DisplayName = "混合：ライトとコサイン分布（第10〜11章）"),
 };
 
 /**

@@ -89,10 +89,12 @@ uint bStratifiedSampling;
 //   1：半球上で一様（第6章の比較用。平均は同じだが、ノイズが増える）
 //   2：コサイン分布（第7〜8章。法線を基準にした正規直交基底で、cosθ に比例した方向を直接作る）
 //   3：ライトを直接狙う（第9章。光る四角形の上のランダムな点へ向けて飛ばす。直接光だけになる）
+//   4：混合（第10〜11章。ライトを狙う方向とコサイン分布の方向を半々の確率で選ぶ）
 #define TOON_SCATTER_SAMPLING_UNIT_VECTOR		0
 #define TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE	1
 #define TOON_SCATTER_SAMPLING_COSINE			2
 #define TOON_SCATTER_SAMPLING_LIGHT			3
+#define TOON_SCATTER_SAMPLING_MIXTURE			4
 uint ScatterSampling;
 
 // 0: 法線の可視化、1: 本の第9〜11章のマテリアル、2: N・L、3: トゥーン
@@ -1776,7 +1778,27 @@ float3 SampleLightQuadDirection(uint LightIndex, float3 Position, inout uint Ran
 	return Direction;
 }
 
-// 『The Rest of Your Life』第6〜9章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
+// 『The Rest of Your Life』第10章：任意の方向について、ライトを狙ったときにその方向が選ばれる PDF（本の quad::pdf_value）
+// その方向へのレイが光る四角形に当たらなければ、ライトを狙ってその方向が選ばれることはないので 0
+float LightQuadPdf(uint LightIndex, float3 Position, float3 Direction)
+{
+	float3 U = QuadU[LightIndex].xyz;
+	float3 V = QuadV[LightIndex].xyz;
+	FToonRay Ray;
+	Ray.Origin = Position;
+	Ray.Direction = Direction;
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (!HitQuad(QuadQ[LightIndex].xyz, U, V, Ray, TOON_RAY_TMIN, 1.0e8f, Rec))
+	{
+		return 0.0f;
+	}
+	float3 Cross = cross(U, V);
+	float Area = length(Cross);
+	float LightCosine = abs(dot(Direction, Cross / Area));
+	return LightCosine > 1.0e-6f ? Rec.T * Rec.T / (LightCosine * Area) : 0.0f;
+}
+
+// 『The Rest of Your Life』第6〜10章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
 // 色は「素材の色 × 散乱の PDF ÷ 選んだ方向の PDF」で重み付けする（本の ray_color）
 // 選び方を変えても平均（最終的な明るさ）は同じで、変わるのはノイズの量だけ
 float3 SampleScatterDirection(float3 Position, float3 Normal, inout uint RandomState, out float SamplingPdf)
@@ -1794,6 +1816,28 @@ float3 SampleScatterDirection(float3 Position, float3 Normal, inout uint RandomS
 		return Direction;
 	}
 
+	if (ScatterSampling == TOON_SCATTER_SAMPLING_MIXTURE)
+	{
+		// 第10〜11章：混合 PDF（本の mixture_pdf）。半々の確率でライトを狙う方向かコサイン分布の方向を選ぶ
+		// どちらの選び方でも同じ方向が選ばれうるので、その方向の PDF は 2 つの PDF の平均になる
+		// ライトを狙う分でノイズを減らし、コサイン分布の分で天井や壁の照り返し（間接光）も拾う
+		int LightIndex = FindLightQuad();
+		if (LightIndex >= 0)
+		{
+			if (ToonRandomFloat(RandomState) < 0.5f)
+			{
+				float Unused;
+				Direction = SampleLightQuadDirection((uint)LightIndex, Position, RandomState, Unused);
+			}
+			else
+			{
+				Direction = SafeNormalize(OnbTransform(MakeOnb(Normal), RandomCosineDirection(RandomState)), Normal);
+			}
+			SamplingPdf = 0.5f * LightQuadPdf((uint)LightIndex, Position, Direction) + 0.5f * LambertScatteringPdf(Normal, Direction);
+			return Direction;
+		}
+	}
+
 	if (ScatterSampling == TOON_SCATTER_SAMPLING_LIGHT)
 	{
 		// 第9章：ライトを直接狙う。ライトがないシーンでは、コサイン分布にする
@@ -1804,7 +1848,7 @@ float3 SampleScatterDirection(float3 Position, float3 Normal, inout uint RandomS
 		}
 	}
 
-	if (ScatterSampling == TOON_SCATTER_SAMPLING_COSINE || ScatterSampling == TOON_SCATTER_SAMPLING_LIGHT)
+	if (ScatterSampling >= TOON_SCATTER_SAMPLING_COSINE)
 	{
 		// 第7〜8章：z 軸のまわりのコサイン分布の方向を、法線を基準にした正規直交基底で変換する（本の cosine_pdf）
 		// PDF は散乱の PDF と同じ cosθ / π。重みは「素材の色」そのものになる

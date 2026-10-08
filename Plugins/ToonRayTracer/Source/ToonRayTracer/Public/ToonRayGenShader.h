@@ -86,7 +86,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, MotionSamplesPerPixel)
 		// 『The Rest of Your Life』第3章：1 なら、ピクセル内のサンプル位置を層化する
 		SHADER_PARAMETER(uint32, bStratifiedSampling)
-		// 『The Rest of Your Life』：拡散反射の方向の選び方（0：法線＋単位球、1：半球上で一様、2：コサイン分布、3：ライトを狙う）
+		// 『The Rest of Your Life』：拡散反射の方向の選び方（0：法線＋単位球、1：半球上で一様、2：コサイン分布、3：ライトを狙う、4：混合）
 		SHADER_PARAMETER(uint32, ScatterSampling)
 		// 0: 法線の可視化、1: 拡散反射
 		SHADER_PARAMETER(uint32, ShadingMode)
