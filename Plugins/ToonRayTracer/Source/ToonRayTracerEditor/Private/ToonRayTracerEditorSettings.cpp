@@ -116,6 +116,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 
 	Bands = 2;
 	bCharacterOnly = false;
+	CharacterSelfShadowDistance = 15.0f;
 	ShadowThreshold = 0.0f;
 	LitThreshold = 0.5f;
 	EdgeSoftness = 0.02f;
@@ -163,6 +164,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
 
 	SetBool(TEXT("r.ToonRayTracer.Toon.CharacterOnly"), bCharacterOnly);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterSelfShadowDistance"), CharacterSelfShadowDistance);
 	SetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);
@@ -211,6 +213,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
 
 	GetBool(TEXT("r.ToonRayTracer.Toon.CharacterOnly"), bCharacterOnly);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterSelfShadowDistance"), CharacterSelfShadowDistance);
 	GetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);

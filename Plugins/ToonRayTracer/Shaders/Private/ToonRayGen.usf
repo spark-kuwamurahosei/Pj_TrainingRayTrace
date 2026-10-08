@@ -142,6 +142,9 @@ float ToonShadowBias;
 // Perlin ノイズの応用：影の境目を手描き風に揺らす強さ（0 なら揺らさない）と、揺れの大きさ（cm）
 float ToonShadowNoiseStrength;
 float ToonShadowNoiseSize;
+// 鳴潮風ルック フェーズ2：キャラクターの服のまだらな影を抑える
+// キャラクターの面からのシャドウレイは、この距離（cm）までの遮りを無視する（服のシワなどの細かい影を消す）
+float ToonCharacterSelfShadowDistance;
 // シャドウレイの始点をずらす量の倍率（強さ × 揺れの大きさ × この値 cm だけずらす）
 // 大きすぎるとずれの変化がノイズの模様より急になり、境目が折り返して点々になる
 #define TOON_SHADOW_NOISE_OFFSET_SCALE 2.0f
@@ -280,6 +283,8 @@ struct FToonMaterial
 	float OutlineWidth;
 	// 『The Next Week』第9章：煙の濃さ（1cm あたりに散乱する確率）
 	float Density;
+	// 鳴潮風ルック：キャラクター（スケルタルメッシュか、Custom Primitive Data の [12] が正の値）なら 1
+	uint bCharacter;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -295,6 +300,8 @@ FToonMaterial GetDefaultMaterial()
 	Material.HighlightStrength = 0.0f;
 	Material.RimStrength = 0.0f;
 	Material.OutlineWidth = ToonOutlineWidth;
+	Material.Density = 0.0f;
+	Material.bCharacter = 0;
 	return Material;
 }
 
@@ -313,7 +320,8 @@ float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
 //   [9]: トゥーンのハイライトの強さ（0 ～ 1。未設定なら出さない）
 //   [10]: トゥーンのリムライトの強さ（未設定なら出さない）
 //   [11]: トゥーンの線の太さ（ピクセル。未設定ならメッシュの種類ごとの太さ、負の値なら線を引かない）
-//   [12]: キャラだけトゥーンにするときの扱い（正の値：トゥーンで塗る、負の値：通常描画のまま。未設定ならスケルタルメッシュだけトゥーン）
+//   [12]: キャラクターとして扱うか（正の値：扱う、負の値：扱わない。未設定ならスケルタルメッシュをキャラクターとする）
+//         キャラだけトゥーンにするときにトゥーンで塗るか、キャラクター用の影の設定を使うかに影響する
 FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 {
 	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
@@ -358,6 +366,13 @@ FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 	{
 		Material.OutlineWidth = max(OutlineWidthOverride, 0.0f);
 	}
+
+	// 鳴潮風ルック：キャラクターかどうか。スケルタルメッシュをキャラクターとし、Custom Primitive Data の [12] で上書きできる
+	// （キャラの小物がスタティックメッシュの場合は正の値、キャラとして扱いたくないスケルタルメッシュは負の値）
+	float CharacterOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 12);
+	Material.bCharacter = CharacterOverride != 0.0f
+		? (CharacterOverride > 0.0f ? 1u : 0u)
+		: ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0 ? 1u : 0u);
 
 	return Material;
 }
@@ -1784,7 +1799,8 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 // トゥーン T3：Origin から光源の方向へシャドウレイを飛ばし、光が届くかどうかを返す
 // 「何かに当たったか」だけ分かればよいので、最初の交差で打ち切り、ClosestHit も呼ばない
 // bIgnoreBackFaces が true なら、裏から当たった面を無視する（シャドウターミネーター問題の対策）
-bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
+// TMin より手前の遮りは無視する（キャラクターの自分の細かい影を消すために使う）
+bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces, float TMin = TOON_RAY_TMIN)
 {
 	FToonRay ShadowRay;
 	ShadowRay.Origin = Origin;
@@ -1800,7 +1816,7 @@ bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
 	RayDesc Desc;
 	Desc.Origin = ShadowRay.Origin;
 	Desc.Direction = ShadowRay.Direction;
-	Desc.TMin = TOON_RAY_TMIN;
+	Desc.TMin = TMin;
 	Desc.TMax = RAY_DEFAULT_T_MAX;
 
 	// ClosestHit を呼ばないため、ペイロードは「当たった」で初期化しておき、Miss シェーダーが呼ばれたときだけ書き換わる
@@ -1972,7 +1988,10 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal)
 		// そういう点だけ裏面を無視し、自分のメッシュを通り抜けさせる（表から当たる本当の自己影は残る）
 		bool bGeometryFacesAwayFromLight = dot(GeometricNormal, ToLightDirection) <= 0.0f;
 
-		if (!IsLightVisible(ShadowOrigin, bGeometryFacesAwayFromLight))
+		// 鳴潮風ルック フェーズ2：キャラクターは、面のすぐ近くの遮り（服のシワや重なりの細かい影）を無視する
+		// 腕が胴に落とす影など、離れた位置からの大きな影は残る
+		float ShadowTMin = Rec.Material.bCharacter != 0 ? max(ToonCharacterSelfShadowDistance, TOON_RAY_TMIN) : TOON_RAY_TMIN;
+		if (!IsLightVisible(ShadowOrigin, bGeometryFacesAwayFromLight, ShadowTMin))
 		{
 			LightLevel = 0.0f;
 		}
@@ -2364,28 +2383,14 @@ uint ComputePixelSignature(float2 UV)
 	return ToonPcgHash(ToonPcgHash(Rec.ObjectId * 2u + (bLit ? 1u : 0u)) ^ ReflectedObject) | 1u;
 }
 
-// 鳴潮風ルック フェーズ1：トゥーンで塗る物体かどうか（キャラだけトゥーンにするとき）
-// スケルタルメッシュ（キャラクター）をトゥーンにする。Custom Primitive Data の [12] で個別に上書きできる
-// （キャラの小物がスタティックメッシュの場合は正の値、トゥーンにしたくないスケルタルメッシュは負の値）
-bool IsToonTargetObject(uint GPUSceneInstanceId)
-{
-	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
-	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
-	float Override = GetCustomPrimitiveDataFloat(PrimitiveData, 12);
-	if (Override != 0.0f)
-	{
-		return Override > 0.0f;
-	}
-	return (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0;
-}
-
-// 画面上の UV の位置で、カメラから見えている物体をトゥーンで塗るかどうか
+// 鳴潮風ルック フェーズ1：画面上の UV の位置で、カメラから見えている物体をトゥーンで塗るかどうか（キャラだけトゥーンにするとき）
+// キャラクター（GetSceneMaterial の bCharacter）だけをトゥーンで塗る
 // アウトラインは手前の物体の側に引かれるため、キャラの輪郭の線もキャラのピクセルに収まる
 bool IsToonTargetPixel(float2 UV)
 {
 	FToonRay Ray = GenerateCameraRay(UV);
 	FToonHitRecord Rec = (FToonHitRecord)0;
-	return HitCameraVisible(Ray, UV, Rec, false) && IsToonTargetObject(Rec.ObjectId);
+	return HitCameraVisible(Ray, UV, Rec, false) && Rec.Material.bCharacter != 0;
 }
 
 RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
