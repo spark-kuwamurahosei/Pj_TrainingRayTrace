@@ -56,7 +56,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerScatterSampling(
 		TEXT("r.ToonRayTracer.ScatterSampling"),
 		2,
-		TEXT("How diffuse scatter directions are sampled in ShadingMode 1 (0: normal + random unit vector, 1: uniform hemisphere, 2: cosine-weighted with an orthonormal basis)"),
+		TEXT("How diffuse scatter directions are sampled in ShadingMode 1 (0: normal + random unit vector, 1: uniform hemisphere, 2: cosine-weighted with an orthonormal basis, 3: toward the light quad)"),
 		ECVF_RenderThreadSafe);
 
 	// 『The Rest of Your Life』第3章：ピクセル内のサンプル位置の層化
@@ -927,7 +927,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const int32 AnalyticSceneIndex = CVarToonRayTracerAnalyticScene.GetValueOnRenderThread();
 	const uint32 SamplesPerPixel = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerSamplesPerPixel.GetValueOnRenderThread(), 1, 64));
 	const bool bStratifiedSampling = CVarToonRayTracerStratifiedSampling.GetValueOnRenderThread() != 0;
-	const uint32 ScatterSampling = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerScatterSampling.GetValueOnRenderThread(), 0, 2));
+	const uint32 ScatterSampling = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerScatterSampling.GetValueOnRenderThread(), 0, 3));
 	const uint32 ShadingMode = static_cast<uint32>(CVarToonRayTracerShadingMode.GetValueOnRenderThread());
 	const uint32 MaxDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerMaxDepth.GetValueOnRenderThread(), 1, 50));
 	// TSR の前に描く場合は、フレームをまたいだ平均を TSR に任せるため、自前の蓄積と動きの判定はしない
