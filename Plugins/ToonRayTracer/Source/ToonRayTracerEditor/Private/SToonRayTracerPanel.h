@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
+#include "ToonRayTracerEnvironmentPresets.h"
 
 class IDetailsView;
 
@@ -23,6 +24,10 @@ private:
 	FReply OnResetAccumulationClicked();
 	FReply OnImportFromConsoleClicked();
 	FReply OnResetToDefaultsClicked();
+	FReply OnEnvironmentPresetClicked(EToonEnvironmentPreset Preset);
+
+	// 環境プリセットを適用した結果のメッセージ
+	FText EnvironmentMessage;
 
 	TSharedPtr<IDetailsView> DetailsView;
 };
