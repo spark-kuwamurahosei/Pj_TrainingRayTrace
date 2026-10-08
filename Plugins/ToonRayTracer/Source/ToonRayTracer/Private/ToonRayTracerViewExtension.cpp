@@ -73,6 +73,19 @@ namespace
 		TEXT("Apply toon shading only to characters (skeletal meshes, or meshes with Custom Primitive Data [12] > 0). Other pixels keep the regular rendering"),
 		ECVF_RenderThreadSafe);
 
+	// 鳴潮風ルック フェーズ3：キャラクターだけトゥーンにするとき、TSR の前（描画解像度、トーンマップ前）に描く
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonBeforeTSR(
+		TEXT("r.ToonRayTracer.Toon.BeforeTSR"),
+		1,
+		TEXT("When CharacterOnly is on, render the toon characters before TSR (render resolution, HDR before tonemapping) so TSR anti-aliases and upscales them"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonInverseTonemap(
+		TEXT("r.ToonRayTracer.Toon.InverseTonemap"),
+		1,
+		TEXT("When rendering before TSR, write colors with the inverse of the Filmic tonemapper applied so the result matches rendering after tonemapping"),
+		ECVF_RenderThreadSafe);
+
 	// トゥーン T2：段階的な陰影の設定
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonBands(
 		TEXT("r.ToonRayTracer.Toon.Bands"),
@@ -803,16 +816,44 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 // パスの登録
 void ToonRayTracerViewExtension::SubscribeToPostProcessingPass(EPostProcessingPass Pass, const FSceneView& InView, FPostProcessingPassDelegateArray& InOutPassCallbacks, bool bIsPassEnabled)
 {
+	// 鳴潮風ルック フェーズ3：キャラクターだけトゥーンにするとき（トゥーン表示・シーンのレイ）は、TSR の前に描く
+	// TSR がジッターを使ってアンチエイリアスとアップスケールを行い、動いている間の輪郭のギザつきが抑えられる
+	// トーンマップや DOF、ブルームも、背景と同じようにキャラクターにかかる
+	const bool bBeforeTSR = CVarToonRayTracerToonBeforeTSR.GetValueOnRenderThread() != 0
+		&& CVarToonRayTracerToonCharacterOnly.GetValueOnRenderThread() != 0
+		&& CVarToonRayTracerShadingMode.GetValueOnRenderThread() == 3
+		&& CVarToonRayTracerTraceMode.GetValueOnRenderThread() == 1;
+
+	if (bBeforeTSR)
+	{
+		// DOF の前（TSR より前）のタイミングで登録
+		if (Pass == EPostProcessingPass::BeforeDOF)
+		{
+			InOutPassCallbacks.Add(
+				FPostProcessingPassDelegate::CreateRaw(this, &ToonRayTracerViewExtension::RenderToonRayTracingPassBeforeTSR));
+		}
+	}
 	// Tonemapのタイミングで、かつパスが有効な場合に登録
-	if (Pass == EPostProcessingPass::Tonemap && bIsPassEnabled)
+	else if (Pass == EPostProcessingPass::Tonemap && bIsPassEnabled)
 	{
 		InOutPassCallbacks.Add(
 			FPostProcessingPassDelegate::CreateRaw(this, &ToonRayTracerViewExtension::RenderToonRayTracingPass));
 	}
 }
 
-// レイトレーシングのメイン描画処理
 FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& Inputs)
+{
+	return RenderToonRayTracing(GraphBuilder, View, Inputs, false);
+}
+
+FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPassBeforeTSR(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& Inputs)
+{
+	return RenderToonRayTracing(GraphBuilder, View, Inputs, true);
+}
+
+// レイトレーシングのメイン描画処理
+// bBeforeTSR が true なら TSR の前（描画解像度、トーンマップ前の HDR）、false ならトーンマップの後（出力解像度）に描く
+FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& Inputs, bool bBeforeTSR)
 {
 	// 動作確認用のログ出力
 	static bool bHasLogged = false;
@@ -866,7 +907,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const uint32 SamplesPerPixel = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerSamplesPerPixel.GetValueOnRenderThread(), 1, 64));
 	const uint32 ShadingMode = static_cast<uint32>(CVarToonRayTracerShadingMode.GetValueOnRenderThread());
 	const uint32 MaxDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerMaxDepth.GetValueOnRenderThread(), 1, 50));
-	const bool bAccumulate = CVarToonRayTracerAccumulate.GetValueOnRenderThread() != 0;
+	// TSR の前に描く場合は、フレームをまたいだ平均を TSR に任せるため、自前の蓄積と動きの判定はしない
+	const bool bAccumulate = !bBeforeTSR && CVarToonRayTracerAccumulate.GetValueOnRenderThread() != 0;
 
 	// 通常描画の GBuffer（法線、ベースカラー、深度）。取得できない場合（モバイルなど）は使わない
 	const FSceneTextureUniformParameters* SceneTextureParameters =
@@ -880,7 +922,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const float ReflectionNormalSmoothing = FMath::Max(CVarToonRayTracerReflectionNormalSmoothing.GetValueOnRenderThread(), 0.0f);
 	const float MetalRoughnessThreshold = FMath::Clamp(CVarToonRayTracerMetalRoughnessThreshold.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const uint32 MaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
-	const bool bDetectMotion = bHasGBuffer && CVarToonRayTracerDetectMotion.GetValueOnRenderThread() != 0;
+	const bool bDetectMotion = !bBeforeTSR && bHasGBuffer && CVarToonRayTracerDetectMotion.GetValueOnRenderThread() != 0;
 	const bool bSkipMaskedSurfaces = bHasGBuffer && CVarToonRayTracerSkipMaskedSurfaces.GetValueOnRenderThread() != 0;
 	const uint32 MotionMaxAccumulatedFrames = static_cast<uint32>(FMath::Max(CVarToonRayTracerMotionMaxAccumulatedFrames.GetValueOnRenderThread(), 1));
 	const FIntPoint ViewRectSize = Output.ViewRect.Size();
@@ -889,7 +931,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	// （ジッターは毎フレーム変わるため、含めると蓄積が毎フレームリセットされてしまう。AA は自前のサンプリングで行う）
 	const FMatrix& WorldToView = View.ViewMatrices.GetWorldToView();
 	const FMatrix& ViewToClipNoAA = View.ViewMatrices.GetViewToClipNoAA();
-	const FMatrix ClipToTranslatedWorldNoAA = (View.ViewMatrices.GetTranslatedViewMatrix() * ViewToClipNoAA).Inverse();
+	// TSR の前に描く場合は、GBuffer と同じジッターを含む行列でレイを作る（TSR はジッターしたピクセル中心の値を前提にしている）
+	const FMatrix& ViewToClipForRays = bBeforeTSR ? View.ViewMatrices.GetProjectionMatrix() : ViewToClipNoAA;
+	const FMatrix TranslatedWorldToClipForRays = View.ViewMatrices.GetTranslatedViewMatrix() * ViewToClipForRays;
 
 	// フレームをまたいだ蓄積（カメラか設定が変わったらリセット）
 	// ビューの状態を持たないビュー（サムネイル描画など）では蓄積しない
@@ -1094,6 +1138,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(Output.Texture);
 	PassParameters->SceneColorTexture = SceneColor.Texture;
 	PassParameters->bToonCharacterOnly = bToonCharacterOnly ? 1u : 0u;
+	PassParameters->bBeforeTSR = bBeforeTSR ? 1u : 0u;
+	PassParameters->bToonInverseTonemap = CVarToonRayTracerToonInverseTonemap.GetValueOnRenderThread() != 0 ? 1u : 0u;
+	PassParameters->ToonEyeAdaptationExposure = View.GetLastEyeAdaptationExposure();
+	PassParameters->View = View.ViewUniformBuffer;
 	PassParameters->AccumulationTexture = GraphBuilder.CreateUAV(AccumulationTexture);
 	PassParameters->AccumulatedFrames = AccumulatedFrames;
 	PassParameters->MaxAccumulatedFrames = MaxAccumulatedFrames;
@@ -1188,8 +1236,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		: SamplesPerPixel;
 	PassParameters->ShadingMode = ShadingMode;
 	PassParameters->MaxDepth = MaxDepth;
-	PassParameters->ClipToTranslatedWorld = FMatrix44f(ClipToTranslatedWorldNoAA);
-	PassParameters->TranslatedWorldToClip = FMatrix44f(View.ViewMatrices.GetTranslatedViewMatrix() * ViewToClipNoAA);
+	PassParameters->ClipToTranslatedWorld = FMatrix44f(TranslatedWorldToClipForRays.Inverse());
+	PassParameters->TranslatedWorldToClip = FMatrix44f(TranslatedWorldToClipForRays);
 	PassParameters->ViewRectMin = Output.ViewRect.Min;
 	PassParameters->ViewRectSize = ViewRectSize;
 

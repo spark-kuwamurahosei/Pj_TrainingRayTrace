@@ -7,6 +7,7 @@
 #include "RayTracingPayloadType.h"
 #include "ShaderParameterStruct.h"
 #include "SceneUniformBuffer.h"
+#include "SceneView.h"
 
 // 汎用化 G4：物体ごとの代表色のハッシュ表（ToonObjectColorTable.ush と一致させる）
 namespace ToonObjectColorTable
@@ -48,6 +49,13 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneColorTexture)
 		// 1 なら、トゥーンで塗るのはキャラクター（スケルタルメッシュ）だけにする
 		SHADER_PARAMETER(uint32, bToonCharacterOnly)
+		// 1 なら、TSR の前（描画解像度、トーンマップ前）に描く
+		SHADER_PARAMETER(uint32, bBeforeTSR)
+		// TSR の前に描くとき、トーンマップを打ち消すか。トーンマップで掛かる露出
+		SHADER_PARAMETER(uint32, bToonInverseTonemap)
+		SHADER_PARAMETER(float, ToonEyeAdaptationExposure)
+		// ビューの情報（トーンマップを打ち消すときに PreExposure を使う）
+		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		// フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, AccumulationTexture)
 		// AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）
