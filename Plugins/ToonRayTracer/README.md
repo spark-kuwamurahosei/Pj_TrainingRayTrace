@@ -93,6 +93,9 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
 | `Skin` | 1 | UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面を肌とし、下の肌用の境目と影色で塗る。顔のマテリアルのシェーディングモデルをこれらにして使う |
 | `SkinShadowThreshold` | -0.3 | 肌の影との境目の N・L。`ShadowThreshold` より下げると、顔に細かい影が入りにくくなる |
 | `SkinShadowColor` | `0.75,0.5,0.5` | 肌の影色（線形の R,G,B）。赤みのある影にする。メッシュごとの影色（Custom Primitive Data）より優先する |
+| `CharacterRimStrength` | 1.5 | キャラクターのリムライトの強さ。画面上で光源の方向へ `CharacterRimWidth` ずらした位置が十分奥（背景や空）なら、光源の側の輪郭とみなし、素材の色 × ライトの色で明るい縁を加える。面の向きではなく深度の差で判定するため、縁の幅が一定になる。0 なら入れない |
+| `CharacterRimWidth` | 2.5 | キャラクターのリムライトの幅（ピクセル） |
+| `CharacterOutlineColorScale` | 0.25 | キャラクターの線を、黒ではなく素材の色にこの値を掛けた色にする（色つきの線）。0 なら `OutlineColor` |
 | `Bands` | 2 | 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） |
 | `ShadowThreshold` | 0.0 | 影との境目の N・L（-1 ～ 1）。上げると影が広がる |
 | `LitThreshold` | 0.5 | 中間と明るい面の境目の N・L（Bands が 3 のとき） |

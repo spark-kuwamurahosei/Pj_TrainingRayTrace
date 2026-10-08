@@ -151,6 +151,12 @@ uint bToonCharacterSelfShadow;
 uint bToonSkin;
 float ToonSkinShadowThreshold;
 float3 ToonSkinShadowColor;
+// 鳴潮風ルック フェーズ2：キャラクターのリムライトと線の色
+// ・リムライト：光源の側の輪郭に、一定の幅（ピクセル）で明るい縁を入れる強さ
+// ・線の色：キャラクターの線を、黒ではなく素材の色を暗くした色にする倍率（0 なら全体の線の色）
+float ToonCharacterRimStrength;
+float ToonCharacterRimWidth;
+float ToonCharacterOutlineColorScale;
 // シャドウレイの始点をずらす量の倍率（強さ × 揺れの大きさ × この値 cm だけずらす）
 // 大きすぎるとずれの変化がノイズの模様より急になり、境目が折り返して点々になる
 #define TOON_SHADOW_NOISE_OFFSET_SCALE 2.0f
@@ -2145,6 +2151,53 @@ struct FToonPendingRay
 // 金属やガラスに当たったら、反射・屈折の先も同じトゥーンの陰影で描く（様式化された反射）
 // ノイズを出さないため、金属のぼけは使わずくっきりした鏡面反射にし、ガラスは反射と屈折をフレネル反射率で混ぜる
 // GBuffer の滑らかな法線とアウトラインは、カメラから直接見えている面にだけ使う
+// 鳴潮風ルック フェーズ2：キャラクターのリムライト（0 ～ 1）
+// 画面上で光源の方向へ ToonCharacterRimWidth ピクセルずらした位置の深度を GBuffer から読み、
+// 自分より十分奥（背景や空）なら、そこは光源の側の輪郭とみなして明るい縁を入れる
+// 面の向き（N・V）ではなく画面上の深度の差で判定するため、縁の幅が一定になり、法線のばらつきでまだらにならない
+#define TOON_CHARACTER_RIM_DEPTH_GAP 10.0f		// 奥とみなす深度の差（cm）
+#define TOON_CHARACTER_RIM_PROBE_LENGTH 10.0f	// 光源の方向を画面に投影するための長さ（cm）
+float ToonCharacterRim(float2 UV, FToonHitRecord Rec)
+{
+	if (ToonCharacterRimStrength <= 0.0f || ToonCharacterRimWidth <= 0.0f || bHasDirectionalLight == 0 || TraceMode == 0)
+	{
+		return 0.0f;
+	}
+
+	// 光源の方向を画面上の向き（ピクセル）にする。光源がカメラの真正面や真後ろで、画面上の向きが決まらなければ縁は入れない
+	float4 ClipPosition = mul(float4(Rec.Position, 1.0f), TranslatedWorldToClip);
+	float4 ClipLight = mul(float4(Rec.Position + ToLightDirection * TOON_CHARACTER_RIM_PROBE_LENGTH, 1.0f), TranslatedWorldToClip);
+	if (ClipPosition.w <= 0.0f || ClipLight.w <= 0.0f)
+	{
+		return 0.0f;
+	}
+	float2 NDCDelta = ClipLight.xy / ClipLight.w - ClipPosition.xy / ClipPosition.w;
+	// NDC は上向き +、UV は下向き + なので y を反転し、UV の差をピクセルに換算する
+	float2 PixelDelta = float2(NDCDelta.x, -NDCDelta.y) * 0.5f * (float2)ViewRectSize;
+	float PixelLength = length(PixelDelta);
+	if (PixelLength < 1.0e-3f)
+	{
+		return 0.0f;
+	}
+
+	float2 SampleUV = UV + PixelDelta / PixelLength * ToonCharacterRimWidth / (float2)ViewRectSize;
+	if (any(SampleUV < 0.0f) || any(SampleUV > 1.0f))
+	{
+		return 0.0f;
+	}
+
+	// Reversed-Z のため 0 は何も描かれていない（空）
+	float DeviceZ = SceneDepthTexture.Load(int3(GetGBufferPixel(SampleUV), 0)).r;
+	if (DeviceZ <= 0.0f)
+	{
+		return 1.0f;
+	}
+	// Translated World 空間の原点はカメラの位置なので、位置の長さがカメラからの距離になる
+	float4 SampleClipPosition = mul(float4(UVToNDC(SampleUV), DeviceZ, 1.0f), ClipToTranslatedWorld);
+	float SampleDistance = length(SampleClipPosition.xyz / SampleClipPosition.w);
+	return SampleDistance - length(Rec.Position) > TOON_CHARACTER_RIM_DEPTH_GAP ? 1.0f : 0.0f;
+}
+
 float3 RayColorToon(float2 UV, FToonRay CameraRay)
 {
 	FToonPendingRay Pending[TOON_MAX_PENDING_RAYS];
@@ -2155,6 +2208,9 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 
 	float3 Color = 0.0f;
 	float Outline = 0.0f;
+	// 鳴潮風ルック フェーズ2：キャラクターでは、線の色を素材の色を暗くした色にし、リムライトを加える
+	float3 OutlineColor = ToonOutlineColor;
+	float3 CharacterRim = 0.0f;
 
 	// 1本のレイから最大2本に分かれるため、処理するレイの総数にも上限を設ける
 	[loop]
@@ -2202,6 +2258,16 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 					bOutlineHit = HitWorld(Current.Ray, 0.0f, 1.0e8f, OutlineRec, false);
 				}
 				Outline = bOutlineHit ? ToonOutline(UV, Current.Ray, OutlineRec) : 0.0f;
+			}
+
+			// 鳴潮風ルック フェーズ2：キャラクターの線の色とリムライト（どちらも素材の色に合わせる）
+			if (Rec.Material.bCharacter != 0)
+			{
+				if (ToonCharacterOutlineColorScale > 0.0f)
+				{
+					OutlineColor = Rec.Material.Albedo * ToonCharacterOutlineColorScale;
+				}
+				CharacterRim = Rec.Material.Albedo * ToonLightColor * (ToonCharacterRimStrength * ToonCharacterRim(UV, Rec));
 			}
 		}
 		else
@@ -2328,7 +2394,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 		}
 	}
 
-	return lerp(Color, ToonOutlineColor, Outline);
+	return lerp(Color + CharacterRim, OutlineColor, Outline);
 }
 
 float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)

@@ -120,6 +120,9 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	bSkin = true;
 	SkinShadowThreshold = -0.3f;
 	SkinShadowColor = FLinearColor(0.75f, 0.5f, 0.5f);
+	CharacterRimStrength = 1.5f;
+	CharacterRimWidth = 2.5f;
+	CharacterOutlineColorScale = 0.25f;
 	ShadowThreshold = 0.0f;
 	LitThreshold = 0.5f;
 	EdgeSoftness = 0.02f;
@@ -171,6 +174,9 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetBool(TEXT("r.ToonRayTracer.Toon.Skin"), bSkin);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SkinShadowThreshold"), SkinShadowThreshold);
 	SetColor(TEXT("r.ToonRayTracer.Toon.SkinShadowColor"), SkinShadowColor);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"), CharacterRimStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"), CharacterRimWidth);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"), CharacterOutlineColorScale);
 	SetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);
@@ -223,6 +229,9 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetBool(TEXT("r.ToonRayTracer.Toon.Skin"), bSkin);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SkinShadowThreshold"), SkinShadowThreshold);
 	GetColor(TEXT("r.ToonRayTracer.Toon.SkinShadowColor"), SkinShadowColor);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"), CharacterRimStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"), CharacterRimWidth);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"), CharacterOutlineColorScale);
 	GetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);

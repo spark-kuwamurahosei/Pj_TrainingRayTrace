@@ -173,6 +173,10 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, bToonSkin)
 		SHADER_PARAMETER(float, ToonSkinShadowThreshold)
 		SHADER_PARAMETER(FVector3f, ToonSkinShadowColor)
+		// 鳴潮風ルック フェーズ2：キャラクターのリムライトの強さと幅（ピクセル）、線の色の倍率
+		SHADER_PARAMETER(float, ToonCharacterRimStrength)
+		SHADER_PARAMETER(float, ToonCharacterRimWidth)
+		SHADER_PARAMETER(float, ToonCharacterOutlineColorScale)
 		// Translated World 空間の原点のワールド座標（メッシュのローカル座標を求めるため、double を High と Low に分けたもの）
 		SHADER_PARAMETER(FVector3f, PreViewTranslationHigh)
 		SHADER_PARAMETER(FVector3f, PreViewTranslationLow)
