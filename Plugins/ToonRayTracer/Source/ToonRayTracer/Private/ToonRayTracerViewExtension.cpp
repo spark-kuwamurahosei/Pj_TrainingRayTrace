@@ -229,6 +229,31 @@ namespace
 		TEXT("Number of cosine-weighted rays per shading point for the toon bounce light (1-16)"),
 		ECVF_RenderThreadSafe);
 
+	// 眉毛の透け：前髪の奥にある眉毛などのパーツ（Custom Primitive Data の [13] で指定）を、髪の上に見せる
+	TAutoConsoleVariable<float> CVarToonRayTracerToonSeeThroughOpacity(
+		TEXT("r.ToonRayTracer.Toon.SeeThroughOpacity"),
+		0.25f,
+		TEXT("Opacity of the parts (e.g. eyebrows) shown through the character's hair. The parts are selected by SeeThroughSlotMask, or per mesh by Custom Primitive Data [13]. 0: off"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonSeeThroughSlotMask(
+		TEXT("r.ToonRayTracer.Toon.SeeThroughSlotMask"),
+		16,
+		TEXT("Bit mask of the material slots shown through the character's hair (slot n: 2^n, e.g. 16 for slot 4). Custom Primitive Data [13] overrides it per mesh. 0: none"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonSeeThroughBrightness(
+		TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"),
+		0.5f,
+		TEXT("Brightness multiplier of the hair color where the parts are shown through it (0: black, 1: unchanged)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonSeeThroughDistance(
+		TEXT("r.ToonRayTracer.Toon.SeeThroughDistance"),
+		20.0f,
+		TEXT("Maximum distance (cm) behind the hair to look for the parts shown through it"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonSoftShadowSteps(
 		TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"),
 		1,
@@ -442,6 +467,13 @@ namespace
 		TEXT("r.ToonRayTracer.Debug.LogPasses"),
 		0,
 		TEXT("Log every toon ray tracing pass with its view (frame, view rect, capture flags) to find extra views rendered per frame"),
+		ECVF_RenderThreadSafe);
+
+	// 確認用：カメラのレイが当たった面のジオメトリ番号（スケルタルメッシュではマテリアルスロット）を色で表示する
+	TAutoConsoleVariable<int32> CVarToonRayTracerDebugGeometry(
+		TEXT("r.ToonRayTracer.Debug.Geometry"),
+		0,
+		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result"),
 		ECVF_RenderThreadSafe);
 
 	// この数のフレームで使われなかったビューの蓄積状態は破棄する
@@ -1039,6 +1071,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonCharacterRimStrength = FMath::Max(CVarToonRayTracerToonCharacterRimStrength.GetValueOnRenderThread(), 0.0f);
 	const float ToonCharacterRimWidth = FMath::Max(CVarToonRayTracerToonCharacterRimWidth.GetValueOnRenderThread(), 0.0f);
 	const float ToonCharacterOutlineColorScale = FMath::Max(CVarToonRayTracerToonCharacterOutlineColorScale.GetValueOnRenderThread(), 0.0f);
+	const float ToonSeeThroughOpacity = FMath::Clamp(CVarToonRayTracerToonSeeThroughOpacity.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonSeeThroughBrightness = FMath::Clamp(CVarToonRayTracerToonSeeThroughBrightness.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonSeeThroughDistance = FMath::Max(CVarToonRayTracerToonSeeThroughDistance.GetValueOnRenderThread(), 0.0f);
+	const uint32 ToonSeeThroughSlotMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonSeeThroughSlotMask.GetValueOnRenderThread(), 0));
 	const float ToonLightScale = FMath::Max(CVarToonRayTracerToonLightScale.GetValueOnRenderThread(), 0.0f);
 	const float ToonSkyTint = FMath::Clamp(CVarToonRayTracerToonSkyTint.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const bool bToonCastShadows = CVarToonRayTracerToonCastShadows.GetValueOnRenderThread() != 0;
@@ -1076,7 +1112,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const uint32 ToonOutlineHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
-			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), GetTypeHash(ToonCharacterOutlineColorScale)))));
+			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
+				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask))))))));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), HashCombine(GetTypeHash(SamplesPerPixel), GetTypeHash(bStratifiedSampling))), HashCombine(HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth)), GetTypeHash(ScatterSampling))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
@@ -1306,6 +1343,11 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonCharacterRimStrength = ToonCharacterRimStrength;
 	PassParameters->ToonCharacterRimWidth = ToonCharacterRimWidth;
 	PassParameters->ToonCharacterOutlineColorScale = ToonCharacterOutlineColorScale;
+	PassParameters->ToonSeeThroughOpacity = ToonSeeThroughOpacity;
+	PassParameters->ToonSeeThroughBrightness = ToonSeeThroughBrightness;
+	PassParameters->ToonSeeThroughDistance = ToonSeeThroughDistance;
+	PassParameters->ToonSeeThroughSlotMask = ToonSeeThroughSlotMask;
+	PassParameters->bToonDebugGeometry = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerDebugGeometry.GetValueOnRenderThread(), 0, 2));
 	{
 		// double のワールド座標を float 2 つ（上位と下位）に分けて渡す（シェーダー側で MakeDFVector3 に戻す）
 		const FVector PreViewTranslationForNoise = View.ViewMatrices.GetPreViewTranslation();
