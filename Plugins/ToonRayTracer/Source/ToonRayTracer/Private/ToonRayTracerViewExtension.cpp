@@ -21,6 +21,8 @@
 
 // stat gpu に「ToonRayTracer」として GPU 時間を表示する
 DECLARE_GPU_STAT(ToonRayTracer);
+// 負荷の確認用：上のうちレイトレーシング本体（RayGen）だけの時間
+DECLARE_GPU_STAT(ToonRayTracerRayGen);
 
 namespace
 {
@@ -433,6 +435,13 @@ namespace
 		TEXT("r.ToonRayTracer.Debug.Motion"),
 		0,
 		TEXT("Debug view of accumulation resets. White: camera/settings, red: moving object, green: depth change, blue: signature change. Also logs the reason of full resets"),
+		ECVF_RenderThreadSafe);
+
+	// 負荷の確認用：パスが呼ばれるたびに、どのビューで何回描いているかをログに出す
+	TAutoConsoleVariable<int32> CVarToonRayTracerDebugLogPasses(
+		TEXT("r.ToonRayTracer.Debug.LogPasses"),
+		0,
+		TEXT("Log every toon ray tracing pass with its view (frame, view rect, capture flags) to find extra views rendered per frame"),
 		ECVF_RenderThreadSafe);
 
 	// この数のフレームで使われなかったビューの蓄積状態は破棄する
@@ -962,6 +971,15 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	// 現在の画面の情報を取得
 	FScreenPassTexture SceneColor = (FScreenPassTexture)Inputs.GetInput(EPostProcessMaterialInput::SceneColor);
 
+	if (CVarToonRayTracerDebugLogPasses.GetValueOnRenderThread() != 0)
+	{
+		const FIntRect& Rect = SceneColor.ViewRect;
+		UE_LOG(LogTemp, Log, TEXT("[ToonRayTracer] Pass frame=%u view=%p state=%p rect=%dx%d beforeTSR=%d sceneCapture=%d reflectionCapture=%d planarReflection=%d gameView=%d realtime=%d"),
+			View.Family->FrameNumber, &View, View.State, Rect.Width(), Rect.Height(), bBeforeTSR ? 1 : 0,
+			View.bIsSceneCapture ? 1 : 0, View.bIsReflectionCapture ? 1 : 0, View.bIsPlanarReflection ? 1 : 0,
+			View.bIsGameView ? 1 : 0, View.Family->bRealtimeUpdate ? 1 : 0);
+	}
+
 	FRDGTextureDesc OutputDesc = SceneColor.Texture->Desc;
 	OutputDesc.Flags |= ETextureCreateFlags::UAV;
 
@@ -1455,6 +1473,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	FShaderBindingTableRHIRef SBT = GraphBuilder.RHICmdList.CreateRayTracingShaderBindingTable(SBTInitializer);
 
 	// RDGにレイトレーシング用のパスを登録してディスパッチ
+	{
+	RDG_EVENT_SCOPE_STAT(GraphBuilder, ToonRayTracerRayGen, "ToonRayTracerRayGen");
 	GraphBuilder.AddPass(
 		RDG_EVENT_NAME("ToonRayTracing_RayGen %dx%d", Resolution.X, Resolution.Y),
 		PassParameters,
@@ -1479,6 +1499,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 			);
 		}
 	);
+	}
 
 	// 汎用化 G4：このフレームに見えた色の合計から物体ごとの平均色を求め、代表色の表を更新する
 	{
