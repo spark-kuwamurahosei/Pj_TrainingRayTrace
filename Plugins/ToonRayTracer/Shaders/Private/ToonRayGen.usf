@@ -142,9 +142,15 @@ float ToonShadowBias;
 // Perlin ノイズの応用：影の境目を手描き風に揺らす強さ（0 なら揺らさない）と、揺れの大きさ（cm）
 float ToonShadowNoiseStrength;
 float ToonShadowNoiseSize;
-// 鳴潮風ルック フェーズ2：キャラクターの服のまだらな影を抑える
-// キャラクターの面からのシャドウレイは、この距離（cm）までの遮りを無視する（服のシワなどの細かい影を消す）
-float ToonCharacterSelfShadowDistance;
+// 鳴潮風ルック フェーズ2：0 なら、キャラクターは自分自身の影を受けない（ほかの物体の影だけ受ける）
+// 服のシワや重なりのまだらな影、前髪や頭が顔に落とす影が消える
+uint bToonCharacterSelfShadow;
+// 鳴潮風ルック フェーズ2：肌（顔）の塗り
+// UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面を肌とし、
+// 影との境目の N・L と影色を肌用の値にする（顔に細かい影が入りにくく、影は赤みのある色にする）
+uint bToonSkin;
+float ToonSkinShadowThreshold;
+float3 ToonSkinShadowColor;
 // シャドウレイの始点をずらす量の倍率（強さ × 揺れの大きさ × この値 cm だけずらす）
 // 大きすぎるとずれの変化がノイズの模様より急になり、境目が折り返して点々になる
 #define TOON_SHADOW_NOISE_OFFSET_SCALE 2.0f
@@ -285,6 +291,8 @@ struct FToonMaterial
 	float Density;
 	// 鳴潮風ルック：キャラクター（スケルタルメッシュか、Custom Primitive Data の [12] が正の値）なら 1
 	uint bCharacter;
+	// 鳴潮風ルック：肌（UE のマテリアルのシェーディングモデルで判定）なら 1
+	uint bSkin;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -302,6 +310,7 @@ FToonMaterial GetDefaultMaterial()
 	Material.OutlineWidth = ToonOutlineWidth;
 	Material.Density = 0.0f;
 	Material.bCharacter = 0;
+	Material.bSkin = 0;
 	return Material;
 }
 
@@ -1333,6 +1342,11 @@ bool HitCameraVisible(FToonRay Ray, float2 UV, inout FToonHitRecord Rec, bool bC
 	return HitAnything(Ray, TMin, Rec, 0.0f, bComputeNormal);
 }
 
+// 肌として扱うシェーディングモデル（Engine/Shaders/Private/ShadingCommon.ush の SHADINGMODELID_*）
+#define TOON_SHADINGMODELID_SUBSURFACE			2
+#define TOON_SHADINGMODELID_PREINTEGRATED_SKIN	3
+#define TOON_SHADINGMODELID_SUBSURFACE_PROFILE	5
+
 // GBuffer のピクセルから、マテリアルの色と金属の判定を読んで Rec に反映する
 // ・汎用化 G1：Custom Primitive Data でマテリアルを指定していないメッシュは、素材の色を GBuffer のベースカラー
 //   （UE のマテリアルのテクスチャの色）にする。メッシュごとの設定なしで、UE のマテリアルの色がトゥーンの塗りに使われる
@@ -1343,6 +1357,15 @@ void ApplyGBufferMaterial(int2 GBufferPixel, inout FToonHitRecord Rec)
 	if (Rec.Material.Type != TOON_MATERIAL_DEFAULT)
 	{
 		return;
+	}
+
+	// 鳴潮風ルック フェーズ2：肌の判定。GBufferB の a の下位 4 ビットにシェーディングモデルが入っている（DecodeShadingModelId）
+	if (bToonSkin != 0)
+	{
+		uint ShadingModelId = ((uint)round(GBufferBTexture.Load(int3(GBufferPixel, 0)).a * 255.0f)) & 0xF;
+		Rec.Material.bSkin = (ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE
+			|| ShadingModelId == TOON_SHADINGMODELID_PREINTEGRATED_SKIN
+			|| ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE_PROFILE) ? 1u : 0u;
 	}
 
 	// GBufferC の rgb にはベースカラーが入っている（DeferredShadingCommon の DecodeBaseColor）
@@ -1799,8 +1822,7 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 // トゥーン T3：Origin から光源の方向へシャドウレイを飛ばし、光が届くかどうかを返す
 // 「何かに当たったか」だけ分かればよいので、最初の交差で打ち切り、ClosestHit も呼ばない
 // bIgnoreBackFaces が true なら、裏から当たった面を無視する（シャドウターミネーター問題の対策）
-// TMin より手前の遮りは無視する（キャラクターの自分の細かい影を消すために使う）
-bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces, float TMin = TOON_RAY_TMIN)
+bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
 {
 	FToonRay ShadowRay;
 	ShadowRay.Origin = Origin;
@@ -1816,7 +1838,7 @@ bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces, float TMin = TOON_RAY_
 	RayDesc Desc;
 	Desc.Origin = ShadowRay.Origin;
 	Desc.Direction = ShadowRay.Direction;
-	Desc.TMin = TMin;
+	Desc.TMin = TOON_RAY_TMIN;
 	Desc.TMax = RAY_DEFAULT_T_MAX;
 
 	// ClosestHit を呼ばないため、ペイロードは「当たった」で初期化しておき、Miss シェーダーが呼ばれたときだけ書き換わる
@@ -1838,6 +1860,34 @@ bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces, float TMin = TOON_RAY_
 		Payload);
 
 	return Payload.IsMiss();
+}
+
+// 鳴潮風ルック フェーズ2：自分自身（IgnoreObjectId の物体）を通り抜けるシャドウレイ
+// 最も近い交差を求め、自分自身なら、その先から飛ばし直す（自分の影を受けず、ほかの物体の影だけ受ける）
+// 通り抜ける回数には上限を設け、超えたら光が届くとみなす
+#define TOON_MAX_SELF_SHADOW_SKIPS 8
+bool IsLightVisibleIgnoringObject(float3 Origin, uint IgnoreObjectId)
+{
+	FToonRay ShadowRay;
+	ShadowRay.Origin = Origin;
+	ShadowRay.Direction = ToLightDirection;
+
+	float TMin = TOON_RAY_TMIN;
+	[loop]
+	for (uint Skip = 0; Skip < TOON_MAX_SELF_SHADOW_SKIPS; ++Skip)
+	{
+		FDefaultPayload Payload;
+		if (!TraceScene(ShadowRay, TMin, Payload))
+		{
+			return true;
+		}
+		if (Payload.InstanceID != IgnoreObjectId)
+		{
+			return false;
+		}
+		TMin = Payload.HitT + TOON_RAY_TMIN;
+	}
+	return true;
 }
 
 // トゥーン T6：アウトライン
@@ -1959,6 +2009,13 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal)
 		ShadowOffset = Shift * (ToonShadowNoiseStrength * NoiseSize * TOON_SHADOW_NOISE_OFFSET_SCALE);
 	}
 
+	// 鳴潮風ルック フェーズ2：肌は影との境目を肌用の値にする（N・L をずらして、全体の境目の位置に合わせる）
+	// 3 段階のときは、中間と明るい面の境目も同じだけずれる
+	if (Rec.Material.bSkin != 0)
+	{
+		NdotL += ToonShadowThreshold - ToonSkinShadowThreshold;
+	}
+
 	float LightLevel = ToonLightLevel(NdotL);
 
 	// 始点を実際の面の向きへ少し浮かせ、滑らかな法線とポリゴンの向きのずれによる自己遮蔽（黒い斑点）を防ぐ
@@ -1988,10 +2045,13 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal)
 		// そういう点だけ裏面を無視し、自分のメッシュを通り抜けさせる（表から当たる本当の自己影は残る）
 		bool bGeometryFacesAwayFromLight = dot(GeometricNormal, ToLightDirection) <= 0.0f;
 
-		// 鳴潮風ルック フェーズ2：キャラクターは、面のすぐ近くの遮り（服のシワや重なりの細かい影）を無視する
-		// 腕が胴に落とす影など、離れた位置からの大きな影は残る
-		float ShadowTMin = Rec.Material.bCharacter != 0 ? max(ToonCharacterSelfShadowDistance, TOON_RAY_TMIN) : TOON_RAY_TMIN;
-		if (!IsLightVisible(ShadowOrigin, bGeometryFacesAwayFromLight, ShadowTMin))
+		// 鳴潮風ルック フェーズ2：キャラクターは自分自身の影を受けない（服のまだらな影や、顔に落ちる前髪・頭の影を消す）
+		// 近くの遮りだけ無視する方法では、レイが自分の体を通り抜けて反対側の髪や袖に当たり、かえって影が出るため、
+		// 自分自身はすべて通り抜け、ほかの物体（背景や小物）の影だけ受ける
+		bool bLightVisible = Rec.Material.bCharacter != 0 && bToonCharacterSelfShadow == 0
+			? IsLightVisibleIgnoringObject(ShadowOrigin, Rec.ObjectId)
+			: IsLightVisible(ShadowOrigin, bGeometryFacesAwayFromLight);
+		if (!bLightVisible)
 		{
 			LightLevel = 0.0f;
 		}
@@ -2043,7 +2103,9 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
 {
 	float3 Albedo = Rec.Material.Albedo;
 	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
-	float3 ShadowTint = Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : ToonShadowColor;
+	// 鳴潮風ルック フェーズ2：肌は肌用の影色（赤みのある色）にする
+	float3 ShadowTint = Rec.Material.bSkin != 0 ? ToonSkinShadowColor
+		: (Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : ToonShadowColor);
 
 	float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal);
 	float3 Color = lerp(Albedo * ShadowTint, Albedo * ToonLightColor, LightLevel);

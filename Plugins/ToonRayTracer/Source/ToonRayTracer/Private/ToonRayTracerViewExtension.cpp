@@ -108,6 +108,27 @@ namespace
 
 	const FLinearColor DefaultToonShadowColor(0.35f, 0.4f, 0.6f);
 
+	// 鳴潮風ルック フェーズ2：肌（UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面）の塗り
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonSkin(
+		TEXT("r.ToonRayTracer.Toon.Skin"),
+		1,
+		TEXT("Treat surfaces whose shading model is Subsurface, Preintegrated Skin or Subsurface Profile as skin, using SkinShadowThreshold and SkinShadowColor"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonSkinShadowThreshold(
+		TEXT("r.ToonRayTracer.Toon.SkinShadowThreshold"),
+		-0.3f,
+		TEXT("N dot L at the shadow boundary for skin. Lower than ShadowThreshold keeps faces lit with fewer small shadows"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonSkinShadowColor(
+		TEXT("r.ToonRayTracer.Toon.SkinShadowColor"),
+		TEXT("0.75,0.5,0.5"),
+		TEXT("Linear RGB tint multiplied with the skin color in shadow bands, as \"R,G,B\""),
+		ECVF_Default);
+
+	const FLinearColor DefaultToonSkinShadowColor(0.75f, 0.5f, 0.5f);
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonLightScale(
 		TEXT("r.ToonRayTracer.Toon.LightScale"),
 		1.0f,
@@ -140,11 +161,11 @@ namespace
 		TEXT("Size (cm) of the shadow boundary wobble. Computed in mesh local space with the mesh scale applied, so the pattern sticks to the mesh"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮風ルック フェーズ2：キャラクターの服のまだらな影を抑える
-	TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterSelfShadowDistance(
-		TEXT("r.ToonRayTracer.Toon.CharacterSelfShadowDistance"),
-		15.0f,
-		TEXT("Shadow rays from characters ignore occluders closer than this distance (cm), removing small self shadows such as cloth wrinkles (0: off)"),
+	// 鳴潮風ルック フェーズ2：キャラクターが自分自身の影を受けるか（0 なら、服のまだらな影や顔に落ちる前髪の影が消える）
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterSelfShadow(
+		TEXT("r.ToonRayTracer.Toon.CharacterSelfShadow"),
+		0,
+		TEXT("Characters receive their own shadows. When 0, shadow rays from characters pass through the character itself and only other objects cast shadows on them"),
 		ECVF_RenderThreadSafe);
 
 	// トゥーン T5：ハイライトとリムライト
@@ -727,6 +748,7 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	// 文字列型のコンソール変数もゲームスレッドでしか読めないため、ここで色に変換して一緒に渡す
 	const FLinearColor ShadowColor = ParseLinearColor(CVarToonRayTracerToonShadowColor.GetValueOnGameThread(), DefaultToonShadowColor);
 	const FLinearColor OutlineColor = ParseLinearColor(CVarToonRayTracerToonOutlineColor.GetValueOnGameThread(), DefaultToonOutlineColor);
+	const FLinearColor SkinShadowColor = ParseLinearColor(CVarToonRayTracerToonSkinShadowColor.GetValueOnGameThread(), DefaultToonSkinShadowColor);
 
 	// 『The Next Week』第4章：球に貼る画像のアセットは、パスが変わったときだけ読み込む（見つからなければ何度も試さない）
 	const FString Path = CVarToonRayTracerImageTexture.GetValueOnGameThread();
@@ -749,10 +771,11 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	FTextureResource* ImageResource = ImageTexture.IsValid() ? ImageTexture->GetResource() : nullptr;
 
 	ENQUEUE_RENDER_COMMAND(ToonRayTracerUpdateGameThreadState)(
-		[this, Light, ShadowColor, OutlineColor, ImageResource](FRHICommandListImmediate&)
+		[this, Light, ShadowColor, OutlineColor, SkinShadowColor, ImageResource](FRHICommandListImmediate&)
 		{
 			DirectionalLight_RenderThread = Light;
 			ToonShadowColor_RenderThread = ShadowColor;
+			ToonSkinShadowColor_RenderThread = SkinShadowColor;
 			ToonOutlineColor_RenderThread = OutlineColor;
 			ImageTextureResource_RenderThread = ImageResource;
 		});
@@ -859,12 +882,15 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	const float ToonLitThreshold = CVarToonRayTracerToonLitThreshold.GetValueOnRenderThread();
 	const float ToonEdgeSoftness = FMath::Max(CVarToonRayTracerToonEdgeSoftness.GetValueOnRenderThread(), 0.0f);
 	const FLinearColor ToonShadowColor = ToonShadowColor_RenderThread;
+	const bool bToonSkin = CVarToonRayTracerToonSkin.GetValueOnRenderThread() != 0;
+	const float ToonSkinShadowThreshold = CVarToonRayTracerToonSkinShadowThreshold.GetValueOnRenderThread();
+	const FLinearColor ToonSkinShadowColor = ToonSkinShadowColor_RenderThread;
 	const float ToonLightScale = FMath::Max(CVarToonRayTracerToonLightScale.GetValueOnRenderThread(), 0.0f);
 	const bool bToonCastShadows = CVarToonRayTracerToonCastShadows.GetValueOnRenderThread() != 0;
 	const float ToonShadowBias = FMath::Max(CVarToonRayTracerToonShadowBias.GetValueOnRenderThread(), 0.0f);
 	const float ToonShadowNoiseStrength = FMath::Max(CVarToonRayTracerToonShadowNoiseStrength.GetValueOnRenderThread(), 0.0f);
 	const float ToonShadowNoiseSize = FMath::Max(CVarToonRayTracerToonShadowNoiseSize.GetValueOnRenderThread(), 0.1f);
-	const float ToonCharacterSelfShadowDistance = FMath::Max(CVarToonRayTracerToonCharacterSelfShadowDistance.GetValueOnRenderThread(), 0.0f);
+	const bool bToonCharacterSelfShadow = CVarToonRayTracerToonCharacterSelfShadow.GetValueOnRenderThread() != 0;
 	const float ToonHighlightThreshold = CVarToonRayTracerToonHighlightThreshold.GetValueOnRenderThread();
 	const float ToonHighlightStrength = FMath::Clamp(CVarToonRayTracerToonHighlightStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const float ToonRimThreshold = CVarToonRayTracerToonRimThreshold.GetValueOnRenderThread();
@@ -883,7 +909,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 		HashCombine(GetTypeHash(DirectionalLight.Intensity), GetTypeHash(DirectionalLight.bValid)));
 	const uint32 ToonHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(ToonBands), GetTypeHash(ToonShadowThreshold)), HashCombine(GetTypeHash(ToonLitThreshold), GetTypeHash(ToonEdgeSoftness))),
-		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), GetTypeHash(ToonLightScale)), HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), GetTypeHash(ToonCharacterSelfShadowDistance)))));
+		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), GetTypeHash(ToonLightScale)), HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
 	const uint32 ToonHighlightHash = HashCombine(
 		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
@@ -1100,7 +1126,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracingPass(FRDGBuil
 	PassParameters->ToonShadowBias = ToonShadowBias;
 	PassParameters->ToonShadowNoiseStrength = ToonShadowNoiseStrength;
 	PassParameters->ToonShadowNoiseSize = ToonShadowNoiseSize;
-	PassParameters->ToonCharacterSelfShadowDistance = ToonCharacterSelfShadowDistance;
+	PassParameters->bToonCharacterSelfShadow = bToonCharacterSelfShadow ? 1u : 0u;
+	PassParameters->bToonSkin = bToonSkin ? 1u : 0u;
+	PassParameters->ToonSkinShadowThreshold = ToonSkinShadowThreshold;
+	PassParameters->ToonSkinShadowColor = FVector3f(ToonSkinShadowColor.R, ToonSkinShadowColor.G, ToonSkinShadowColor.B);
 	{
 		// double のワールド座標を float 2 つ（上位と下位）に分けて渡す（シェーダー側で MakeDFVector3 に戻す）
 		const FVector PreViewTranslationForNoise = View.ViewMatrices.GetPreViewTranslation();
