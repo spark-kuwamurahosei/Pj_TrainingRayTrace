@@ -176,6 +176,10 @@ class FToonRayGenShader : public FGlobalShader
 		// トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
 		SHADER_PARAMETER(uint32, bToonCastShadows)
 		SHADER_PARAMETER(float, ToonShadowBias)
+		// トゥーンの面光源のやわらかい影：光源の広がり（円錐の半角）の cos、シャドウレイの本数、段階の数
+		SHADER_PARAMETER(float, ToonSoftShadowCosAngle)
+		SHADER_PARAMETER(uint32, ToonSoftShadowSamples)
+		SHADER_PARAMETER(uint32, ToonSoftShadowSteps)
 		// Perlin ノイズの応用：影の境目を揺らす強さと、揺れの大きさ（cm）
 		SHADER_PARAMETER(float, ToonShadowNoiseStrength)
 		SHADER_PARAMETER(float, ToonShadowNoiseSize)

@@ -165,6 +165,13 @@ float3 ToonLightColor;
 // トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
 uint bToonCastShadows;
 float ToonShadowBias;
+// トゥーンの面光源のやわらかい影（『The Rest of Your Life』の応用）
+// ・ToonSoftShadowCosAngle：光源の広がり（円錐の半角）の cos。1 ならくっきりした影（シャドウレイ 1 本）
+// ・ToonSoftShadowSamples：円錐の中に飛ばすシャドウレイの本数
+// ・ToonSoftShadowSteps：光が届く割合を何段階に区切るか（0 か 1 なら区切らず、なめらかなグラデーション）
+float ToonSoftShadowCosAngle;
+uint ToonSoftShadowSamples;
+uint ToonSoftShadowSteps;
 // Perlin ノイズの応用：影の境目を手描き風に揺らす強さ（0 なら揺らさない）と、揺れの大きさ（cm）
 float ToonShadowNoiseStrength;
 float ToonShadowNoiseSize;
@@ -2152,11 +2159,12 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 // トゥーン T3：Origin から光源の方向へシャドウレイを飛ばし、光が届くかどうかを返す
 // 「何かに当たったか」だけ分かればよいので、最初の交差で打ち切り、ClosestHit も呼ばない
 // bIgnoreBackFaces が true なら、裏から当たった面を無視する（シャドウターミネーター問題の対策）
-bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
+// Direction：光源へ向かう方向（面光源のやわらかい影では、光源の広がりの中から選んだ方向）
+bool IsLightVisibleInDirection(float3 Origin, float3 Direction, bool bIgnoreBackFaces)
 {
 	FToonRay ShadowRay;
 	ShadowRay.Origin = Origin;
-	ShadowRay.Direction = ToLightDirection;
+	ShadowRay.Direction = Direction;
 
 	if (TraceMode == 0)
 	{
@@ -2192,15 +2200,20 @@ bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
 	return Payload.IsMiss();
 }
 
+bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
+{
+	return IsLightVisibleInDirection(Origin, ToLightDirection, bIgnoreBackFaces);
+}
+
 // 鳴潮風ルック フェーズ2：自分自身（IgnoreObjectId の物体）を通り抜けるシャドウレイ
 // 最も近い交差を求め、自分自身なら、その先から飛ばし直す（自分の影を受けず、ほかの物体の影だけ受ける）
 // 通り抜ける回数には上限を設け、超えたら光が届くとみなす
 #define TOON_MAX_SELF_SHADOW_SKIPS 8
-bool IsLightVisibleIgnoringObject(float3 Origin, uint IgnoreObjectId)
+bool IsLightVisibleIgnoringObject(float3 Origin, float3 Direction, uint IgnoreObjectId)
 {
 	FToonRay ShadowRay;
 	ShadowRay.Origin = Origin;
-	ShadowRay.Direction = ToLightDirection;
+	ShadowRay.Direction = Direction;
 
 	float TMin = TOON_RAY_TMIN;
 	[loop]
@@ -2306,7 +2319,59 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 
 // トゥーン T2〜T3：明るさの段階（0：影 ～ 1：明るい面）
 // 面の向き（NdotL）で段階を決め、明るく塗られる点だけシャドウレイを飛ばして、遮られていれば影にする
-float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal)
+// トゥーンの面光源のやわらかい影（『The Rest of Your Life』第12章の、球を狙うサンプリングの応用）
+// 光源（太陽）を点ではなく広がりを持つ円盤とみなし、光源方向を軸とした円錐の中に ToonSoftShadowSamples 本のシャドウレイを飛ばして、
+// 光が届く割合（0 ～ 1）を返す。影を落とす物体から離れるほど、影の境目がぼける（半影）
+// 円錐の中の方向は、本の random_to_sphere と同じく一様に選ぶ。回転方向はサンプルごとに均等に散らし（層化）、ノイズを減らす
+// 乱数はフレームごとに変わり、蓄積や TSR で平均されてなめらかになる
+float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool bIgnoreBackFaces, inout uint RandomState)
+{
+	// 鳴潮風ルック フェーズ2：キャラクターは自分自身の影を受けない（服のまだらな影や、顔に落ちる前髪・頭の影を消す）
+	// 近くの遮りだけ無視する方法では、レイが自分の体を通り抜けて反対側の髪や袖に当たり、かえって影が出るため、
+	// 自分自身はすべて通り抜け、ほかの物体（背景や小物）の影だけ受ける
+	bool bIgnoreSelf = Rec.Material.bCharacter != 0 && bToonCharacterSelfShadow == 0;
+
+	bool bSoft = ToonSoftShadowCosAngle < 1.0f && ToonSoftShadowSamples > 1;
+	uint NumSamples = bSoft ? ToonSoftShadowSamples : 1u;
+	FToonOnb Onb = MakeOnb(ToLightDirection);
+	float PhiOffset = ToonRandomFloat(RandomState);
+
+	uint NumVisible = 0;
+	[loop]
+	for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
+	{
+		float3 Direction = ToLightDirection;
+		if (bSoft)
+		{
+			float Z = 1.0f - ToonRandomFloat(RandomState) * (1.0f - ToonSoftShadowCosAngle);
+			float Phi = 2.0f * PI * frac(((float)SampleIndex + PhiOffset) / (float)NumSamples);
+			float SinTheta = sqrt(max(1.0f - Z * Z, 0.0f));
+			Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, Z)));
+		}
+
+		bool bVisible;
+		if (bIgnoreSelf)
+		{
+			bVisible = IsLightVisibleIgnoringObject(ShadowOrigin, Direction, Rec.ObjectId);
+		}
+		else
+		{
+			bVisible = IsLightVisibleInDirection(ShadowOrigin, Direction, bIgnoreBackFaces);
+		}
+		NumVisible += bVisible ? 1u : 0u;
+	}
+
+	float Visibility = (float)NumVisible / (float)NumSamples;
+	// トゥーン：光が届く割合を段階に区切る（例：3 段階なら 0 / 0.5 / 1）
+	if (bSoft && ToonSoftShadowSteps >= 2)
+	{
+		float Levels = (float)(ToonSoftShadowSteps - 1);
+		Visibility = round(Visibility * Levels) / Levels;
+	}
+	return Visibility;
+}
+
+float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
 	if (bHasDirectionalLight == 0)
 	{
@@ -2375,16 +2440,8 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal)
 		// そういう点だけ裏面を無視し、自分のメッシュを通り抜けさせる（表から当たる本当の自己影は残る）
 		bool bGeometryFacesAwayFromLight = dot(GeometricNormal, ToLightDirection) <= 0.0f;
 
-		// 鳴潮風ルック フェーズ2：キャラクターは自分自身の影を受けない（服のまだらな影や、顔に落ちる前髪・頭の影を消す）
-		// 近くの遮りだけ無視する方法では、レイが自分の体を通り抜けて反対側の髪や袖に当たり、かえって影が出るため、
-		// 自分自身はすべて通り抜け、ほかの物体（背景や小物）の影だけ受ける
-		bool bLightVisible = Rec.Material.bCharacter != 0 && bToonCharacterSelfShadow == 0
-			? IsLightVisibleIgnoringObject(ShadowOrigin, Rec.ObjectId)
-			: IsLightVisible(ShadowOrigin, bGeometryFacesAwayFromLight);
-		if (!bLightVisible)
-		{
-			LightLevel = 0.0f;
-		}
+		// 光が届く割合（くっきりした影なら 0 か 1、面光源のやわらかい影なら途中の値もとる）
+		LightLevel *= ComputeToonShadowVisibility(Rec, ShadowOrigin, bGeometryFacesAwayFromLight, RandomState);
 	}
 
 	return LightLevel;
@@ -2450,7 +2507,7 @@ float3 GetToonSkyHue()
 // 影の面の明るさの上限（明るい面の明るさに対する割合）
 #define TOON_MAX_SHADOW_TO_LIT_RATIO 0.8f
 
-float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
+float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState)
 {
 	float3 Albedo = Rec.Material.Albedo;
 	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
@@ -2476,7 +2533,7 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
 		ShadowColor *= MaxShadowLuminance / ShadowLuminance;
 	}
 
-	float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal);
+	float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal, RandomState);
 	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
 	Color += ComputeToonRim(Rec, Ray, LightLevel);
@@ -2561,7 +2618,7 @@ float ToonCharacterRim(float2 UV, FToonHitRecord Rec)
 	return SampleDistance - length(Rec.Position) > TOON_CHARACTER_RIM_DEPTH_GAP ? 1.0f : 0.0f;
 }
 
-float3 RayColorToon(float2 UV, FToonRay CameraRay)
+float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 {
 	FToonPendingRay Pending[TOON_MAX_PENDING_RAYS];
 	uint NumPending = 1;
@@ -2705,12 +2762,12 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay)
 		if (!bReflective || Current.Depth >= ToonReflectionDepth)
 		{
 			// 普通の素材か、反射回数の上限に達した場合は、その場で塗って終わる（黒にはしない）
-			Color += Current.Throughput * ShadeToonOpaque(Rec, Current.Ray, GeometricNormal);
+			Color += Current.Throughput * ShadeToonOpaque(Rec, Current.Ray, GeometricNormal, RandomState);
 			continue;
 		}
 
 		// 金属・ガラスの表面にも、ハイライトとリムライトを乗せる
-		float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal);
+		float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal, RandomState);
 		Color += Current.Throughput * (ToonLightColor * ComputeToonHighlight(Rec, Current.Ray, LightLevel) + ComputeToonRim(Rec, Current.Ray, LightLevel));
 
 		float3 ReflectDirection = reflect(Current.Ray.Direction, Rec.Normal);
@@ -2764,7 +2821,7 @@ float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
 {
 	// トゥーンのパーミュテーションには確認用の表示モードを、確認用のパーミュテーションにはトゥーンを含めない
 #if TOON_SHADING
-	return RayColorToon(UV, Ray);
+	return RayColorToon(UV, Ray, RandomState);
 #else
 	if (ShadingMode == 0)
 	{
