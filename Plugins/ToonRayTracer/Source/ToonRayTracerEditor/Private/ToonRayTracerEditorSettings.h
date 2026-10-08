@@ -34,6 +34,7 @@ enum class EToonRayTracerAnalyticScene : uint8
 	CornellBoxBoxes = 3	UMETA(DisplayName = "The Next Week 第8章：箱を置いたコーネルボックス"),
 	CornellSmoke = 4	UMETA(DisplayName = "The Next Week 第9章：煙の箱（cornell_smoke）"),
 	FinalScene = 5		UMETA(DisplayName = "The Next Week 第10章：final_scene（簡易版）"),
+	RestOfYourLife = 6	UMETA(DisplayName = "The Rest of Your Life 第12章：アルミの箱とガラスの球のコーネルボックス"),
 };
 
 // 拡散反射の方向の選び方（r.ToonRayTracer.ScatterSampling の値と一致させる。『The Rest of Your Life』）
@@ -44,7 +45,7 @@ enum class EToonRayTracerScatterSampling : uint8
 	UniformHemisphere = 1	UMETA(DisplayName = "半球上で一様（第6章の比較用）"),
 	Cosine = 2				UMETA(DisplayName = "コサイン分布（第7〜8章）"),
 	Light = 3				UMETA(DisplayName = "ライトを直接狙う（第9章）"),
-	Mixture = 4				UMETA(DisplayName = "混合：ライトとコサイン分布（第10〜11章）"),
+	Mixture = 4				UMETA(DisplayName = "混合：ライトとコサイン分布（第10〜12章）"),
 };
 
 /**

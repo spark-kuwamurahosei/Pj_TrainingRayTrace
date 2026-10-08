@@ -89,7 +89,7 @@ uint bStratifiedSampling;
 //   1：半球上で一様（第6章の比較用。平均は同じだが、ノイズが増える）
 //   2：コサイン分布（第7〜8章。法線を基準にした正規直交基底で、cosθ に比例した方向を直接作る）
 //   3：ライトを直接狙う（第9章。光る四角形の上のランダムな点へ向けて飛ばす。直接光だけになる）
-//   4：混合（第10〜11章。ライトを狙う方向とコサイン分布の方向を半々の確率で選ぶ）
+//   4：混合（第10〜12章。ライトを狙う方向とコサイン分布の方向を半々の確率で選ぶ）
 #define TOON_SCATTER_SAMPLING_UNIT_VECTOR		0
 #define TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE	1
 #define TOON_SCATTER_SAMPLING_COSINE			2
@@ -1741,21 +1741,36 @@ float3 OnbTransform(FToonOnb Onb, float3 Local)
 	return Local.x * Onb.U + Local.y * Onb.V + Local.z * Onb.W;
 }
 
-// 『The Rest of Your Life』第9章：狙う光る四角形（解析的な物体のシーンで、最初に見つかった光る四角形）。なければ -1
-int FindLightQuad()
+// 『The Rest of Your Life』第9〜12章：狙う物体（本の lights）
+// 解析的な物体のシーンの、光る四角形と光る球。第12章にならい、ガラスの球も狙う（ガラスを通ってライトに届く光（集光）を拾いやすくする）
+// 番号は、狙う四角形を先に、狙う球をその後ろに数える
+bool IsLightTargetQuad(uint QuadIndex)
+{
+	return (uint)round(QuadMaterialParams[QuadIndex].x) == TOON_MATERIAL_DIFFUSE_LIGHT;
+}
+
+bool IsLightTargetSphere(uint SphereIndex)
+{
+	uint Type = (uint)round(SphereMaterialParams[SphereIndex].x);
+	return Type == TOON_MATERIAL_DIFFUSE_LIGHT || Type == TOON_MATERIAL_DIELECTRIC;
+}
+
+uint CountLightTargets()
 {
 	if (TraceMode != 0)
 	{
-		return -1;
+		return 0;
 	}
+	uint Count = 0;
 	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
 	{
-		if ((uint)round(QuadMaterialParams[QuadIndex].x) == TOON_MATERIAL_DIFFUSE_LIGHT)
-		{
-			return (int)QuadIndex;
-		}
+		Count += IsLightTargetQuad(QuadIndex) ? 1u : 0u;
 	}
-	return -1;
+	for (uint SphereIndex = 0; SphereIndex < NumSpheres; ++SphereIndex)
+	{
+		Count += IsLightTargetSphere(SphereIndex) ? 1u : 0u;
+	}
+	return Count;
 }
 
 // 『The Rest of Your Life』第9章：光る四角形の上のランダムな点へ向かう方向と、その方向を選ぶ PDF（本の quad::random と quad::pdf_value）
@@ -1798,7 +1813,102 @@ float LightQuadPdf(uint LightIndex, float3 Position, float3 Direction)
 	return LightCosine > 1.0e-6f ? Rec.T * Rec.T / (LightCosine * Area) : 0.0f;
 }
 
-// 『The Rest of Your Life』第6〜10章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
+// 『The Rest of Your Life』第12章：球を狙う方向と、その方向を選ぶ PDF（本の sphere::random と sphere::pdf_value）
+// 位置から見た球は、中心方向を軸とした円錐に収まる。その円錐の中で一様に方向を選ぶと、PDF は 1 ÷ 円錐の立体角 = 1 ÷ 2π(1 - cosθmax)
+// 位置が球の中にある場合は、狙えないので PDF 0（呼び出し側でその方向を使わない）
+float3 SampleSphereDirection(uint SphereIndex, float3 Position, inout uint RandomState, out float SamplingPdf)
+{
+	float3 ToCenter = GetSphereCenter(SphereIndex) - Position;
+	float DistanceSquared = dot(ToCenter, ToCenter);
+	float RadiusSquared = Spheres[SphereIndex].w * Spheres[SphereIndex].w;
+	if (DistanceSquared <= RadiusSquared)
+	{
+		SamplingPdf = 0.0f;
+		return normalize(ToCenter);
+	}
+
+	// 本の random_to_sphere：円錐の軸を z 軸として方向を作る
+	float CosThetaMax = sqrt(1.0f - RadiusSquared / DistanceSquared);
+	float R1 = ToonRandomFloat(RandomState);
+	float R2 = ToonRandomFloat(RandomState);
+	float Z = 1.0f + R2 * (CosThetaMax - 1.0f);
+	float Phi = 2.0f * PI * R1;
+	float SinTheta = sqrt(max(1.0f - Z * Z, 0.0f));
+	float3 Local = float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, Z);
+
+	SamplingPdf = 1.0f / (2.0f * PI * (1.0f - CosThetaMax));
+	return normalize(OnbTransform(MakeOnb(ToCenter * rsqrt(DistanceSquared)), Local));
+}
+
+float SpherePdf(uint SphereIndex, float3 Position, float3 Direction)
+{
+	FToonRay Ray;
+	Ray.Origin = Position;
+	Ray.Direction = Direction;
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	float3 Center = GetSphereCenter(SphereIndex);
+	float Radius = Spheres[SphereIndex].w;
+	float DistanceSquared = dot(Center - Position, Center - Position);
+	if (DistanceSquared <= Radius * Radius || !HitSphere(Center, Radius, Ray, TOON_RAY_TMIN, 1.0e8f, Rec))
+	{
+		return 0.0f;
+	}
+	float CosThetaMax = sqrt(1.0f - Radius * Radius / DistanceSquared);
+	return 1.0f / (2.0f * PI * (1.0f - CosThetaMax));
+}
+
+// 『The Rest of Your Life』第12章：狙う物体の一覧から 1 つを等しい確率で選び、その物体を狙う方向を返す（本の hittable_list::random）
+float3 SampleLightTargets(uint NumTargets, float3 Position, inout uint RandomState)
+{
+	uint Target = min((uint)(ToonRandomFloat(RandomState) * (float)NumTargets), NumTargets - 1);
+	float Unused;
+	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
+	{
+		if (IsLightTargetQuad(QuadIndex))
+		{
+			if (Target == 0)
+			{
+				return SampleLightQuadDirection(QuadIndex, Position, RandomState, Unused);
+			}
+			--Target;
+		}
+	}
+	for (uint SphereIndex = 0; SphereIndex < NumSpheres; ++SphereIndex)
+	{
+		if (IsLightTargetSphere(SphereIndex))
+		{
+			if (Target == 0)
+			{
+				return SampleSphereDirection(SphereIndex, Position, RandomState, Unused);
+			}
+			--Target;
+		}
+	}
+	return float3(0.0f, 0.0f, 1.0f);
+}
+
+// 狙う物体の一覧を使ったときに、ある方向が選ばれる PDF。各物体の PDF の平均（本の hittable_list::pdf_value）
+float LightTargetsPdf(uint NumTargets, float3 Position, float3 Direction)
+{
+	float Sum = 0.0f;
+	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
+	{
+		if (IsLightTargetQuad(QuadIndex))
+		{
+			Sum += LightQuadPdf(QuadIndex, Position, Direction);
+		}
+	}
+	for (uint SphereIndex = 0; SphereIndex < NumSpheres; ++SphereIndex)
+	{
+		if (IsLightTargetSphere(SphereIndex))
+		{
+			Sum += SpherePdf(SphereIndex, Position, Direction);
+		}
+	}
+	return Sum / (float)NumTargets;
+}
+
+// 『The Rest of Your Life』第6〜12章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
 // 色は「素材の色 × 散乱の PDF ÷ 選んだ方向の PDF」で重み付けする（本の ray_color）
 // 選び方を変えても平均（最終的な明るさ）は同じで、変わるのはノイズの量だけ
 float3 SampleScatterDirection(float3 Position, float3 Normal, inout uint RandomState, out float SamplingPdf)
@@ -1821,30 +1931,32 @@ float3 SampleScatterDirection(float3 Position, float3 Normal, inout uint RandomS
 		// 第10〜11章：混合 PDF（本の mixture_pdf）。半々の確率でライトを狙う方向かコサイン分布の方向を選ぶ
 		// どちらの選び方でも同じ方向が選ばれうるので、その方向の PDF は 2 つの PDF の平均になる
 		// ライトを狙う分でノイズを減らし、コサイン分布の分で天井や壁の照り返し（間接光）も拾う
-		int LightIndex = FindLightQuad();
-		if (LightIndex >= 0)
+		// 第12章：狙う物体が複数（光る四角形・光る球・ガラスの球）なら、その中から等しい確率で選ぶ
+		uint NumTargets = CountLightTargets();
+		if (NumTargets > 0)
 		{
 			if (ToonRandomFloat(RandomState) < 0.5f)
 			{
-				float Unused;
-				Direction = SampleLightQuadDirection((uint)LightIndex, Position, RandomState, Unused);
+				Direction = SampleLightTargets(NumTargets, Position, RandomState);
 			}
 			else
 			{
 				Direction = SafeNormalize(OnbTransform(MakeOnb(Normal), RandomCosineDirection(RandomState)), Normal);
 			}
-			SamplingPdf = 0.5f * LightQuadPdf((uint)LightIndex, Position, Direction) + 0.5f * LambertScatteringPdf(Normal, Direction);
+			SamplingPdf = 0.5f * LightTargetsPdf(NumTargets, Position, Direction) + 0.5f * LambertScatteringPdf(Normal, Direction);
 			return Direction;
 		}
 	}
 
 	if (ScatterSampling == TOON_SCATTER_SAMPLING_LIGHT)
 	{
-		// 第9章：ライトを直接狙う。ライトがないシーンでは、コサイン分布にする
-		int LightIndex = FindLightQuad();
-		if (LightIndex >= 0)
+		// 第9章：ライトを直接狙う。狙う物体がないシーンでは、コサイン分布にする
+		uint NumTargets = CountLightTargets();
+		if (NumTargets > 0)
 		{
-			return SampleLightQuadDirection((uint)LightIndex, Position, RandomState, SamplingPdf);
+			Direction = SampleLightTargets(NumTargets, Position, RandomState);
+			SamplingPdf = LightTargetsPdf(NumTargets, Position, Direction);
+			return Direction;
 		}
 	}
 

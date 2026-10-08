@@ -35,7 +35,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerAnalyticScene(
 		TEXT("r.ToonRayTracer.AnalyticScene"),
 		0,
-		TEXT("Scene used when TraceMode is 0. 0: One Weekend chapter 11 (with Next Week textures), 1: Next Week chapter 7 simple light, 2: Next Week chapter 7 Cornell box, 3: Next Week chapter 8 Cornell box with boxes, 4: Next Week chapter 9 Cornell smoke, 5: Next Week chapter 10 final scene (simplified)"),
+		TEXT("Scene used when TraceMode is 0. 0: One Weekend chapter 11 (with Next Week textures), 1: Next Week chapter 7 simple light, 2: Next Week chapter 7 Cornell box, 3: Next Week chapter 8 Cornell box with boxes, 4: Next Week chapter 9 Cornell smoke, 5: Next Week chapter 10 final scene (simplified), 6: Rest of Your Life chapter 12 Cornell box with an aluminum box and a glass sphere"),
 		ECVF_RenderThreadSafe);
 
 	// 本の第8章（アンチエイリアス）の samples_per_pixel に相当
@@ -550,6 +550,19 @@ namespace
 		MakeBookBox(FVector(165.0, 165.0, 165.0), -18.0, FVector(130.0, 0.0, 65.0), EToonMaterialType::Lambertian, FLinearColor(0.73f, 0.73f, 0.73f)),
 	};
 
+	// 『The Rest of Your Life』第12章の最終シーン：コーネルボックスに、アルミの背の高い箱とガラスの球を置く
+	// 本の box(0,0,0)-(165,330,165) を 15 度回して (265, 0, 295) へ移動（アルミ：金属、色 (0.8, 0.85, 0.88)、ぼけなし）
+	const FToonBox GRestOfYourLifeBoxes[] =
+	{
+		MakeBookBox(FVector(165.0, 330.0, 165.0), 15.0, FVector(265.0, 0.0, 295.0), EToonMaterialType::Metal, FLinearColor(0.8f, 0.85f, 0.88f)),
+	};
+
+	// 本の sphere(point3(190, 90, 190), 90, glass)。座標は（本の x, y, z）→（UE の Y, Z, X）に置き換える
+	const FToonSphere GRestOfYourLifeSpheres[] =
+	{
+		{ FVector(190.0, 190.0, 90.0), 90.0, EToonMaterialType::Dielectric, FLinearColor::White, 0.0f, 1.5f },
+	};
+
 	// 『The Next Week』第9章の cornell_smoke：天井のライトを大きく暗くし、2 つの箱を黒い煙と白い煙にする（濃さ 0.01）
 	const FToonQuad GCornellSmokeQuads[] =
 	{
@@ -736,6 +749,8 @@ namespace
 			return { TConstArrayView<FToonSphere>(), MakeArrayView(GCornellSmokeQuads), MakeArrayView(GCornellSmokeBoxes), true };
 		case 5:
 			return { MakeArrayView(GFinalSceneSpheres), MakeArrayView(GFinalSceneQuads), TConstArrayView<FToonBox>(), true, MakeFinalSceneGroundGrid(), true };
+		case 6:
+			return { MakeArrayView(GRestOfYourLifeSpheres), MakeArrayView(GCornellBoxQuads), MakeArrayView(GRestOfYourLifeBoxes), true };
 		default:
 			return { MakeArrayView(GToonSpheres), TConstArrayView<FToonQuad>(), TConstArrayView<FToonBox>(), false };
 		}
