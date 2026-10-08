@@ -124,9 +124,21 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|対象", meta = (DisplayName = "キャラクターだけトゥーンにする"))
 	bool bCharacterOnly;
 
-	/** キャラクターの面からのシャドウレイは、この距離（cm）までの遮りを無視する。服のシワなどの細かい影が消える。0 なら無視しない */
-	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "自分の影を無視する距離（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "30.0"))
-	float CharacterSelfShadowDistance;
+	/** キャラクターが自分自身の影を受ける。オフなら、服のまだらな影や顔に落ちる前髪の影が消え、ほかの物体の影だけ受ける */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "自分の影を受ける"))
+	bool bCharacterSelfShadow;
+
+	/** シェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile のマテリアルの面を肌とし、肌用の境目と影色で塗る */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "肌を別の塗りにする"))
+	bool bSkin;
+
+	/** 肌の影との境目の N・L。全体の値より下げると、顔に細かい影が入りにくくなる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "肌の影のしきい値", ClampMin = "-1.0", ClampMax = "1.0", UIMin = "-1.0", UIMax = "1.0", EditCondition = "bSkin"))
+	float SkinShadowThreshold;
+
+	/** 肌の影色（肌の色に掛ける） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "肌の影色", HideAlphaChannel, EditCondition = "bSkin"))
+	FLinearColor SkinShadowColor;
 
 	// ---- トゥーン：陰影 ----
 

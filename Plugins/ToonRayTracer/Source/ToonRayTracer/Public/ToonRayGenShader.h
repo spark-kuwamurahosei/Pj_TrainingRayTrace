@@ -167,8 +167,12 @@ class FToonRayGenShader : public FGlobalShader
 		// Perlin ノイズの応用：影の境目を揺らす強さと、揺れの大きさ（cm）
 		SHADER_PARAMETER(float, ToonShadowNoiseStrength)
 		SHADER_PARAMETER(float, ToonShadowNoiseSize)
-		// 鳴潮風ルック フェーズ2：キャラクターの自分の影を無視する距離（cm）
-		SHADER_PARAMETER(float, ToonCharacterSelfShadowDistance)
+		// 鳴潮風ルック フェーズ2：0 なら、キャラクターは自分自身の影を受けない
+		SHADER_PARAMETER(uint32, bToonCharacterSelfShadow)
+		// 鳴潮風ルック フェーズ2：肌（シェーディングモデルが Subsurface 系の面）の影との境目の N・L と影色
+		SHADER_PARAMETER(uint32, bToonSkin)
+		SHADER_PARAMETER(float, ToonSkinShadowThreshold)
+		SHADER_PARAMETER(FVector3f, ToonSkinShadowColor)
 		// Translated World 空間の原点のワールド座標（メッシュのローカル座標を求めるため、double を High と Low に分けたもの）
 		SHADER_PARAMETER(FVector3f, PreViewTranslationHigh)
 		SHADER_PARAMETER(FVector3f, PreViewTranslationLow)
