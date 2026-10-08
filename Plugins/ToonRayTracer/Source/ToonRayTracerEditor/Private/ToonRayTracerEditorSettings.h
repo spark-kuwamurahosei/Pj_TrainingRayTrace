@@ -124,6 +124,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|対象", meta = (DisplayName = "キャラクターだけトゥーンにする"))
 	bool bCharacterOnly;
 
+	/** キャラクターだけトゥーンにするとき、TSR の前（描画解像度、トーンマップ前）に描く。TSR がアンチエイリアスとアップスケールを行い、動いている間の輪郭のギザつきが抑えられる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|対象", meta = (DisplayName = "TSR の前に描く", EditCondition = "bCharacterOnly"))
+	bool bBeforeTSR;
+
 	/** キャラクターが自分自身の影を受ける。オフなら、服のまだらな影や顔に落ちる前髪の影が消え、ほかの物体の影だけ受ける */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "自分の影を受ける"))
 	bool bCharacterSelfShadow;

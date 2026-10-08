@@ -116,6 +116,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 
 	Bands = 2;
 	bCharacterOnly = false;
+	bBeforeTSR = true;
 	bCharacterSelfShadow = false;
 	bSkin = true;
 	SkinShadowThreshold = -0.3f;
@@ -170,6 +171,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
 
 	SetBool(TEXT("r.ToonRayTracer.Toon.CharacterOnly"), bCharacterOnly);
+	SetBool(TEXT("r.ToonRayTracer.Toon.BeforeTSR"), bBeforeTSR);
 	SetBool(TEXT("r.ToonRayTracer.Toon.CharacterSelfShadow"), bCharacterSelfShadow);
 	SetBool(TEXT("r.ToonRayTracer.Toon.Skin"), bSkin);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SkinShadowThreshold"), SkinShadowThreshold);
@@ -225,6 +227,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetInt(TEXT("r.ToonRayTracer.MaxDepth"), MaxDepth);
 
 	GetBool(TEXT("r.ToonRayTracer.Toon.CharacterOnly"), bCharacterOnly);
+	GetBool(TEXT("r.ToonRayTracer.Toon.BeforeTSR"), bBeforeTSR);
 	GetBool(TEXT("r.ToonRayTracer.Toon.CharacterSelfShadow"), bCharacterSelfShadow);
 	GetBool(TEXT("r.ToonRayTracer.Toon.Skin"), bSkin);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SkinShadowThreshold"), SkinShadowThreshold);

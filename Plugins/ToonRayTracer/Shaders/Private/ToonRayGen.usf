@@ -1,5 +1,7 @@
 #include "/Engine/Private/Common.ush"
 #include "/Engine/Private/RayTracing/RayTracingCommon.ush"
+// 鳴潮風ルック フェーズ3：TSR の前に描くとき、UE のトーンマップ（Filmic）を打ち消すため（FilmToneMapInverse、sRGBToLinear）
+#include "/Engine/Private/TonemapCommon.ush"
 #include "ToonObjectColorTable.ush"
 
 // C++からバインドされる書き込み用テクスチャ
@@ -8,6 +10,14 @@ RWTexture2D<float4> OutputTexture;
 Texture2D SceneColorTexture;
 // 鳴潮風ルック フェーズ1：1 なら、トゥーンで塗るのはキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
 uint bToonCharacterOnly;
+// 鳴潮風ルック フェーズ3：1 なら、TSR の前（描画解像度、トーンマップ前の HDR）に描く
+// ピクセル中心に 1 本だけレイを飛ばし（TAA のジッターはカメラの行列に含まれる）、アンチエイリアスとフレームをまたいだ平均は TSR に任せる
+// 出力は線形の色のまま書き込み、トーンマップは UE に任せる
+uint bBeforeTSR;
+// 1 なら、TSR の前に描くとき、トーンマップを打ち消した色を書き込む（トーンマップの後に描いた場合と同じ色味にする）
+uint bToonInverseTonemap;
+// トーンマップで掛かる露出（前のフレームの自動露出の値。0 なら不明として露出の補正をしない）
+float ToonEyeAdaptationExposure;
 
 // フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
 RWTexture2D<float4> AccumulationTexture;
@@ -2609,12 +2619,17 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		float3 ColorSum = 0.0f;
 		uint ValidSamples = 0;
 		// カメラが動いている間（蓄積をやり直したピクセル）と物体が動いている間は、サンプル数を減らして負荷を下げる
-		uint NumSamples = (HistoryFrames == 0 || bSceneMoving) ? MotionSamplesPerPixel : SamplesPerPixel;
+		// TSR の前に描く場合は、ピクセル中心に 1 本だけ（TSR がジッターを使ってアンチエイリアスする）
+		uint NumSamples = bBeforeTSR != 0 ? 1u : ((HistoryFrames == 0 || bSceneMoving) ? MotionSamplesPerPixel : SamplesPerPixel);
 		[loop]
 		for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
 		{
 			// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）
 			float2 Offset = float2(ToonRandomFloat(RandomState), ToonRandomFloat(RandomState)) - 0.5f;
+			if (bBeforeTSR != 0)
+			{
+				Offset = 0.0f;
+			}
 			float2 UV = ((float2)LocalPixel + 0.5f + Offset) / (float2)ViewRectSize;
 
 			// 『The Next Week』第2章：シャッターが開いている間のランダムな時刻（本の ray(origin, direction, random_double())）
@@ -2650,9 +2665,22 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	// ガンマ補正（本の linear_to_gamma）
 	// このパスはトーンマップ後に実行され、出力はそのままディスプレイ向けの値として扱われるため、
 	// 線形の計算結果をガンマ2で変換してから書き込む
-	if (ShadingMode != 0)
+	// TSR の前に描く場合は、線形の色のまま書き込み、トーンマップは UE に任せる
+	if (ShadingMode != 0 && bBeforeTSR == 0)
 	{
 		Color = sqrt(max(Color, 0.0f));
+	}
+
+	// 鳴潮風ルック フェーズ3：TSR の前に描く場合、トーンマップの後に描いたときに画面に出していた値（上のガンマ 2 の値）が、
+	// UE のトーンマップを通ったあとにそのまま出るよう、トーンマップの逆をかけた色を書き込む
+	// ・Filmic のカーブは、エンジンの逆関数（既定のカーブの設定で合わせたもの）で打ち消す
+	// ・画面の色は露出を先に掛けた値（PreExposure）で持ち、トーンマップで「1 / PreExposure × 自動露出」が掛かるので、その逆を掛ける
+	// 色域の拡張やブルーム、ビネットなどは打ち消さないため、近似になる
+	if (ShadingMode != 0 && bBeforeTSR != 0 && bToonInverseTonemap != 0)
+	{
+		float3 DisplayColor = saturate(sqrt(max(Color, 0.0f)));
+		float ExposureScale = ToonEyeAdaptationExposure > 0.0f ? View.PreExposure / ToonEyeAdaptationExposure : 1.0f;
+		Color = FilmToneMapInverse(sRGBToLinear(DisplayColor)) * ExposureScale;
 	}
 
 	// 確認用：蓄積をやり直した理由を色で表示する

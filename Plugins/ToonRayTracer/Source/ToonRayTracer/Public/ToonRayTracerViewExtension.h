@@ -33,10 +33,23 @@ public:
 		bool bIsPassEnabled) override;
 
 private:
+	// トーンマップの後（出力解像度）に描く
 	FScreenPassTexture RenderToonRayTracingPass(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
 		const FPostProcessMaterialInputs& Inputs);
+
+	// 鳴潮風ルック フェーズ3：TSR の前（描画解像度、トーンマップ前の HDR）に描く
+	FScreenPassTexture RenderToonRayTracingPassBeforeTSR(
+		FRDGBuilder& GraphBuilder,
+		const FSceneView& View,
+		const FPostProcessMaterialInputs& Inputs);
+
+	FScreenPassTexture RenderToonRayTracing(
+		FRDGBuilder& GraphBuilder,
+		const FSceneView& View,
+		const FPostProcessMaterialInputs& Inputs,
+		bool bBeforeTSR);
 
 	// トゥーンシェーディングに使う Directional Light の情報
 	struct FToonDirectionalLight
