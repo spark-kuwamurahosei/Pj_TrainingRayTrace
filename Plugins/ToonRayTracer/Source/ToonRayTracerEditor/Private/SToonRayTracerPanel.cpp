@@ -67,6 +67,65 @@ void SToonRayTracerPanel::Construct(const FArguments& InArgs)
 			]
 		]
 
+		// 鳴潮風ルックの確認用：時間帯ごとの環境（レベルの Directional Light と Skylight を切り替える）
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(8.0f, 0.0f, 8.0f, 4.0f)
+		[
+			SNew(SWrapBox)
+			.UseAllottedSize(true)
+
+			+ SWrapBox::Slot()
+			.Padding(0.0f, 0.0f, 8.0f, 4.0f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("EnvironmentLabel", "環境："))
+				.ToolTipText(LOCTEXT("EnvironmentLabelTooltip", "レベルの Directional Light と Skylight の向き・色・強さを、時間帯に合わせて切り替えます（Ctrl+Z で元に戻せます）"))
+			]
+
+			+ SWrapBox::Slot()
+			.Padding(0.0f, 0.0f, 4.0f, 4.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Morning", "朝"))
+				.OnClicked(this, &SToonRayTracerPanel::OnEnvironmentPresetClicked, EToonEnvironmentPreset::Morning)
+			]
+
+			+ SWrapBox::Slot()
+			.Padding(0.0f, 0.0f, 4.0f, 4.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Noon", "昼"))
+				.OnClicked(this, &SToonRayTracerPanel::OnEnvironmentPresetClicked, EToonEnvironmentPreset::Noon)
+			]
+
+			+ SWrapBox::Slot()
+			.Padding(0.0f, 0.0f, 4.0f, 4.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Evening", "夕方"))
+				.OnClicked(this, &SToonRayTracerPanel::OnEnvironmentPresetClicked, EToonEnvironmentPreset::Evening)
+			]
+
+			+ SWrapBox::Slot()
+			.Padding(0.0f, 0.0f, 8.0f, 4.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Night", "夜"))
+				.OnClicked(this, &SToonRayTracerPanel::OnEnvironmentPresetClicked, EToonEnvironmentPreset::Night)
+			]
+
+			+ SWrapBox::Slot()
+			.Padding(0.0f, 0.0f, 0.0f, 4.0f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text_Lambda([this]() { return EnvironmentMessage; })
+				.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+			]
+		]
+
 		// 設定
 		+ SVerticalBox::Slot()
 		.FillHeight(1.0f)
@@ -98,6 +157,12 @@ FReply SToonRayTracerPanel::OnResetToDefaultsClicked()
 	Settings->ApplyToConsoleVariables();
 	Settings->SaveConfig();
 	DetailsView->ForceRefresh();
+	return FReply::Handled();
+}
+
+FReply SToonRayTracerPanel::OnEnvironmentPresetClicked(EToonEnvironmentPreset Preset)
+{
+	ToonRayTracerEnvironment::ApplyPreset(Preset, EnvironmentMessage);
 	return FReply::Handled();
 }
 

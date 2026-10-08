@@ -182,6 +182,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "明るさの倍率", ClampMin = "0.0", UIMin = "0.0", UIMax = "3.0"))
 	float LightScale;
 
+	/** 影の面を、Skylight（空と周りの光）の平均の色にどれだけ染めるか。夕方なら赤み、曇りなら灰色がかった影になり、背景になじむ */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "影を空の色に染める強さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float SkyTint;
+
 	// ---- トゥーン：影 ----
 
 	/** シャドウレイによるくっきりした影を付ける */

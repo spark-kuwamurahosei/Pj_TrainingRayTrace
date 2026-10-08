@@ -167,6 +167,8 @@ float3 ToonSkinShadowColor;
 float ToonCharacterRimStrength;
 float ToonCharacterRimWidth;
 float ToonCharacterOutlineColorScale;
+// 鳴潮風ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
+float ToonSkyTint;
 // シャドウレイの始点をずらす量の倍率（強さ × 揺れの大きさ × この値 cm だけずらす）
 // 大きすぎるとずれの変化がノイズの模様より急になり、境目が折り返して点々になる
 #define TOON_SHADOW_NOISE_OFFSET_SCALE 2.0f
@@ -2115,6 +2117,27 @@ float3 ComputeToonRim(FToonHitRecord Rec, FToonRay Ray, float LightLevel)
 
 // トゥーン T2〜T5：普通の素材（金属・ガラス以外）の色
 // 明るい面は「素材の色 × ライトの色」、影の面は「素材の色 × 影色」で塗り、ハイライトとリムライトを乗せる
+// 鳴潮風ルック フェーズ3：Skylight の色味（明るさを 1 にそろえた色）
+// UE が Skylight から作る、方向ごとの明るさの表（球面調和関数、View.SkyIrradianceEnvironmentMap）の平均（0 次の成分）に、Skylight の色を掛けて使う
+// 面の向きによる明暗を付けると、セル画のべた塗りの影にグラデーションが入るため、向きによらない平均の色にしている
+// 明るさの基準は RGB の平均にする（輝度を基準にすると、輝度への寄与が小さい青が強調され、青空の下で影が青紫に寄りすぎるため）
+// Skylight がなければ白（染めない）
+float3 GetToonSkyHue()
+{
+	if (TraceMode == 0)
+	{
+		return 1.0f;
+	}
+	// 表は空の取り込み結果だけなので、エンジンと同じく Skylight の色と強さ（View.SkyLightColor）を掛ける
+	float3 SkyAverage = max(float3(View.SkyIrradianceEnvironmentMap[0].w, View.SkyIrradianceEnvironmentMap[1].w, View.SkyIrradianceEnvironmentMap[2].w), 0.0f)
+		* View.SkyLightColor.rgb;
+	float Brightness = dot(SkyAverage, 1.0f / 3.0f);
+	return Brightness > 1.0e-4f ? SkyAverage / Brightness : 1.0f;
+}
+
+// 影の面の明るさの上限（明るい面の明るさに対する割合）
+#define TOON_MAX_SHADOW_TO_LIT_RATIO 0.8f
+
 float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
 {
 	float3 Albedo = Rec.Material.Albedo;
@@ -2122,9 +2145,27 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
 	// 鳴潮風ルック フェーズ2：肌は肌用の影色（赤みのある色）にする
 	float3 ShadowTint = Rec.Material.bSkin != 0 ? ToonSkinShadowColor
 		: (Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : ToonShadowColor);
+	// 鳴潮風ルック フェーズ3：影の面は、直接の光が届かず空や周りの光で照らされるので、Skylight の色に染める
+	// （夕方なら赤み、曇りなら灰色がかった影になり、Lumen で描いた背景になじむ）。明るい面は Directional Light の色のまま
+	if (ToonSkyTint > 0.0f)
+	{
+		ShadowTint *= lerp(1.0f, GetToonSkyHue(), ToonSkyTint);
+	}
+
+	// 影の面が明るい面より明るくならないようにする（月の光のような青く暗い光で、影の側の方が明るく見えるのを防ぐ）
+	// 色味は保ったまま、明るさ（輝度）が明るい面の一定の割合を超えないように暗くする。白い光の昼間は変わらない
+	float3 LitColor = Albedo * ToonLightColor;
+	float3 ShadowColor = Albedo * ShadowTint;
+	const float3 LuminanceWeights = float3(0.2126f, 0.7152f, 0.0722f);
+	float ShadowLuminance = dot(ShadowColor, LuminanceWeights);
+	float MaxShadowLuminance = dot(LitColor, LuminanceWeights) * TOON_MAX_SHADOW_TO_LIT_RATIO;
+	if (ShadowLuminance > MaxShadowLuminance)
+	{
+		ShadowColor *= MaxShadowLuminance / ShadowLuminance;
+	}
 
 	float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal);
-	float3 Color = lerp(Albedo * ShadowTint, Albedo * ToonLightColor, LightLevel);
+	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
 	Color += ComputeToonRim(Rec, Ray, LightLevel);
 	return Color;
