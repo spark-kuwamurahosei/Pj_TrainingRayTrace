@@ -242,6 +242,31 @@ namespace
 		TEXT("Bit mask of the material slots shown through the character's hair (slot n: 2^n, e.g. 16 for slot 4). Custom Primitive Data [13] overrides it per mesh. 0: none"),
 		ECVF_RenderThreadSafe);
 
+	// 目の表現：キャラクターの目のパーツ（マテリアルスロットで指定）
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonEyeSlotMask(
+		TEXT("r.ToonRayTracer.Toon.EyeSlotMask"),
+		16,
+		TEXT("Bit mask of the material slots treated as the character's eyes (slot n: 2^n, e.g. 16 for slot 4). 0: none"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonEyeTriangleStart(
+		TEXT("r.ToonRayTracer.Toon.EyeTriangleStart"),
+		1850,
+		TEXT("First triangle index (within the eye material slot) treated as the eyes. Use it when eyebrows share the slot. See r.ToonRayTracer.Debug.Geometry 3"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonEyeTriangleEnd(
+		TEXT("r.ToonRayTracer.Toon.EyeTriangleEnd"),
+		0,
+		TEXT("End (exclusive) of the triangle indices treated as the eyes. 0: up to the last triangle"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonEyeUnlit(
+		TEXT("r.ToonRayTracer.Toon.EyeUnlit"),
+		1,
+		TEXT("Draw the character's eyes with the lit color regardless of the light direction and shadows (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonSeeThroughBrightness(
 		TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"),
 		0.5f,
@@ -473,7 +498,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerDebugGeometry(
 		TEXT("r.ToonRayTracer.Debug.Geometry"),
 		0,
-		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result"),
+		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result. 3: triangles treated as the eyes (green) and the rest of the eye slot (red)"),
 		ECVF_RenderThreadSafe);
 
 	// この数のフレームで使われなかったビューの蓄積状態は破棄する
@@ -1075,6 +1100,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonSeeThroughBrightness = FMath::Clamp(CVarToonRayTracerToonSeeThroughBrightness.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const float ToonSeeThroughDistance = FMath::Max(CVarToonRayTracerToonSeeThroughDistance.GetValueOnRenderThread(), 0.0f);
 	const uint32 ToonSeeThroughSlotMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonSeeThroughSlotMask.GetValueOnRenderThread(), 0));
+	const uint32 ToonEyeSlotMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeSlotMask.GetValueOnRenderThread(), 0));
+	const bool bToonEyeUnlit = CVarToonRayTracerToonEyeUnlit.GetValueOnRenderThread() != 0;
+	const uint32 ToonEyeTriangleStart = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeTriangleStart.GetValueOnRenderThread(), 0));
+	const uint32 ToonEyeTriangleEnd = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeTriangleEnd.GetValueOnRenderThread(), 0));
 	const float ToonLightScale = FMath::Max(CVarToonRayTracerToonLightScale.GetValueOnRenderThread(), 0.0f);
 	const float ToonSkyTint = FMath::Clamp(CVarToonRayTracerToonSkyTint.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const bool bToonCastShadows = CVarToonRayTracerToonCastShadows.GetValueOnRenderThread() != 0;
@@ -1113,7 +1142,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
-				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask))))))));
+				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd))))))))));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), HashCombine(GetTypeHash(SamplesPerPixel), GetTypeHash(bStratifiedSampling))), HashCombine(HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth)), GetTypeHash(ScatterSampling))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
@@ -1347,7 +1376,11 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonSeeThroughBrightness = ToonSeeThroughBrightness;
 	PassParameters->ToonSeeThroughDistance = ToonSeeThroughDistance;
 	PassParameters->ToonSeeThroughSlotMask = ToonSeeThroughSlotMask;
-	PassParameters->bToonDebugGeometry = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerDebugGeometry.GetValueOnRenderThread(), 0, 2));
+	PassParameters->ToonEyeSlotMask = ToonEyeSlotMask;
+	PassParameters->bToonEyeUnlit = bToonEyeUnlit ? 1u : 0u;
+	PassParameters->ToonEyeTriangleStart = ToonEyeTriangleStart;
+	PassParameters->ToonEyeTriangleEnd = ToonEyeTriangleEnd;
+	PassParameters->bToonDebugGeometry = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerDebugGeometry.GetValueOnRenderThread(), 0, 3));
 	{
 		// double のワールド座標を float 2 つ（上位と下位）に分けて渡す（シェーダー側で MakeDFVector3 に戻す）
 		const FVector PreViewTranslationForNoise = View.ViewMatrices.GetPreViewTranslation();

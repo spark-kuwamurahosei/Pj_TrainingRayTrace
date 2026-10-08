@@ -192,6 +192,22 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：スロット番号"))
 	TArray<int32> SeeThroughSlots;
 
+	/** キャラクターの目として扱うパーツのマテリアルスロット番号（スケルタルメッシュのエディタのエレメント番号） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：スロット番号"))
+	TArray<int32> EyeSlots;
+
+	/** 目のスロットの中で、目として扱う最初の三角形の番号。眉毛が目と同じスロットにある場合に、目の部分だけを選ぶ（r.ToonRayTracer.Debug.Geometry 3 で、目が緑・それ以外が赤になるように調整する） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：三角形の範囲（開始）", ClampMin = "0", UIMin = "0"))
+	int32 EyeTriangleStart;
+
+	/** 目として扱う三角形の範囲の終わり（この番号は含まない）。0 なら最後まで */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：三角形の範囲（終了）", ClampMin = "0", UIMin = "0"))
+	int32 EyeTriangleEnd;
+
+	/** 目には陰影を付けず、光の向きや影に関係なくいつも明るい面の色で塗る（アニメ調の目） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：陰影を付けない"))
+	bool bEyeUnlit;
+
 	// ---- トゥーン：陰影 ----
 
 	/** 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） */

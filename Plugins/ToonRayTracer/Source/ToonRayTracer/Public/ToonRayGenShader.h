@@ -201,6 +201,11 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonSeeThroughBrightness)
 		SHADER_PARAMETER(float, ToonSeeThroughDistance)
 		SHADER_PARAMETER(uint32, ToonSeeThroughSlotMask)
+		// 目の表現：目のマテリアルスロットのビットと、目に陰影を付けないか
+		SHADER_PARAMETER(uint32, ToonEyeSlotMask)
+		SHADER_PARAMETER(uint32, ToonEyeTriangleStart)
+		SHADER_PARAMETER(uint32, ToonEyeTriangleEnd)
+		SHADER_PARAMETER(uint32, bToonEyeUnlit)
 		SHADER_PARAMETER(uint32, bToonDebugGeometry)
 		// 鳴潮風ルック フェーズ3：影の面を Skylight の色にどれだけ染めるか
 		SHADER_PARAMETER(float, ToonSkyTint)
