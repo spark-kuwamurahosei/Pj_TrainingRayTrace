@@ -202,8 +202,17 @@ float ToonSeeThroughBrightness;
 float ToonSeeThroughDistance;
 // 見せるパーツのマテリアルスロット（スロット番号 n なら 2^n のビット）。Custom Primitive Data の [13] を設定していないキャラクターに使う
 uint ToonSeeThroughSlotMask;
+// 目の表現：目のマテリアルスロット（スロット番号 n なら 2^n のビット）。キャラクターのこのパーツを目として扱う
+uint ToonEyeSlotMask;
+// 目の表現：目のスロットの中で、目として扱う三角形の番号の範囲 [Start, End)。End が 0 なら最後まで
+// 眉毛やまつ毛が目と同じスロットにある場合に、目の部分だけを選ぶ（番号は r.ToonRayTracer.Debug.Geometry 3 で調べる）
+uint ToonEyeTriangleStart;
+uint ToonEyeTriangleEnd;
+// 目の表現：1 なら、目には陰影を付けず、いつも明るい面の色で塗る
+uint bToonEyeUnlit;
 // 確認用：1 なら、カメラのレイが当たった面のジオメトリ番号（マテリアルスロット）を色で表示する
 // 2 なら、眉毛の透けの判定結果を色で表示する（GetDebugSeeThroughColor を参照）
+// 3 なら、目のスロットで、目として扱う三角形を緑、範囲外の三角形を赤で表示する
 uint bToonDebugGeometry;
 // 鳴潮風ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
 float ToonSkyTint;
@@ -349,6 +358,8 @@ struct FToonMaterial
 	uint bCharacter;
 	// 鳴潮風ルック：肌（UE のマテリアルのシェーディングモデルで判定）なら 1
 	uint bSkin;
+	// 目の表現：キャラクターの目のパーツ（ToonEyeSlotMask で指定したマテリアルスロット）なら 1
+	uint bEye;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -367,6 +378,7 @@ FToonMaterial GetDefaultMaterial()
 	Material.Density = 0.0f;
 	Material.bCharacter = 0;
 	Material.bSkin = 0;
+	Material.bEye = 0;
 	return Material;
 }
 
@@ -1110,6 +1122,20 @@ uint GetPayloadGeometryIndex(FDefaultPayload Payload)
 	return (Payload.InstanceIndex >> TOON_PAYLOAD_GEOMETRY_SHIFT) & TOON_PAYLOAD_GEOMETRY_MASK;
 }
 
+// 目の表現：目のスロットに当たったか
+bool IsEyeSlotHit(FDefaultPayload Payload, bool bCharacter)
+{
+	return bCharacter && ((ToonEyeSlotMask >> GetPayloadGeometryIndex(Payload)) & 1u) != 0;
+}
+
+// 目の表現：目のスロットの、目として扱う三角形の範囲に当たったか（PrimitiveIndex はスロットの中での三角形の番号）
+bool IsEyeHit(FDefaultPayload Payload, bool bCharacter)
+{
+	return IsEyeSlotHit(Payload, bCharacter)
+		&& Payload.PrimitiveIndex >= ToonEyeTriangleStart
+		&& (ToonEyeTriangleEnd == 0 || Payload.PrimitiveIndex < ToonEyeTriangleEnd);
+}
+
 bool IsPayloadBackFace(FDefaultPayload Payload)
 {
 	return (Payload.InstanceIndex & TOON_PAYLOAD_BACK_FACE_BIT) != 0;
@@ -1237,6 +1263,8 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 	Rec.Position = Ray.At(CenterPayload.HitT);
 	Rec.Material = GetSceneMaterial(CenterPayload.InstanceID);
 	Rec.ObjectId = CenterPayload.InstanceID;
+	// 目の表現：当たったパーツ（マテリアルスロット）が目か
+	Rec.Material.bEye = IsEyeHit(CenterPayload, Rec.Material.bCharacter != 0) ? 1u : 0u;
 
 	if (!bComputeNormal)
 	{
@@ -2626,13 +2654,15 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 		ShadowColor *= MaxShadowLuminance / ShadowLuminance;
 	}
 
-	float LightLevel = ComputeToonLightLevel(Rec, GeometricNormal, RandomState);
+	// 目の表現：アニメ調では、目は光の向きや影に関係なく明るく描く（白目が影の色で沈まないようにする）
+	bool bUnlitEye = Rec.Material.bEye != 0 && bToonEyeUnlit != 0;
+	float LightLevel = bUnlitEye ? 1.0f : ComputeToonLightLevel(Rec, GeometricNormal, RandomState);
 	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
 	Color += ComputeToonRim(Rec, Ray, LightLevel);
 
 	// 照り返し（間接光）：周りの面の色を、自分の素材の色に掛けて足す（カメラから直接見える面だけ。映り込みの先では省く）
-	if (bIndirect)
+	if (bIndirect && !bUnlitEye)
 	{
 		Color += Albedo * ComputeToonIndirect(Rec, GeometricNormal, RandomState) * ToonIndirectStrength;
 	}
@@ -2826,6 +2856,20 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 	{
 		FDefaultPayload DebugPayload;
 		return TraceScene(CameraRay, 0.0f, DebugPayload) ? GetDebugGeometryColor(GetPayloadGeometryIndex(DebugPayload)) : 0.0f;
+	}
+	if (bToonDebugGeometry == 3 && TraceMode != 0)
+	{
+		FDefaultPayload DebugPayload;
+		if (!TraceScene(CameraRay, 0.0f, DebugPayload))
+		{
+			return 0.0f;
+		}
+		bool bCharacter = GetSceneMaterial(DebugPayload.InstanceID).bCharacter != 0;
+		if (!IsEyeSlotHit(DebugPayload, bCharacter))
+		{
+			return 0.1f;
+		}
+		return IsEyeHit(DebugPayload, bCharacter) ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
 	}
 
 	FToonPendingRay Pending[TOON_MAX_PENDING_RAYS];

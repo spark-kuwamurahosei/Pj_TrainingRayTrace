@@ -12,6 +12,33 @@ namespace
 		return Variable;
 	}
 
+	// マテリアルスロット番号の一覧と、シェーダーで使うビットの集まり（0 ～ 30 番まで）を相互に変換する
+	int32 SlotsToMask(const TArray<int32>& Slots)
+	{
+		int32 SlotMask = 0;
+		for (const int32 Slot : Slots)
+		{
+			if (Slot >= 0 && Slot <= 30)
+			{
+				SlotMask |= 1 << Slot;
+			}
+		}
+		return SlotMask;
+	}
+
+	TArray<int32> MaskToSlots(int32 SlotMask)
+	{
+		TArray<int32> Slots;
+		for (int32 Slot = 0; Slot <= 30; ++Slot)
+		{
+			if ((SlotMask & (1 << Slot)) != 0)
+			{
+				Slots.Add(Slot);
+			}
+		}
+		return Slots;
+	}
+
 	void SetInt(const TCHAR* Name, int32 Value)
 	{
 		if (IConsoleVariable* Variable = FindToonConsoleVariable(Name))
@@ -131,6 +158,12 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	SeeThroughDistance = 20.0f;
 	// 確認に使っているキャラクター（Kanau）では、眉毛・目・まつ毛がエレメント 4 にある
 	SeeThroughSlots = { 4 };
+	// 眉毛と同じく、Kanau では目もエレメント 4 にある
+	EyeSlots = { 4 };
+	// Kanau では、目のスロットの三角形が「眉毛 → まぶた（まつ毛）→ 目」の順に並んでいて、1850 番から目になる
+	EyeTriangleStart = 1850;
+	EyeTriangleEnd = 0;
+	bEyeUnlit = true;
 	ShadowThreshold = 0.0f;
 	LitThreshold = 0.5f;
 	EdgeSoftness = 0.02f;
@@ -209,6 +242,10 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 		}
 		SetInt(TEXT("r.ToonRayTracer.Toon.SeeThroughSlotMask"), SlotMask);
 	}
+	SetInt(TEXT("r.ToonRayTracer.Toon.EyeSlotMask"), SlotsToMask(EyeSlots));
+	SetInt(TEXT("r.ToonRayTracer.Toon.EyeUnlit"), bEyeUnlit ? 1 : 0);
+	SetInt(TEXT("r.ToonRayTracer.Toon.EyeTriangleStart"), EyeTriangleStart);
+	SetInt(TEXT("r.ToonRayTracer.Toon.EyeTriangleEnd"), EyeTriangleEnd);
 	SetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);
@@ -288,6 +325,18 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 			}
 		}
 	}
+	{
+		int32 SlotMask = 0;
+		GetInt(TEXT("r.ToonRayTracer.Toon.EyeSlotMask"), SlotMask);
+		EyeSlots = MaskToSlots(SlotMask);
+	}
+	{
+		int32 Value = 0;
+		GetInt(TEXT("r.ToonRayTracer.Toon.EyeUnlit"), Value);
+		bEyeUnlit = Value != 0;
+	}
+	GetInt(TEXT("r.ToonRayTracer.Toon.EyeTriangleStart"), EyeTriangleStart);
+	GetInt(TEXT("r.ToonRayTracer.Toon.EyeTriangleEnd"), EyeTriangleEnd);
 	GetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);
