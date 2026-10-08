@@ -137,6 +137,7 @@ Custom Primitive Data は、マテリアルの種類（金属・ガラス）や�
 | 変数 | 既定値 | 内容 |
 |---|---|---|
 | `r.ToonRayTracer.SamplesPerPixel` | 4 | 1 ピクセルあたりのサンプル数（アンチエイリアス、1 ～ 64） |
+| `r.ToonRayTracer.StratifiedSampling` | 1 | 『The Rest of Your Life』第3章の層化。ピクセルを √N × √N のマスに分け、各マスのランダムな位置に 1 本ずつ飛ばす（N はそのフレームのサンプル数。平方数でないときの残りは完全なランダム） |
 | `r.ToonRayTracer.MotionSamplesPerPixel` | 2 | カメラや物体が動いている間のサンプル数（0 なら `SamplesPerPixel` と同じ）。動いている間の負荷を下げ、止まったら蓄積でアンチエイリアスを補う。蓄積しない設定では使わない |
 | `r.ToonRayTracer.UseGBufferNormal` | 1 | カメラから見えている面に GBuffer の滑らかな法線を使うか |
 | `r.ToonRayTracer.UseGBufferBaseColor` | 1 | マテリアル未指定のメッシュに、UE のマテリアルの色（GBuffer のベースカラー）を使うか |

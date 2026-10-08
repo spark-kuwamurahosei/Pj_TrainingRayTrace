@@ -81,6 +81,9 @@ uint SamplesPerPixel;
 // 動いている間は負荷を下げ、止まったらフレームをまたいだ蓄積でアンチエイリアスを補う
 uint MotionSamplesPerPixel;
 
+// 『The Rest of Your Life』第2〜3章：1 なら、ピクセル内のサンプル位置を層化する（格子状のマスに 1 本ずつ散らす）
+uint bStratifiedSampling;
+
 // 0: 法線の可視化、1: 本の第9〜11章のマテリアル、2: N・L、3: トゥーン
 // トゥーンはパーミュテーション（TOON_SHADING）で分け、確認用の表示モードのコードを含めない
 #if TOON_SHADING
@@ -2667,6 +2670,17 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		{
 			// ピクセル中心から [-0.5, 0.5) の範囲でずらす（本の sample_square に相当）
 			float2 Offset = float2(ToonRandomFloat(RandomState), ToonRandomFloat(RandomState)) - 0.5f;
+			// 『The Rest of Your Life』第3章：層化（本の sample_square_stratified）
+			// ピクセルを √N × √N のマスに分け、各マスの中のランダムな位置に 1 本ずつ飛ばす
+			// 完全にランダムだとサンプルが偏って固まることがあるが、層化するとピクセル全体に均等に散らばり、
+			// 同じサンプル数でも誤差が小さくなる（特に物体の輪郭などの境目）
+			// サンプル数が平方数でないときは、格子に入りきらない残りのサンプルを完全なランダムにする
+			uint StrataPerAxis = (uint)floor(sqrt((float)NumSamples) + 1.0e-3f);
+			if (bStratifiedSampling != 0 && SampleIndex < StrataPerAxis * StrataPerAxis)
+			{
+				float2 Cell = float2(SampleIndex % StrataPerAxis, SampleIndex / StrataPerAxis);
+				Offset = (Cell + Offset + 0.5f) / (float)StrataPerAxis - 0.5f;
+			}
 			if (bBeforeTSR != 0)
 			{
 				Offset = 0.0f;
