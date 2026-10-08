@@ -172,6 +172,11 @@ float ToonShadowBias;
 float ToonSoftShadowCosAngle;
 uint ToonSoftShadowSamples;
 uint ToonSoftShadowSteps;
+// トゥーンの照り返し（間接光、『The Rest of Your Life』の応用）
+// ・ToonIndirectStrength：周りの面の色を足す強さ（0 なら照り返しなし）
+// ・ToonIndirectSamples：周りを調べるレイの本数
+float ToonIndirectStrength;
+uint ToonIndirectSamples;
 // Perlin ノイズの応用：影の境目を手描き風に揺らす強さ（0 なら揺らさない）と、揺れの大きさ（cm）
 float ToonShadowNoiseStrength;
 float ToonShadowNoiseSize;
@@ -2507,7 +2512,77 @@ float3 GetToonSkyHue()
 // 影の面の明るさの上限（明るい面の明るさに対する割合）
 #define TOON_MAX_SHADOW_TO_LIT_RATIO 0.8f
 
-float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState)
+// トゥーンの照り返し（間接光）：面の上の半球に、コサイン分布（『The Rest of Your Life』第7〜8章）でレイを飛ばし、
+// 当たった面の「トゥーンの色」（光が当たっていれば明るい色、影なら影の色）の平均を返す
+// 赤い壁の近くの面が赤みを帯びる、オレンジの床の上の影が床の色に染まる、といった照り返しになる
+// コサイン分布で選ぶので、周りの面の色をそのまま平均すれば、拡散反射で受け取る光になる（重みは 1）
+// 負荷を抑えるため、当たった面の法線は補助レイで求めず、画面に映っていれば GBuffer の法線、映っていなければ光が当たる向きとみなす
+// 色も同じく、画面に映っていれば GBuffer の色、映っていなければ物体ごとの代表色を使う。空に抜けたレイは何も足さない（空の色は SkyTint で扱う）
+float3 ComputeToonIndirect(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
+{
+	if (ToonIndirectStrength <= 0.0f || ToonIndirectSamples == 0)
+	{
+		return 0.0f;
+	}
+
+	FToonOnb Onb = MakeOnb(Rec.Normal);
+	float3 Sum = 0.0f;
+	[loop]
+	for (uint SampleIndex = 0; SampleIndex < ToonIndirectSamples; ++SampleIndex)
+	{
+		FToonRay BounceRay;
+		BounceRay.Origin = Rec.Position + GeometricNormal * ToonShadowBias;
+		BounceRay.Direction = SafeNormalize(OnbTransform(Onb, RandomCosineDirection(RandomState)), Rec.Normal);
+
+		// 解析的な物体は法線を求める負荷が小さいので求める。シーンのメッシュは GBuffer から読む
+		FToonHitRecord Hit = (FToonHitRecord)0;
+		if (!HitAnything(BounceRay, TOON_RAY_TMIN, Hit, 0.0f, TraceMode == 0))
+		{
+			continue;
+		}
+		if (Hit.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+		{
+			Sum += Hit.Material.Albedo;
+			continue;
+		}
+
+		bool bHasNormal = TraceMode == 0;
+		if (TraceMode != 0 && Hit.Material.Type == TOON_MATERIAL_DEFAULT)
+		{
+			// 画面に映っている同じ点なら、GBuffer の色と法線を使う。それ以外は物体ごとの代表色
+			float4 ClipPosition = mul(float4(Hit.Position, 1.0f), TranslatedWorldToClip);
+			float2 NDC = ClipPosition.xy / max(ClipPosition.w, 1.0e-6f);
+			float2 HitUV = float2(NDC.x * 0.5f + 0.5f, 0.5f - NDC.y * 0.5f);
+			if (ClipPosition.w > 0.0f && all(abs(NDC) <= 1.0f) && IsGBufferSamePoint(HitUV, Hit.Position, length(Hit.Position)))
+			{
+				int2 GBufferPixel = GetGBufferPixel(HitUV);
+				ApplyGBufferMaterial(GBufferPixel, Hit);
+				ApplyGBufferNormal(GBufferPixel, BounceRay, Hit);
+				bHasNormal = bUseGBufferNormal != 0;
+			}
+			else
+			{
+				ApplyObjectColorFallback(Hit);
+			}
+		}
+
+		// 当たった面のトゥーンの明るさ：面の向き（分からなければ光が当たる向きとみなす）とシャドウレイ
+		float Level = 0.0f;
+		if (bHasDirectionalLight != 0)
+		{
+			Level = bHasNormal ? ToonLightLevel(dot(Hit.Normal, ToLightDirection)) : 1.0f;
+			// シャドウレイの始点は、当たった点からレイの来た方向へ少し戻した位置（法線が分からない場合でも面の手前になる）
+			if (Level > 0.0f && bToonCastShadows != 0 && !IsLightVisible(Hit.Position - BounceRay.Direction * ToonShadowBias, false))
+			{
+				Level = 0.0f;
+			}
+		}
+		Sum += Hit.Material.Albedo * lerp(ToonShadowColor, ToonLightColor, Level);
+	}
+	return Sum / (float)ToonIndirectSamples;
+}
+
+float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState, bool bIndirect)
 {
 	float3 Albedo = Rec.Material.Albedo;
 	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
@@ -2537,6 +2612,12 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
 	Color += ComputeToonRim(Rec, Ray, LightLevel);
+
+	// 照り返し（間接光）：周りの面の色を、自分の素材の色に掛けて足す（カメラから直接見える面だけ。映り込みの先では省く）
+	if (bIndirect)
+	{
+		Color += Albedo * ComputeToonIndirect(Rec, GeometricNormal, RandomState) * ToonIndirectStrength;
+	}
 	return Color;
 }
 
@@ -2762,7 +2843,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 		if (!bReflective || Current.Depth >= ToonReflectionDepth)
 		{
 			// 普通の素材か、反射回数の上限に達した場合は、その場で塗って終わる（黒にはしない）
-			Color += Current.Throughput * ShadeToonOpaque(Rec, Current.Ray, GeometricNormal, RandomState);
+			Color += Current.Throughput * ShadeToonOpaque(Rec, Current.Ray, GeometricNormal, RandomState, bCameraRay);
 			continue;
 		}
 
