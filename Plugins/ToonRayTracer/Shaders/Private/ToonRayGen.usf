@@ -84,6 +84,13 @@ uint MotionSamplesPerPixel;
 // 『The Rest of Your Life』第2〜3章：1 なら、ピクセル内のサンプル位置を層化する（格子状のマスに 1 本ずつ散らす）
 uint bStratifiedSampling;
 
+// 『The Rest of Your Life』：拡散反射（ランバート）で、反射したレイの方向をどう選ぶか（r.ToonRayTracer.ScatterSampling）
+//   0：法線＋単位球上のランダムな点（『One Weekend』の方法。結果的にコサイン分布になる）
+//   1：半球上で一様（第6章の比較用。平均は同じだが、ノイズが増える）
+#define TOON_SCATTER_SAMPLING_UNIT_VECTOR		0
+#define TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE	1
+uint ScatterSampling;
+
 // 0: 法線の可視化、1: 本の第9〜11章のマテリアル、2: N・L、3: トゥーン
 // トゥーンはパーミュテーション（TOON_SHADING）で分け、確認用の表示モードのコードを含めない
 #if TOON_SHADING
@@ -1624,10 +1631,13 @@ float Reflectance(float Cosine, float RefractionIndexRatio)
 
 // フェーズ8〜9：マテリアルごとの散乱（本の第10〜11章の material::scatter に相当）
 // 散乱したレイと減衰率を返す。光が吸収された場合は false を返す
-bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout uint RandomState, out float3 Attenuation, out FToonRay Scattered)
+// 『The Rest of Your Life』第6章以降：bSkipPdf が false（ランバート）なら、散乱の方向は呼び出し側が PDF に従って選ぶ
+// （本の scatter_record。金属・ガラス・光る物体は鏡面などで方向が決まるため、PDF を使わない）
+bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout uint RandomState, out float3 Attenuation, out FToonRay Scattered, out bool bSkipPdf)
 {
 	Scattered.Origin = Rec.Position;
 	Attenuation = Material.Albedo;
+	bSkipPdf = true;
 
 	// 『The Next Week』第7章：光る素材は光を放つだけで、反射しない（本の diffuse_light は scatter で false を返す）
 	if (Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
@@ -1675,15 +1685,43 @@ bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout u
 		return dot(Scattered.Direction, Rec.Normal) > 0.0f;
 	}
 
-	// ランバート反射（未設定のマテリアルも含む）：法線＋単位球上のランダムな点の方向へ反射する
-	float3 Direction = Rec.Normal + RandomUnitVector(RandomState);
-	// 法線とほぼ逆向きの乱数が出ると長さが 0 に近づくため、その場合は法線方向にする（本の near_zero）
-	if (dot(Direction, Direction) < 1.0e-8f)
-	{
-		Direction = Rec.Normal;
-	}
-	Scattered.Direction = normalize(Direction);
+	// ランバート反射（未設定のマテリアルも含む）：方向は呼び出し側で PDF に従って選ぶ
+	Scattered.Direction = Rec.Normal;
+	bSkipPdf = false;
 	return true;
+}
+
+// 『The Rest of Your Life』第6章：ランバートの散乱の PDF（本の lambertian::scattering_pdf）
+// 拡散反射面は、法線に近い方向ほど多くの光を返す（cosθ / π。半球全体で積分すると 1）
+float LambertScatteringPdf(float3 Normal, float3 Direction)
+{
+	return max(dot(Normal, Direction), 0.0f) / PI;
+}
+
+// 『The Rest of Your Life』第6〜8章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
+// 色は「素材の色 × 散乱の PDF ÷ 選んだ方向の PDF」で重み付けする（本の ray_color）
+// 選び方を変えても平均（最終的な明るさ）は同じで、変わるのはノイズの量だけ
+float3 SampleScatterDirection(float3 Normal, inout uint RandomState, out float SamplingPdf)
+{
+	float3 Direction;
+	if (ScatterSampling == TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE)
+	{
+		// 第6章：半球上で一様に選ぶ（本の random_on_hemisphere）。どの方向も PDF は 1 / 2π
+		Direction = RandomUnitVector(RandomState);
+		if (dot(Direction, Normal) < 0.0f)
+		{
+			Direction = -Direction;
+		}
+		SamplingPdf = 1.0f / (2.0f * PI);
+		return Direction;
+	}
+
+	// 法線＋単位球上のランダムな点の方向（『One Weekend』の方法）。結果的に PDF は散乱の PDF と同じ cosθ / π になる
+	Direction = Normal + RandomUnitVector(RandomState);
+	// 法線とほぼ逆向きの乱数が出ると長さが 0 に近づくため、その場合は法線方向にする（本の near_zero）
+	Direction = SafeNormalize(Direction, Normal);
+	SamplingPdf = LambertScatteringPdf(Normal, Direction);
+	return Direction;
 }
 
 // フェーズ6〜8：マテリアルに応じてレイを反射させ、届いた光を求める（本の第9〜10章）
@@ -1751,10 +1789,25 @@ float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 
 		float3 ScatterAttenuation;
 		FToonRay Scattered;
-		if (!Scatter(Rec.Material, Ray, Rec, RandomState, ScatterAttenuation, Scattered))
+		bool bSkipPdf;
+		if (!Scatter(Rec.Material, Ray, Rec, RandomState, ScatterAttenuation, Scattered, bSkipPdf))
 		{
 			// 吸収された、または光る物体に当たった
 			return Radiance;
+		}
+
+		if (!bSkipPdf)
+		{
+			// 『The Rest of Your Life』第6章：拡散反射は、方向を PDF に従って選び、散乱の PDF ÷ 選んだ方向の PDF で重み付けする
+			float SamplingPdf;
+			Scattered.Direction = SampleScatterDirection(Rec.Normal, RandomState, SamplingPdf);
+			float ScatteringPdf = LambertScatteringPdf(Rec.Normal, Scattered.Direction);
+			if (SamplingPdf <= 0.0f || ScatteringPdf <= 0.0f)
+			{
+				// 面の内側へ向かう方向や、選ばれるはずのない方向は光を運ばない
+				return Radiance;
+			}
+			ScatterAttenuation *= ScatteringPdf / SamplingPdf;
 		}
 
 		Attenuation *= ScatterAttenuation;

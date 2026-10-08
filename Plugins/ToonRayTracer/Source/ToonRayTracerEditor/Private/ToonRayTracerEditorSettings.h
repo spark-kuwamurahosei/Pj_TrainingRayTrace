@@ -36,6 +36,14 @@ enum class EToonRayTracerAnalyticScene : uint8
 	FinalScene = 5		UMETA(DisplayName = "The Next Week 第10章：final_scene（簡易版）"),
 };
 
+// 拡散反射の方向の選び方（r.ToonRayTracer.ScatterSampling の値と一致させる。『The Rest of Your Life』）
+UENUM()
+enum class EToonRayTracerScatterSampling : uint8
+{
+	UnitVector = 0			UMETA(DisplayName = "法線＋単位球上の点（One Weekend）"),
+	UniformHemisphere = 1	UMETA(DisplayName = "半球上で一様（第6章の比較用）"),
+};
+
 /**
  * ToonRayTracer のエディタパネルに表示する設定。
  * 値を変えると対応するコンソール変数（r.ToonRayTracer.*）にすぐ反映され、プロジェクトのユーザー設定に保存される。
@@ -121,6 +129,10 @@ public:
 	/** 確認用の「本の第9〜11章」モードでの反射回数の上限 */
 	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "反射回数の上限（第9〜11章モード）", ClampMin = "1", ClampMax = "50", UIMin = "1", UIMax = "50"))
 	int32 MaxDepth;
+
+	/** 確認用の「本の第9〜11章」モードで、拡散反射の方向をどう選ぶか（『The Rest of Your Life』）。平均の明るさは同じで、ノイズの量が変わる */
+	UPROPERTY(EditAnywhere, config, Category = "表示", meta = (DisplayName = "拡散反射の方向の選び方（第9〜11章モード）"))
+	EToonRayTracerScatterSampling ScatterSampling;
 
 	// ---- トゥーン：対象 ----
 
