@@ -88,9 +88,11 @@ uint bStratifiedSampling;
 //   0：法線＋単位球上のランダムな点（『One Weekend』の方法。結果的にコサイン分布になる）
 //   1：半球上で一様（第6章の比較用。平均は同じだが、ノイズが増える）
 //   2：コサイン分布（第7〜8章。法線を基準にした正規直交基底で、cosθ に比例した方向を直接作る）
+//   3：ライトを直接狙う（第9章。光る四角形の上のランダムな点へ向けて飛ばす。直接光だけになる）
 #define TOON_SCATTER_SAMPLING_UNIT_VECTOR		0
 #define TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE	1
 #define TOON_SCATTER_SAMPLING_COSINE			2
+#define TOON_SCATTER_SAMPLING_LIGHT			3
 uint ScatterSampling;
 
 // 0: 法線の可視化、1: 本の第9〜11章のマテリアル、2: N・L、3: トゥーン
@@ -1737,10 +1739,47 @@ float3 OnbTransform(FToonOnb Onb, float3 Local)
 	return Local.x * Onb.U + Local.y * Onb.V + Local.z * Onb.W;
 }
 
-// 『The Rest of Your Life』第6〜8章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
+// 『The Rest of Your Life』第9章：狙う光る四角形（解析的な物体のシーンで、最初に見つかった光る四角形）。なければ -1
+int FindLightQuad()
+{
+	if (TraceMode != 0)
+	{
+		return -1;
+	}
+	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
+	{
+		if ((uint)round(QuadMaterialParams[QuadIndex].x) == TOON_MATERIAL_DIFFUSE_LIGHT)
+		{
+			return (int)QuadIndex;
+		}
+	}
+	return -1;
+}
+
+// 『The Rest of Your Life』第9章：光る四角形の上のランダムな点へ向かう方向と、その方向を選ぶ PDF（本の quad::random と quad::pdf_value）
+// 四角形の上で一様に点を選ぶと、面積あたりの確率は 1 / 面積。これを方向あたりの確率にすると「距離² ÷ (ライトの面の cos × 面積)」になる
+// （遠いほど、斜めから見るほど、同じ方向の幅に入るライトの面積が広くなるため）
+float3 SampleLightQuadDirection(uint LightIndex, float3 Position, inout uint RandomState, out float SamplingPdf)
+{
+	float3 Q = QuadQ[LightIndex].xyz;
+	float3 U = QuadU[LightIndex].xyz;
+	float3 V = QuadV[LightIndex].xyz;
+	float3 OnLight = Q + ToonRandomFloat(RandomState) * U + ToonRandomFloat(RandomState) * V;
+	float3 ToLight = OnLight - Position;
+	float DistanceSquared = dot(ToLight, ToLight);
+	float3 Direction = ToLight * rsqrt(max(DistanceSquared, 1.0e-12f));
+
+	float3 Cross = cross(U, V);
+	float Area = length(Cross);
+	float LightCosine = abs(dot(Direction, Cross / Area));
+	SamplingPdf = LightCosine > 1.0e-6f ? DistanceSquared / (LightCosine * Area) : 0.0f;
+	return Direction;
+}
+
+// 『The Rest of Your Life』第6〜9章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
 // 色は「素材の色 × 散乱の PDF ÷ 選んだ方向の PDF」で重み付けする（本の ray_color）
 // 選び方を変えても平均（最終的な明るさ）は同じで、変わるのはノイズの量だけ
-float3 SampleScatterDirection(float3 Normal, inout uint RandomState, out float SamplingPdf)
+float3 SampleScatterDirection(float3 Position, float3 Normal, inout uint RandomState, out float SamplingPdf)
 {
 	float3 Direction;
 	if (ScatterSampling == TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE)
@@ -1755,7 +1794,17 @@ float3 SampleScatterDirection(float3 Normal, inout uint RandomState, out float S
 		return Direction;
 	}
 
-	if (ScatterSampling == TOON_SCATTER_SAMPLING_COSINE)
+	if (ScatterSampling == TOON_SCATTER_SAMPLING_LIGHT)
+	{
+		// 第9章：ライトを直接狙う。ライトがないシーンでは、コサイン分布にする
+		int LightIndex = FindLightQuad();
+		if (LightIndex >= 0)
+		{
+			return SampleLightQuadDirection((uint)LightIndex, Position, RandomState, SamplingPdf);
+		}
+	}
+
+	if (ScatterSampling == TOON_SCATTER_SAMPLING_COSINE || ScatterSampling == TOON_SCATTER_SAMPLING_LIGHT)
 	{
 		// 第7〜8章：z 軸のまわりのコサイン分布の方向を、法線を基準にした正規直交基底で変換する（本の cosine_pdf）
 		// PDF は散乱の PDF と同じ cosθ / π。重みは「素材の色」そのものになる
@@ -1800,7 +1849,10 @@ float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 			ApplyGBufferSurfaceFromScreen(Rec);
 		}
 
-		if (Rec.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+		// 『The Rest of Your Life』第9章：ライトを狙うときは、光る物体は表側（四角形なら法線の向き）にだけ光を放つ（本の diffuse_light::emitted）
+		// 両面から光ると、ライトの裏側（コーネルボックスでは天井）が照らされ、狙ったレイと合わずにノイズになるため
+		bool bEmits = ScatterSampling < TOON_SCATTER_SAMPLING_LIGHT || Rec.bFrontFace;
+		if (Rec.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT && bEmits)
 		{
 			Radiance += Attenuation * Rec.Material.Albedo;
 		}
@@ -1848,7 +1900,7 @@ float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
 		{
 			// 『The Rest of Your Life』第6章：拡散反射は、方向を PDF に従って選び、散乱の PDF ÷ 選んだ方向の PDF で重み付けする
 			float SamplingPdf;
-			Scattered.Direction = SampleScatterDirection(Rec.Normal, RandomState, SamplingPdf);
+			Scattered.Direction = SampleScatterDirection(Rec.Position, Rec.Normal, RandomState, SamplingPdf);
 			float ScatteringPdf = LambertScatteringPdf(Rec.Normal, Scattered.Direction);
 			if (SamplingPdf <= 0.0f || ScatteringPdf <= 0.0f)
 			{
