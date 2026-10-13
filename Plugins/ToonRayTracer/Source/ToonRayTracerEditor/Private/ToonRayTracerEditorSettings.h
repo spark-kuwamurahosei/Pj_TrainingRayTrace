@@ -228,6 +228,42 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：ハイライトの探す距離（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
 	float EyeHighlightSearchRadius;
 
+	/** 顔の明暗を、面の向きではなく、頭の向きと光の向きから計算した境目で決める（SDF の顔影と同じ動き方）。横や後ろから光が当たったときの顔の不規則な明暗をなくす */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：影の境目を計算で作る"))
+	bool bFaceShadow;
+
+	/** 顔として扱うパーツのマテリアルスロット番号（スケルタルメッシュのエディタのエレメント番号） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：スロット番号"))
+	TArray<int32> FaceSlots;
+
+	/** 顔の影の境目の曲がり具合。目の高さでいちばん影の側へふくらみ、額や顎に向かうほど光の側へ戻る（頬に沿ったカーブ）。0 ならまっすぐ */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：境目の曲がり", ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
+	float FaceShadowCurve;
+
+	/** 顔の影の境目のぼかし幅（顔の半分の幅を 1 としたとき）。大きいほど柔らかい影になる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：境目のぼかし", ClampMin = "0.001", UIMin = "0.01", UIMax = "1.0"))
+	float FaceShadowSoftness;
+
+	/** 顔の影：前からの光の補正。光の前後の成分（1：正面、0：真横）からこの値を引いて使う。横寄りの光で、横から見たときに鼻筋だけが細く明るく見えるのを防ぐ。0 なら補正なし */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：前からの光の補正", ClampMin = "0.0", ClampMax = "0.99", UIMin = "0.0", UIMax = "0.9"))
+	float FaceShadowFrontBias;
+
+	/** 顔の半分の幅（両目の間の距離の何倍か）。影の境目が顔の端に届く位置が変わる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：幅（両目の距離の倍率）", ClampMin = "0.1", UIMin = "0.5", UIMax = "2.0"))
+	float FaceWidthScale;
+
+	/** 顔の向きを求めるための、頭のボーンの名前 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：頭のボーン"))
+	FString FaceHeadBone;
+
+	/** 顔の向きと幅を求めるための、左目のボーンの名前 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：左目のボーン"))
+	FString FaceLeftEyeBone;
+
+	/** 顔の向きと幅を求めるための、右目のボーンの名前 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：右目のボーン"))
+	FString FaceRightEyeBone;
+
 	// ---- トゥーン：陰影 ----
 
 	/** 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） */

@@ -221,10 +221,29 @@ float ToonEyeShadowBrightness;
 float ToonEyeHighlightStrength;
 float ToonEyeHighlightThreshold;
 float ToonEyeHighlightSearchRadius;
+// 顔の影：顔の明暗を、面の向きではなく、頭の向きと光の向きから計算した境目で決める（SDF の顔影と同じ動き方）
+// ・bToonFaceShadow：1 なら有効
+// ・ToonFaceSlotMask：顔のマテリアルスロット（スロット番号 n なら 2^n のビット）
+// ・ToonFaceCenter：両目の中点（Translated World）、w は顔の半分の幅（cm）
+// ・ToonFaceRight / ToonFaceForward：顔の右と前の向き（水平）。Forward の w は、この顔として扱う範囲の半径（cm）
+uint bToonFaceShadow;
+uint ToonFaceSlotMask;
+uint NumToonFaces;
+// 顔の影：境目の曲がり具合。目の高さから上下に離れるほど、境目を光の側へ戻す（頬や顎に沿ったカーブ。0 ならまっすぐ）
+float ToonFaceShadowCurve;
+// 顔の影：境目のぼかし幅（顔の半分の幅を 1 としたときの、境目の片側の幅）。大きいほど柔らかい影になる
+float ToonFaceShadowSoftness;
+// 顔の影：前からの光の補正。光の前後の成分（-1 ～ 1）からこの値を引いて使う
+// 横寄りの光で、顔の中心線（鼻・口・顎の輪郭）だけが細く明るくなるのを防ぐ（0 なら補正なし）
+float ToonFaceShadowFrontBias;
+float4 ToonFaceCenter[TOON_MAX_FACES];
+float4 ToonFaceRight[TOON_MAX_FACES];
+float4 ToonFaceForward[TOON_MAX_FACES];
 // 確認用：1 なら、カメラのレイが当たった面のジオメトリ番号（マテリアルスロット）を色で表示する
 // 2 なら、眉毛の透けの判定結果を色で表示する（GetDebugSeeThroughColor を参照）
 // 3 なら、目のスロットで、目として扱う三角形を緑、範囲外の三角形を赤で表示する
 // 4 なら、目の上まぶたの影の判定結果を色で表示する（GetDebugEyelidColor を参照）
+// 6 なら、顔の影の結果を表示する（黄：明るい面、青：影、マゼンタ：近くに顔が見つからない）
 // 5 なら、目の N・H（面の向きと、光と視線の中間の向きの近さ）を明るさで表示し、ハイライトになる部分を赤で示す
 uint bToonDebugGeometry;
 // 鳴潮風ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
@@ -373,6 +392,8 @@ struct FToonMaterial
 	uint bSkin;
 	// 目の表現：キャラクターの目のパーツ（ToonEyeSlotMask で指定したマテリアルスロット）なら 1
 	uint bEye;
+	// 顔の影：キャラクターの顔のパーツ（ToonFaceSlotMask で指定したマテリアルスロット）なら 1
+	uint bFace;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -392,6 +413,7 @@ FToonMaterial GetDefaultMaterial()
 	Material.bCharacter = 0;
 	Material.bSkin = 0;
 	Material.bEye = 0;
+	Material.bFace = 0;
 	return Material;
 }
 
@@ -1278,6 +1300,8 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 	Rec.ObjectId = CenterPayload.InstanceID;
 	// 目の表現：当たったパーツ（マテリアルスロット）が目か
 	Rec.Material.bEye = IsEyeHit(CenterPayload, Rec.Material.bCharacter != 0) ? 1u : 0u;
+	// 顔の影：当たったパーツ（マテリアルスロット）が顔か
+	Rec.Material.bFace = Rec.Material.bCharacter != 0 && ((ToonFaceSlotMask >> GetPayloadGeometryIndex(CenterPayload)) & 1u) != 0 ? 1u : 0u;
 
 	if (!bComputeNormal)
 	{
@@ -2435,6 +2459,69 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 	return Visibility;
 }
 
+// 顔の影：光が水平方向からほとんど来ない（真上や真下からの光）とみなす、水平成分の長さ
+#define TOON_FACE_VERTICAL_LIGHT 0.05f
+// 顔の影：境目を曲げるときの、目の高さからの上下の距離の上限（顔の半分の幅を 1 としたとき）
+#define TOON_FACE_CURVE_MAX_HEIGHT 2.0f
+
+// 顔の影：Position に最も近い顔（両目の中点からの距離が範囲の半径以内）について、
+// 面の向きの代わりに使う N・L の値を求める。近くに顔がなければ false
+// 顔の左右の位置 S（-1：片側の端、0：中央、1：反対側の端）と、光の向き（顔から見て前後と左右）から境目を決める
+// ・光が正面から当たる：顔全体が明るい
+// ・真横から当たる：光の側の半分が明るい（境目は顔の中央）
+// ・真後ろから当たる：顔全体が影
+// その間は、境目がまっすぐ顔の上を左右に動く（SDF の顔影と同じ動き方。面の向きによる不規則な明暗が出ない）
+bool ComputeFaceShadowNdotL(float3 Position, out float FaceNdotL)
+{
+	FaceNdotL = 0.0f;
+	int BestFace = -1;
+	float BestDistance = 1.0e30f;
+	for (uint FaceIndex = 0; FaceIndex < NumToonFaces; ++FaceIndex)
+	{
+		float Distance = length(Position - ToonFaceCenter[FaceIndex].xyz);
+		if (Distance < ToonFaceForward[FaceIndex].w && Distance < BestDistance)
+		{
+			BestFace = (int)FaceIndex;
+			BestDistance = Distance;
+		}
+	}
+	if (BestFace < 0)
+	{
+		return false;
+	}
+
+	float3 Right = ToonFaceRight[BestFace].xyz;
+	float3 Forward = ToonFaceForward[BestFace].xyz;
+	float HalfWidth = max(ToonFaceCenter[BestFace].w, 1.0e-4f);
+	float3 Offset = Position - ToonFaceCenter[BestFace].xyz;
+	float S = clamp(dot(Offset, Right) / HalfWidth, -1.0f, 1.0f);
+	// 目の高さからの上下の位置（顔の半分の幅を 1 とする。上が正）
+	float Height = clamp(Offset.z / HalfWidth, -TOON_FACE_CURVE_MAX_HEIGHT, TOON_FACE_CURVE_MAX_HEIGHT);
+
+	float LightRight = dot(ToLightDirection, Right);
+	float LightForward = dot(ToLightDirection, Forward);
+	float Horizontal = length(float2(LightRight, LightForward));
+	// 明るい側までの近さ（正なら明るい面）。光の側の S を正にして、光が前にあるほど境目を影の側へ動かす
+	// 光の前後の成分（1：正面、0：真横、-1：真後ろ）。補正値以下は真横より後ろとして扱い、境目を顔の中央より光の側に置く
+	// （前寄りの成分が少しだけあると、境目が中心線のすぐ影の側に来て、横から見たときに鼻筋だけが細く明るく見えるため）
+	// 正面からの光（1）はそのまま 1 になり、顔全体が明るい
+	float FrontBias = clamp(ToonFaceShadowFrontBias, 0.0f, 0.99f);
+	float Front = (LightForward / max(Horizontal, 1.0e-4f) - FrontBias) / (1.0f - FrontBias);
+	float Lit = Horizontal < TOON_FACE_VERTICAL_LIGHT ? 1.0f
+		: (LightRight >= 0.0f ? S : -S) + Front;
+	// 境目を頬に沿ったカーブにする：目の高さでいちばん影の側へふくらみ、額や顎に向かうほど光の側へ戻る
+	// （球に横から光を当てたときの明暗の境目と同じ形）。光が横に近いほど強く曲げ、正面や真後ろからの光では曲げない
+	if (Horizontal >= TOON_FACE_VERTICAL_LIGHT)
+	{
+		float Sideness = abs(LightRight) / Horizontal;
+		Lit -= ToonFaceShadowCurve * Sideness * Height * Height;
+	}
+	// 全体の影の境目（ToonShadowThreshold）をまたぐように N・L の値に直す（段階数はほかの面と同じになる）
+	// 顔だけ境目のぼかしを広げるため、顔の上で ToonFaceShadowSoftness の幅が、全体のぼかし幅（ToonEdgeSoftness）になるように縮める
+	FaceNdotL = ToonShadowThreshold + Lit * max(ToonEdgeSoftness, 1.0e-4f) / max(ToonFaceShadowSoftness, 1.0e-4f);
+	return true;
+}
+
 float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
 	if (bHasDirectionalLight == 0)
@@ -2470,7 +2557,13 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 
 	// 鳴潮風ルック フェーズ2：肌は影との境目を肌用の値にする（N・L をずらして、全体の境目の位置に合わせる）
 	// 3 段階のときは、中間と明るい面の境目も同じだけずれる
-	if (Rec.Material.bSkin != 0)
+	// 顔の影：顔は面の向きの代わりに、頭の向きと光の向きから計算した境目を使う（顔の不規則な明暗をなくす）
+	float FaceNdotL;
+	if (Rec.Material.bFace != 0 && bToonFaceShadow != 0 && ComputeFaceShadowNdotL(Rec.Position, FaceNdotL))
+	{
+		NdotL = FaceNdotL;
+	}
+	else if (Rec.Material.bSkin != 0)
 	{
 		NdotL += ToonShadowThreshold - ToonSkinShadowThreshold;
 	}
@@ -2770,6 +2863,17 @@ float ComputeEyeHighlight(FToonHitRecord Rec, FToonRay Ray, out float NdotH)
 
 float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState, bool bIndirect)
 {
+	// 確認用：顔の影の結果（黄：明るい面、青：影、マゼンタ：近くに顔が見つからない）
+	if (bToonDebugGeometry == 6 && Rec.Material.bFace != 0)
+	{
+		float DebugNdotL;
+		if (!ComputeFaceShadowNdotL(Rec.Position, DebugNdotL))
+		{
+			return float3(1.0f, 0.0f, 1.0f);
+		}
+		return lerp(float3(0.0f, 0.0f, 1.0f), float3(1.0f, 1.0f, 0.0f), ToonLightLevel(DebugNdotL));
+	}
+
 	float3 Albedo = Rec.Material.Albedo;
 	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
 	// 鳴潮風ルック フェーズ2：肌は肌用の影色（赤みのある色）にする

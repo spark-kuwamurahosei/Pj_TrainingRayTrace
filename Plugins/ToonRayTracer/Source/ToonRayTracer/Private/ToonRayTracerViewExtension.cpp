@@ -9,6 +9,7 @@
 #include "FXRenderingUtils.h"
 #include "SystemTextures.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 #include "RenderingThread.h"
@@ -299,6 +300,65 @@ namespace
 		TEXT("Maximum distance (cm) to search for the edges of the visible eye, used to treat the eye as a sphere for the highlight. Should be larger than the eye radius"),
 		ECVF_RenderThreadSafe);
 
+	// 顔の影：顔の明暗を、頭の向きと光の向きから計算した境目で決める
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonFaceShadow(
+		TEXT("r.ToonRayTracer.Toon.FaceShadow"),
+		1,
+		TEXT("Shade the character's face with a shadow boundary computed from the head direction and the light direction instead of the surface normals, like SDF face shadows (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonFaceSlotMask(
+		TEXT("r.ToonRayTracer.Toon.FaceSlotMask"),
+		8,
+		TEXT("Bit mask of the material slots treated as the character's face (slot n: 2^n, e.g. 8 for slot 3)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceShadowCurve(
+		TEXT("r.ToonRayTracer.Toon.FaceShadowCurve"),
+		0.15f,
+		TEXT("How much the face shadow boundary curves along the cheeks: farther above or below the eyes, the boundary moves back toward the lit side (0: straight)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceShadowSoftness(
+		TEXT("r.ToonRayTracer.Toon.FaceShadowSoftness"),
+		0.03f,
+		TEXT("Half width of the soft face shadow boundary, relative to the half width of the face. Larger values make the face shadow softer"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceShadowFrontBias(
+		TEXT("r.ToonRayTracer.Toon.FaceShadowFrontBias"),
+		0.4f,
+		TEXT("Subtracted from the front component of the light (-1 to 1) for the face shadow, so light slightly in front of the side does not leave only a thin lit strip along the nose when viewed from the side (0: off)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceWidthScale(
+		TEXT("r.ToonRayTracer.Toon.FaceWidthScale"),
+		1.0f,
+		TEXT("Half width of the face as a multiple of the distance between the eyes"),
+		ECVF_Default);
+
+	// 頭と両目のボーンの名前（ゲームスレッドで読む）
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonFaceHeadBone(
+		TEXT("r.ToonRayTracer.Toon.FaceHeadBone"),
+		TEXT("jnt_head"),
+		TEXT("Name of the head bone used to find the face direction"),
+		ECVF_Default);
+
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonFaceLeftEyeBone(
+		TEXT("r.ToonRayTracer.Toon.FaceLeftEyeBone"),
+		TEXT("jnt_eyeL"),
+		TEXT("Name of the left eye bone used to find the face direction and width"),
+		ECVF_Default);
+
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonFaceRightEyeBone(
+		TEXT("r.ToonRayTracer.Toon.FaceRightEyeBone"),
+		TEXT("jnt_eyeR"),
+		TEXT("Name of the right eye bone used to find the face direction and width"),
+		ECVF_Default);
+
+	// 顔の影：この顔として扱う範囲の半径（両目の間の距離の何倍か）
+	constexpr double FaceRadiusScale = 4.0;
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonSeeThroughBrightness(
 		TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"),
 		0.5f,
@@ -383,7 +443,7 @@ namespace
 
 	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineWidthSkinned(
 		TEXT("r.ToonRayTracer.Toon.OutlineWidthSkinned"),
-		1.0f,
+		0.5f,
 		TEXT("Outline width in pixels for skeletal meshes (characters)"),
 		ECVF_RenderThreadSafe);
 
@@ -530,7 +590,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarToonRayTracerDebugGeometry(
 		TEXT("r.ToonRayTracer.Debug.Geometry"),
 		0,
-		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result. 3: triangles treated as the eyes (green) and the rest of the eye slot (red). 4: upper eyelid shadow result on the eyes. 5: N dot H of the eye treated as a sphere (brightness) and the highlight (red)"),
+		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result. 3: triangles treated as the eyes (green) and the rest of the eye slot (red). 4: upper eyelid shadow result on the eyes. 5: N dot H of the eye treated as a sphere (brightness) and the highlight (red). 6: face shadow (yellow: lit, blue: shadow, magenta: no face nearby)"),
 		ECVF_RenderThreadSafe);
 
 	// この数のフレームで使われなかったビューの蓄積状態は破棄する
@@ -938,11 +998,69 @@ ToonRayTracerViewExtension::FToonDirectionalLight ToonRayTracerViewExtension::Fi
 	return Result;
 }
 
+// ゲームスレッドで、ビューファミリーのワールドにあるスケルタルメッシュから、顔の位置と向きを集める
+// 頭と両目のボーンを持つメッシュを顔とみなす。ボーンの軸の向きはモデルによって違うため使わず、ボーンの位置だけから求める
+// ・右の向き：左目から右目へ（水平）
+// ・前の向き：頭のボーンから両目の中点へ（水平で、右の向きに垂直）
+void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, TArray<FToonFace>& OutFaces)
+{
+	const UWorld* World = ViewFamily.Scene ? ViewFamily.Scene->GetWorld() : nullptr;
+	if (!World)
+	{
+		return;
+	}
+
+	const FName HeadBone(*CVarToonRayTracerToonFaceHeadBone.GetValueOnGameThread());
+	const FName LeftEyeBone(*CVarToonRayTracerToonFaceLeftEyeBone.GetValueOnGameThread());
+	const FName RightEyeBone(*CVarToonRayTracerToonFaceRightEyeBone.GetValueOnGameThread());
+	const double WidthScale = FMath::Max(CVarToonRayTracerToonFaceWidthScale.GetValueOnGameThread(), 0.01f);
+
+	for (TObjectIterator<USkeletalMeshComponent> It; It && OutFaces.Num() < FToonRayGenShader::MaxFaces; ++It)
+	{
+		const USkeletalMeshComponent* Mesh = *It;
+		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !Mesh->IsVisible()
+			|| Mesh->GetBoneIndex(HeadBone) == INDEX_NONE || Mesh->GetBoneIndex(LeftEyeBone) == INDEX_NONE || Mesh->GetBoneIndex(RightEyeBone) == INDEX_NONE)
+		{
+			continue;
+		}
+
+		const FVector Head = Mesh->GetBoneLocation(HeadBone);
+		const FVector LeftEye = Mesh->GetBoneLocation(LeftEyeBone);
+		const FVector RightEye = Mesh->GetBoneLocation(RightEyeBone);
+		const double EyeDistance = FVector::Distance(LeftEye, RightEye);
+		FVector Right = RightEye - LeftEye;
+		Right.Z = 0.0;
+		if (EyeDistance <= UE_KINDA_SMALL_NUMBER || !Right.Normalize())
+		{
+			continue;
+		}
+
+		const FVector Center = 0.5 * (LeftEye + RightEye);
+		FVector Forward = Center - Head;
+		Forward.Z = 0.0;
+		Forward -= Right * FVector::DotProduct(Forward, Right);
+		if (!Forward.Normalize())
+		{
+			continue;
+		}
+
+		FToonFace& Face = OutFaces.AddDefaulted_GetRef();
+		Face.Center = Center;
+		Face.Right = FVector3f(Right);
+		Face.Forward = FVector3f(Forward);
+		Face.HalfWidth = static_cast<float>(EyeDistance * WidthScale);
+		Face.Radius = static_cast<float>(EyeDistance * FaceRadiusScale);
+	}
+}
+
 void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFamily)
 {
 	// ライトの情報はゲームスレッド側にしかないため、ここで取得してレンダースレッドへ渡す
 	// レンダーコマンドは順番に実行されるので、このビューファミリーの描画より前に反映される
 	FToonDirectionalLight Light = FindDirectionalLight(InViewFamily);
+	// 顔の影：ボーンの位置もゲームスレッド側にしかないため、ここで集めて渡す
+	TArray<FToonFace> Faces;
+	FindFaces(InViewFamily, Faces);
 	// 文字列型のコンソール変数もゲームスレッドでしか読めないため、ここで色に変換して一緒に渡す
 	const FLinearColor ShadowColor = ParseLinearColor(CVarToonRayTracerToonShadowColor.GetValueOnGameThread(), DefaultToonShadowColor);
 	const FLinearColor OutlineColor = ParseLinearColor(CVarToonRayTracerToonOutlineColor.GetValueOnGameThread(), DefaultToonOutlineColor);
@@ -969,9 +1087,10 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	FTextureResource* ImageResource = ImageTexture.IsValid() ? ImageTexture->GetResource() : nullptr;
 
 	ENQUEUE_RENDER_COMMAND(ToonRayTracerUpdateGameThreadState)(
-		[this, Light, ShadowColor, OutlineColor, SkinShadowColor, ImageResource](FRHICommandListImmediate&)
+		[this, Light, Faces = MoveTemp(Faces), ShadowColor, OutlineColor, SkinShadowColor, ImageResource](FRHICommandListImmediate&)
 		{
 			DirectionalLight_RenderThread = Light;
+			Faces_RenderThread = Faces;
 			ToonShadowColor_RenderThread = ShadowColor;
 			ToonSkinShadowColor_RenderThread = SkinShadowColor;
 			ToonOutlineColor_RenderThread = OutlineColor;
@@ -1134,6 +1253,11 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const uint32 ToonSeeThroughSlotMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonSeeThroughSlotMask.GetValueOnRenderThread(), 0));
 	const uint32 ToonEyeSlotMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeSlotMask.GetValueOnRenderThread(), 0));
 	const bool bToonEyeUnlit = CVarToonRayTracerToonEyeUnlit.GetValueOnRenderThread() != 0;
+	const bool bToonFaceShadow = CVarToonRayTracerToonFaceShadow.GetValueOnRenderThread() != 0;
+	const uint32 ToonFaceSlotMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonFaceSlotMask.GetValueOnRenderThread(), 0));
+	const float ToonFaceShadowCurve = FMath::Max(CVarToonRayTracerToonFaceShadowCurve.GetValueOnRenderThread(), 0.0f);
+	const float ToonFaceShadowSoftness = FMath::Max(CVarToonRayTracerToonFaceShadowSoftness.GetValueOnRenderThread(), 0.001f);
+	const float ToonFaceShadowFrontBias = FMath::Clamp(CVarToonRayTracerToonFaceShadowFrontBias.GetValueOnRenderThread(), 0.0f, 0.99f);
 	const uint32 ToonEyeTriangleStart = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeTriangleStart.GetValueOnRenderThread(), 0));
 	const uint32 ToonEyeTriangleEnd = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeTriangleEnd.GetValueOnRenderThread(), 0));
 	const float ToonEyeShadowDistance = FMath::Max(CVarToonRayTracerToonEyeShadowDistance.GetValueOnRenderThread(), 0.0f);
@@ -1179,7 +1303,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
-				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
+				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias))))), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), HashCombine(GetTypeHash(SamplesPerPixel), GetTypeHash(bStratifiedSampling))), HashCombine(HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth)), GetTypeHash(ScatterSampling))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
@@ -1415,6 +1539,23 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonSeeThroughSlotMask = ToonSeeThroughSlotMask;
 	PassParameters->ToonEyeSlotMask = ToonEyeSlotMask;
 	PassParameters->bToonEyeUnlit = bToonEyeUnlit ? 1u : 0u;
+	// 顔の影：顔の位置は Translated World 空間に変換して渡す（double で足してから float にする）
+	PassParameters->bToonFaceShadow = bToonFaceShadow ? 1u : 0u;
+	PassParameters->ToonFaceSlotMask = ToonFaceSlotMask;
+	PassParameters->NumToonFaces = static_cast<uint32>(Faces_RenderThread.Num());
+	PassParameters->ToonFaceShadowCurve = ToonFaceShadowCurve;
+	PassParameters->ToonFaceShadowSoftness = ToonFaceShadowSoftness;
+	PassParameters->ToonFaceShadowFrontBias = ToonFaceShadowFrontBias;
+	{
+		const FVector FacePreViewTranslation = View.ViewMatrices.GetPreViewTranslation();
+		for (int32 Index = 0; Index < FToonRayGenShader::MaxFaces; ++Index)
+		{
+			const FToonFace Face = Faces_RenderThread.IsValidIndex(Index) ? Faces_RenderThread[Index] : FToonFace();
+			PassParameters->ToonFaceCenter[Index] = FVector4f(FVector3f(Face.Center + FacePreViewTranslation), Face.HalfWidth);
+			PassParameters->ToonFaceRight[Index] = FVector4f(Face.Right, 0.0f);
+			PassParameters->ToonFaceForward[Index] = FVector4f(Face.Forward, Face.Radius);
+		}
+	}
 	PassParameters->ToonEyeTriangleStart = ToonEyeTriangleStart;
 	PassParameters->ToonEyeTriangleEnd = ToonEyeTriangleEnd;
 	PassParameters->ToonEyeShadowDistance = ToonEyeShadowDistance;
@@ -1422,7 +1563,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonEyeHighlightStrength = ToonEyeHighlightStrength;
 	PassParameters->ToonEyeHighlightThreshold = ToonEyeHighlightThreshold;
 	PassParameters->ToonEyeHighlightSearchRadius = ToonEyeHighlightSearchRadius;
-	PassParameters->bToonDebugGeometry = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerDebugGeometry.GetValueOnRenderThread(), 0, 5));
+	PassParameters->bToonDebugGeometry = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerDebugGeometry.GetValueOnRenderThread(), 0, 6));
 	{
 		// double のワールド座標を float 2 つ（上位と下位）に分けて渡す（シェーダー側で MakeDFVector3 に戻す）
 		const FVector PreViewTranslationForNoise = View.ViewMatrices.GetPreViewTranslation();
