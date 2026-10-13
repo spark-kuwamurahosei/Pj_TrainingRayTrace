@@ -29,7 +29,9 @@ public class ToonRayTracer : ModuleRules
 				"RenderCore",
 				"RHI",
 				"Projects",
-				"Renderer"
+				"Renderer",
+				"CoreUObject",
+				"Engine"
 			}
 			);
 			
@@ -37,8 +39,6 @@ public class ToonRayTracer : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"CoreUObject",
-				"Engine",
 				"Slate",
 				"SlateCore",
 				// ... add private dependencies that you statically link with here ...	

@@ -10,6 +10,9 @@
 #include "SystemTextures.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "ToonCharacterComponent.h"
+#include "ToonCharacterProfile.h"
+#include "GameFramework/Actor.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 #include "RenderingThread.h"
@@ -402,6 +405,14 @@ namespace
 
 	// 顔の影：この顔として扱う範囲の半径（両目の間の距離の何倍か）
 	constexpr double FaceRadiusScale = 4.0;
+
+	// キャラクターの大きさの基準：全体の設定の幅や距離（cm）を、両目の間の距離がこの値のキャラクター向けの値として扱い、
+	// ほかのキャラクターでは両目の間の距離に比例して拡大縮小する（0 なら拡大縮小しない）
+	TAutoConsoleVariable<float> CVarToonRayTracerToonReferenceEyeDistance(
+		TEXT("r.ToonRayTracer.Toon.ReferenceEyeDistance"),
+		39.6f,
+		TEXT("Distance between the eyes (cm) of the character that the global widths and distances are tuned for. Other characters scale them by their own eye distance (0: no scaling)"),
+		ECVF_Default);
 
 	TAutoConsoleVariable<float> CVarToonRayTracerToonSeeThroughBrightness(
 		TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"),
@@ -1044,6 +1055,9 @@ ToonRayTracerViewExtension::FToonDirectionalLight ToonRayTracerViewExtension::Fi
 
 // ゲームスレッドで、ビューファミリーのワールドにあるスケルタルメッシュから、顔の位置と向きを集める
 // 頭と両目のボーンを持つメッシュを顔とみなす。ボーンの軸の向きはモデルによって違うため使わず、ボーンの位置だけから求める
+// キャラクターごとの設定（パーツのスロット、幅や距離）も、ここで顔ごとに求めて一緒に渡す
+// アクターに Toon Character コンポーネントがあり、プロファイルが選ばれていればその設定、なければ全体の設定を使う
+// 全体の設定の幅や距離（cm）は、大きさの基準（ReferenceEyeDistance）に対する両目の間の距離の比で拡大縮小する
 // ・右の向き：左目から右目へ（水平）
 // ・前の向き：頭のボーンから両目の中点へ（水平で、右の向きに垂直）
 void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, TArray<FToonFace>& OutFaces)
@@ -1058,19 +1072,45 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 	const FName LeftEyeBone(*CVarToonRayTracerToonFaceLeftEyeBone.GetValueOnGameThread());
 	const FName RightEyeBone(*CVarToonRayTracerToonFaceRightEyeBone.GetValueOnGameThread());
 	const double WidthScale = FMath::Max(CVarToonRayTracerToonFaceWidthScale.GetValueOnGameThread(), 0.01f);
+	const double ReferenceEyeDistance = FMath::Max(CVarToonRayTracerToonReferenceEyeDistance.GetValueOnGameThread(), 0.0f);
+
+	// 全体の設定（パーツは 0 ～ 31 番のスロット番号、幅や距離は cm）
+	const uint32 GlobalFaceMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonFaceSlotMask.GetValueOnGameThread(), 0));
+	const uint32 GlobalEyeMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeSlotMask.GetValueOnGameThread(), 0));
+	const uint32 GlobalHairMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonHairSlotMask.GetValueOnGameThread(), 0));
+	const uint32 GlobalSeeThroughMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonSeeThroughSlotMask.GetValueOnGameThread(), 0));
+	const int32 GlobalEyeTriangleStart = FMath::Max(CVarToonRayTracerToonEyeTriangleStart.GetValueOnGameThread(), 0);
+	const int32 GlobalEyeTriangleEnd = FMath::Max(CVarToonRayTracerToonEyeTriangleEnd.GetValueOnGameThread(), 0);
+	const float GlobalFaceShadowSoftness = FMath::Max(CVarToonRayTracerToonFaceShadowSoftness.GetValueOnGameThread(), 0.001f);
+	const float GlobalHairShadowWidth = FMath::Max(CVarToonRayTracerToonHairShadowWidth.GetValueOnGameThread(), 0.0f);
+	const float GlobalEyeShadowDistance = FMath::Max(CVarToonRayTracerToonEyeShadowDistance.GetValueOnGameThread(), 0.0f);
+	const float GlobalSeeThroughDistance = FMath::Max(CVarToonRayTracerToonSeeThroughDistance.GetValueOnGameThread(), 0.0f);
+	const float GlobalEyeHighlightSearchRadius = FMath::Max(CVarToonRayTracerToonEyeHighlightSearchRadius.GetValueOnGameThread(), 0.0f);
+	const float GlobalHairShadowDistance = FMath::Max(CVarToonRayTracerToonHairShadowDistance.GetValueOnGameThread(), 0.0f);
 
 	for (TObjectIterator<USkeletalMeshComponent> It; It && OutFaces.Num() < FToonRayGenShader::MaxFaces; ++It)
 	{
 		const USkeletalMeshComponent* Mesh = *It;
-		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !Mesh->IsVisible()
-			|| Mesh->GetBoneIndex(HeadBone) == INDEX_NONE || Mesh->GetBoneIndex(LeftEyeBone) == INDEX_NONE || Mesh->GetBoneIndex(RightEyeBone) == INDEX_NONE)
+		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !Mesh->IsVisible())
 		{
 			continue;
 		}
 
-		const FVector Head = Mesh->GetBoneLocation(HeadBone);
-		const FVector LeftEye = Mesh->GetBoneLocation(LeftEyeBone);
-		const FVector RightEye = Mesh->GetBoneLocation(RightEyeBone);
+		const AActor* Owner = Mesh->GetOwner();
+		const UToonCharacterComponent* Character = Owner ? Owner->FindComponentByClass<UToonCharacterComponent>() : nullptr;
+		const UToonCharacterProfile* Profile = Character ? Character->Profile.Get() : nullptr;
+		const FName MeshHeadBone = Profile && !Profile->HeadBone.IsNone() ? Profile->HeadBone : HeadBone;
+		const FName MeshLeftEyeBone = Profile && !Profile->LeftEyeBone.IsNone() ? Profile->LeftEyeBone : LeftEyeBone;
+		const FName MeshRightEyeBone = Profile && !Profile->RightEyeBone.IsNone() ? Profile->RightEyeBone : RightEyeBone;
+		const double MeshWidthScale = Profile && Profile->FaceWidthScale > 0.0f ? static_cast<double>(Profile->FaceWidthScale) : WidthScale;
+		if (Mesh->GetBoneIndex(MeshHeadBone) == INDEX_NONE || Mesh->GetBoneIndex(MeshLeftEyeBone) == INDEX_NONE || Mesh->GetBoneIndex(MeshRightEyeBone) == INDEX_NONE)
+		{
+			continue;
+		}
+
+		const FVector Head = Mesh->GetBoneLocation(MeshHeadBone);
+		const FVector LeftEye = Mesh->GetBoneLocation(MeshLeftEyeBone);
+		const FVector RightEye = Mesh->GetBoneLocation(MeshRightEyeBone);
 		const double EyeDistance = FVector::Distance(LeftEye, RightEye);
 		FVector Right = RightEye - LeftEye;
 		Right.Z = 0.0;
@@ -1092,8 +1132,52 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 		Face.Center = Center;
 		Face.Right = FVector3f(Right);
 		Face.Forward = FVector3f(Forward);
-		Face.HalfWidth = static_cast<float>(EyeDistance * WidthScale);
+		Face.HalfWidth = static_cast<float>(EyeDistance * MeshWidthScale);
 		Face.Radius = static_cast<float>(EyeDistance * FaceRadiusScale);
+
+		// パーツ：プロファイルのスロット名をセクションのビットに変換する。空なら全体の設定のスロット番号
+		auto GetMask = [Mesh, Profile](const TArray<FName> UToonCharacterProfile::* Slots, uint32 GlobalMask)
+		{
+			return Profile && !(Profile->*Slots).IsEmpty() ? UToonCharacterProfile::SlotNamesToSectionMask(Mesh, Profile->*Slots) : uint64(GlobalMask);
+		};
+		// 眉毛の透けは、以前からのメッシュごとの上書き（Custom Primitive Data の [13]）も使う
+		uint32 SeeThroughMask = GlobalSeeThroughMask;
+		const TArray<float>& CustomData = Mesh->GetCustomPrimitiveData().Data;
+		if (CustomData.IsValidIndex(13) && CustomData[13] > 0.0f)
+		{
+			SeeThroughMask = static_cast<uint32>(FMath::RoundToInt(CustomData[13]));
+		}
+		const uint64 FaceMask = GetMask(&UToonCharacterProfile::FaceSlots, GlobalFaceMask);
+		const uint64 EyeMask = GetMask(&UToonCharacterProfile::EyeSlots, GlobalEyeMask);
+		const uint64 HairMask = GetMask(&UToonCharacterProfile::HairSlots, GlobalHairMask);
+		const uint64 SeeThroughSectionMask = GetMask(&UToonCharacterProfile::SeeThroughSlots, SeeThroughMask);
+		Face.Slots = FUintVector4(static_cast<uint32>(FaceMask), static_cast<uint32>(FaceMask >> 32), static_cast<uint32>(EyeMask), static_cast<uint32>(EyeMask >> 32));
+		Face.Slots2 = FUintVector4(static_cast<uint32>(HairMask), static_cast<uint32>(HairMask >> 32), static_cast<uint32>(SeeThroughSectionMask), static_cast<uint32>(SeeThroughSectionMask >> 32));
+
+		// 幅や距離：プロファイルの値は両目の間の距離に対する倍率。0 なら全体の設定（cm）を、大きさの基準との比で拡大縮小する
+		const double SizeScale = ReferenceEyeDistance > 0.0 ? EyeDistance / ReferenceEyeDistance : 1.0;
+		auto GetWidth = [EyeDistance, SizeScale](float ProfileRatio, float GlobalWidth)
+		{
+			return static_cast<float>(ProfileRatio > 0.0f ? ProfileRatio * EyeDistance : GlobalWidth * SizeScale);
+		};
+		const bool bProfileEyeTriangles = Profile && !Profile->EyeSlots.IsEmpty();
+		Face.Params = FVector4f(
+			static_cast<float>(bProfileEyeTriangles ? Profile->EyeTriangleStart : GlobalEyeTriangleStart),
+			static_cast<float>(bProfileEyeTriangles ? Profile->EyeTriangleEnd : GlobalEyeTriangleEnd),
+			Profile && Profile->FaceShadowSoftness > 0.0f ? Profile->FaceShadowSoftness : GlobalFaceShadowSoftness,
+			GetWidth(Profile ? Profile->HairShadowWidth : 0.0f, GlobalHairShadowWidth));
+		Face.Params2 = FVector4f(
+			GetWidth(Profile ? Profile->EyeShadowWidth : 0.0f, GlobalEyeShadowDistance),
+			GetWidth(Profile ? Profile->SeeThroughDistance : 0.0f, GlobalSeeThroughDistance),
+			GetWidth(Profile ? Profile->EyeHighlightSearchRadius : 0.0f, GlobalEyeHighlightSearchRadius),
+			GetWidth(Profile ? Profile->HairShadowDistance : 0.0f, GlobalHairShadowDistance));
+
+		// 見た目の上書きと、キャラクターの番号
+		Face.CharacterId = Character ? Character->GetCharacterId() : 0;
+		if (Profile)
+		{
+			Profile->GetLookOverrides(Face.LookOverrideMask, Face.Look);
+		}
 	}
 }
 
@@ -1356,10 +1440,26 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
 				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias)),
 					HashCombine(HashCombine(HashCombine(GetTypeHash(ToonHairShadowMode), GetTypeHash(ToonHairSlotMask)), HashCombine(GetTypeHash(ToonHairShadowWidth), GetTypeHash(ToonHairShadowLightShift))), HashCombine(GetTypeHash(ToonHairShadowDistance), GetTypeHash(ToonHairShadowStrength))))))), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
+	// キャラクターごとの設定が変わったら蓄積をやり直す（顔の位置は含めない）
+	uint32 CharacterHash = 0;
+	for (const FToonFace& Face : Faces_RenderThread)
+	{
+		CharacterHash = HashCombine(CharacterHash, HashCombine(
+			HashCombine(HashCombine(GetTypeHash(Face.Slots.X), GetTypeHash(Face.Slots.Y)), HashCombine(GetTypeHash(Face.Slots.Z), GetTypeHash(Face.Slots.W))),
+			HashCombine(HashCombine(GetTypeHash(Face.Slots2.X), GetTypeHash(Face.Slots2.Y)), HashCombine(GetTypeHash(Face.Slots2.Z), GetTypeHash(Face.Slots2.W)))));
+		CharacterHash = HashCombine(CharacterHash, HashCombine(
+			HashCombine(HashCombine(GetTypeHash(Face.Params.X), GetTypeHash(Face.Params.Y)), HashCombine(GetTypeHash(Face.Params.Z), GetTypeHash(Face.Params.W))),
+			HashCombine(HashCombine(GetTypeHash(Face.Params2.X), GetTypeHash(Face.Params2.Y)), HashCombine(GetTypeHash(Face.Params2.Z), GetTypeHash(Face.Params2.W)))));
+		CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(Face.CharacterId), GetTypeHash(Face.LookOverrideMask)));
+		for (const FVector4f& Look : Face.Look)
+		{
+			CharacterHash = HashCombine(CharacterHash, HashCombine(HashCombine(GetTypeHash(Look.X), GetTypeHash(Look.Y)), HashCombine(GetTypeHash(Look.Z), GetTypeHash(Look.W))));
+		}
+	}
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), HashCombine(GetTypeHash(SamplesPerPixel), GetTypeHash(bStratifiedSampling))), HashCombine(HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth)), GetTypeHash(ScatterSampling))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
-		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread());
+		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread()) ^ CharacterHash;
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
 	{
@@ -1607,12 +1707,37 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonHairShadowStrength = ToonHairShadowStrength;
 	{
 		const FVector FacePreViewTranslation = View.ViewMatrices.GetPreViewTranslation();
+		// キャラクターごとの見た目：プロファイルで上書きしていない成分は、全体の設定を使う
+		const FVector4f GlobalLook[5] = {
+			FVector4f(ToonShadowColor.R, ToonShadowColor.G, ToonShadowColor.B, ToonShadowSaturation),
+			FVector4f(ToonSkinShadowColor.R, ToonSkinShadowColor.G, ToonSkinShadowColor.B, ToonOutlineWidthSkinned),
+			FVector4f(ToonCharacterOutlineColorScale, ToonCharacterRimStrength, ToonCharacterRimWidth, ToonFaceShadowCurve),
+			FVector4f(ToonFaceShadowFrontBias, ToonEyeShadowBrightness, ToonEyeHighlightStrength, ToonEyeHighlightThreshold),
+			FVector4f(ToonHairShadowStrength, ToonHairShadowLightShift, ToonSeeThroughOpacity, ToonSeeThroughBrightness) };
 		for (int32 Index = 0; Index < FToonRayGenShader::MaxFaces; ++Index)
 		{
 			const FToonFace Face = Faces_RenderThread.IsValidIndex(Index) ? Faces_RenderThread[Index] : FToonFace();
 			PassParameters->ToonFaceCenter[Index] = FVector4f(FVector3f(Face.Center + FacePreViewTranslation), Face.HalfWidth);
-			PassParameters->ToonFaceRight[Index] = FVector4f(Face.Right, 0.0f);
+			PassParameters->ToonFaceRight[Index] = FVector4f(Face.Right, static_cast<float>(Face.CharacterId));
 			PassParameters->ToonFaceForward[Index] = FVector4f(Face.Forward, Face.Radius);
+			PassParameters->ToonCharacterSlots[Index] = Face.Slots;
+			PassParameters->ToonCharacterSlots2[Index] = Face.Slots2;
+			PassParameters->ToonCharacterParams[Index] = Face.Params;
+			PassParameters->ToonCharacterParams2[Index] = Face.Params2;
+			FVector4f Look[5];
+			for (int32 Vector = 0; Vector < 5; ++Vector)
+			{
+				for (int32 Component = 0; Component < 4; ++Component)
+				{
+					const bool bOverride = (Face.LookOverrideMask & (1u << (Vector * 4 + Component))) != 0;
+					Look[Vector][Component] = bOverride ? Face.Look[Vector][Component] : GlobalLook[Vector][Component];
+				}
+			}
+			PassParameters->ToonCharacterLook0[Index] = Look[0];
+			PassParameters->ToonCharacterLook1[Index] = Look[1];
+			PassParameters->ToonCharacterLook2[Index] = Look[2];
+			PassParameters->ToonCharacterLook3[Index] = Look[3];
+			PassParameters->ToonCharacterLook4[Index] = Look[4];
 		}
 	}
 	PassParameters->ToonEyeTriangleStart = ToonEyeTriangleStart;

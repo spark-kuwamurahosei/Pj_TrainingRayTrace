@@ -239,6 +239,17 @@ float ToonFaceShadowFrontBias;
 float4 ToonFaceCenter[TOON_MAX_FACES];
 float4 ToonFaceRight[TOON_MAX_FACES];
 float4 ToonFaceForward[TOON_MAX_FACES];
+// キャラクターごとの設定（顔ごと）。GetToonCharacterParts を参照
+uint4 ToonCharacterSlots[TOON_MAX_FACES];
+uint4 ToonCharacterSlots2[TOON_MAX_FACES];
+float4 ToonCharacterParams[TOON_MAX_FACES];
+float4 ToonCharacterParams2[TOON_MAX_FACES];
+// キャラクターごとの見た目（全体の設定と組み合わせ済み）。GetToonCharacterLook を参照
+float4 ToonCharacterLook0[TOON_MAX_FACES];
+float4 ToonCharacterLook1[TOON_MAX_FACES];
+float4 ToonCharacterLook2[TOON_MAX_FACES];
+float4 ToonCharacterLook3[TOON_MAX_FACES];
+float4 ToonCharacterLook4[TOON_MAX_FACES];
 // 前髪の影：顔のピクセルから光へシャドウレイを飛ばし、同じキャラクターの髪のパーツに当たったときだけ影にする
 // ・bToonHairShadow：0 なら無効、1 なら見え方で決める（前髪の縁の下に帯状の影）、2 なら光の方向へシャドウレイを飛ばす
 // ・ToonHairSlotMask：髪のマテリアルスロット（スロット番号 n なら 2^n のビット）
@@ -409,6 +420,8 @@ struct FToonMaterial
 	uint bEye;
 	// 顔の影：キャラクターの顔のパーツ（ToonFaceSlotMask で指定したマテリアルスロット）なら 1
 	uint bFace;
+	// キャラクターごとの設定の番号（ToonCharacterLook0 などの添え字）。なければ -1
+	int Character;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -426,6 +439,7 @@ FToonMaterial GetDefaultMaterial()
 	Material.OutlineWidth = ToonOutlineWidth;
 	Material.Density = 0.0f;
 	Material.bCharacter = 0;
+	Material.Character = -1;
 	Material.bSkin = 0;
 	Material.bEye = 0;
 	Material.bFace = 0;
@@ -436,6 +450,194 @@ FToonMaterial GetDefaultMaterial()
 float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
 {
 	return PrimitiveData.CustomPrimitiveData[Index / 4][Index % 4];
+}
+
+// キャラクターごとの設定（パーツのスロット、幅や距離）
+// ゲームスレッドで顔（頭と両目のボーンを持つスケルタルメッシュ）ごとに求めた値を、ToonCharacterSlots などで受け取る
+// 点の近くの顔（ToonFaceForward の w の半径以内で一番近いもの）の値を使い、近くに顔がなければ全体の設定を使う
+// 目・顔・髪・眉毛はどれも頭の周りにあるので、点の位置で十分にキャラクターを見分けられる
+// スロットは 0 ～ 63 番まで使える（x が 0 ～ 31 番、y が 32 ～ 63 番のビット）
+struct FToonCharacterParts
+{
+	uint2 FaceSlotMask;
+	uint2 EyeSlotMask;
+	uint EyeTriangleStart;
+	uint EyeTriangleEnd;
+	uint2 HairSlotMask;
+	uint2 SeeThroughSlotMask;
+	// 顔の境目のぼかし（顔の半分の幅に対する割合）
+	float FaceShadowSoftness;
+	// キャラクターの大きさに合わせた幅や距離（cm）
+	float HairShadowWidth;
+	float EyeShadowDistance;
+	float SeeThroughDistance;
+	float EyeHighlightSearchRadius;
+	float HairShadowDistance;
+	// キャラクターの添え字（見つからなければ -1）
+	int Character;
+};
+
+// スロットのビット（0 ～ 63 番）に、ジオメトリの番号が含まれるか
+bool IsSlotInMask(uint2 Mask, uint GeometryIndex)
+{
+	return GeometryIndex < 32u ? ((Mask.x >> GeometryIndex) & 1u) != 0
+		: GeometryIndex < 64u ? ((Mask.y >> (GeometryIndex - 32u)) & 1u) != 0
+		: false;
+}
+
+// 点の近くの顔の番号（なければ -1）
+int FindToonFace(float3 Position)
+{
+	int BestFace = -1;
+	float BestDistance = 1.0e30f;
+	for (uint FaceIndex = 0; FaceIndex < NumToonFaces; ++FaceIndex)
+	{
+		float Distance = length(Position - ToonFaceCenter[FaceIndex].xyz);
+		if (Distance < ToonFaceForward[FaceIndex].w && Distance < BestDistance)
+		{
+			BestFace = (int)FaceIndex;
+			BestDistance = Distance;
+		}
+	}
+	return BestFace;
+}
+
+// Toon Character コンポーネントがメッシュの Custom Primitive Data の [14] に書いた番号から、キャラクターの添え字を探す（なければ -1）
+// 番号は ToonFaceRight の w に入っている。体や服など、顔から離れた点でもキャラクターを見つけられる
+int FindToonCharacterById(FPrimitiveSceneData PrimitiveData)
+{
+	float Id = GetCustomPrimitiveDataFloat(PrimitiveData, 14);
+	if (Id > 0.0f)
+	{
+		for (uint FaceIndex = 0; FaceIndex < NumToonFaces; ++FaceIndex)
+		{
+			if (abs(ToonFaceRight[FaceIndex].w - Id) < 0.5f)
+			{
+				return (int)FaceIndex;
+			}
+		}
+	}
+	return -1;
+}
+
+int FindToonCharacter(float3 Position, uint GPUSceneInstanceId)
+{
+	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	int Character = FindToonCharacterById(GetPrimitiveData(InstanceData.PrimitiveId));
+	return Character >= 0 ? Character : FindToonFace(Position);
+}
+
+// キャラクターごとの見た目（キャラクターが見つからなければ全体の設定）
+struct FToonCharacterLook
+{
+	float3 ShadowColor;
+	float ShadowSaturation;
+	float3 SkinShadowColor;
+	float OutlineWidth;
+	float OutlineColorScale;
+	float RimStrength;
+	float RimWidth;
+	float FaceShadowCurve;
+	float FaceShadowFrontBias;
+	float EyeShadowBrightness;
+	float EyeHighlightStrength;
+	float EyeHighlightThreshold;
+	float HairShadowStrength;
+	float HairShadowLightShift;
+	float SeeThroughOpacity;
+	float SeeThroughBrightness;
+};
+
+FToonCharacterLook GetToonCharacterLook(int Character)
+{
+	FToonCharacterLook Look;
+	if (Character >= 0)
+	{
+		float4 Look0 = ToonCharacterLook0[Character];
+		float4 Look1 = ToonCharacterLook1[Character];
+		float4 Look2 = ToonCharacterLook2[Character];
+		float4 Look3 = ToonCharacterLook3[Character];
+		float4 Look4 = ToonCharacterLook4[Character];
+		Look.ShadowColor = Look0.rgb;
+		Look.ShadowSaturation = Look0.a;
+		Look.SkinShadowColor = Look1.rgb;
+		Look.OutlineWidth = Look1.a;
+		Look.OutlineColorScale = Look2.x;
+		Look.RimStrength = Look2.y;
+		Look.RimWidth = Look2.z;
+		Look.FaceShadowCurve = Look2.w;
+		Look.FaceShadowFrontBias = Look3.x;
+		Look.EyeShadowBrightness = Look3.y;
+		Look.EyeHighlightStrength = Look3.z;
+		Look.EyeHighlightThreshold = Look3.w;
+		Look.HairShadowStrength = Look4.x;
+		Look.HairShadowLightShift = Look4.y;
+		Look.SeeThroughOpacity = Look4.z;
+		Look.SeeThroughBrightness = Look4.w;
+		return Look;
+	}
+	Look.ShadowColor = ToonShadowColor;
+	Look.ShadowSaturation = ToonShadowSaturation;
+	Look.SkinShadowColor = ToonSkinShadowColor;
+	Look.OutlineWidth = ToonOutlineWidthSkinned;
+	Look.OutlineColorScale = ToonCharacterOutlineColorScale;
+	Look.RimStrength = ToonCharacterRimStrength;
+	Look.RimWidth = ToonCharacterRimWidth;
+	Look.FaceShadowCurve = ToonFaceShadowCurve;
+	Look.FaceShadowFrontBias = ToonFaceShadowFrontBias;
+	Look.EyeShadowBrightness = ToonEyeShadowBrightness;
+	Look.EyeHighlightStrength = ToonEyeHighlightStrength;
+	Look.EyeHighlightThreshold = ToonEyeHighlightThreshold;
+	Look.HairShadowStrength = ToonHairShadowStrength;
+	Look.HairShadowLightShift = ToonHairShadowLightShift;
+	Look.SeeThroughOpacity = ToonSeeThroughOpacity;
+	Look.SeeThroughBrightness = ToonSeeThroughBrightness;
+	return Look;
+}
+
+FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstanceId)
+{
+	FToonCharacterParts Parts;
+	int Face = FindToonCharacter(Position, GPUSceneInstanceId);
+	Parts.Character = Face;
+	if (Face >= 0)
+	{
+		uint4 Slots = ToonCharacterSlots[Face];
+		uint4 Slots2 = ToonCharacterSlots2[Face];
+		float4 Params = ToonCharacterParams[Face];
+		float4 Params2 = ToonCharacterParams2[Face];
+		Parts.FaceSlotMask = Slots.xy;
+		Parts.EyeSlotMask = Slots.zw;
+		Parts.HairSlotMask = Slots2.xy;
+		Parts.SeeThroughSlotMask = Slots2.zw;
+		Parts.EyeTriangleStart = (uint)round(Params.x);
+		Parts.EyeTriangleEnd = (uint)round(Params.y);
+		Parts.FaceShadowSoftness = Params.z;
+		Parts.HairShadowWidth = Params.w;
+		Parts.EyeShadowDistance = Params2.x;
+		Parts.SeeThroughDistance = Params2.y;
+		Parts.EyeHighlightSearchRadius = Params2.z;
+		Parts.HairShadowDistance = Params2.w;
+		return Parts;
+	}
+
+	// 顔が見つからない（頭と両目のボーンがない）キャラクターは全体の設定（0 ～ 31 番のスロット）
+	Parts.FaceSlotMask = uint2(ToonFaceSlotMask, 0u);
+	Parts.EyeSlotMask = uint2(ToonEyeSlotMask, 0u);
+	Parts.HairSlotMask = uint2(ToonHairSlotMask, 0u);
+	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+	float SeeThroughOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 13);
+	Parts.SeeThroughSlotMask = uint2(SeeThroughOverride > 0.0f ? (uint)round(SeeThroughOverride) : ToonSeeThroughSlotMask, 0u);
+	Parts.EyeTriangleStart = ToonEyeTriangleStart;
+	Parts.EyeTriangleEnd = ToonEyeTriangleEnd;
+	Parts.FaceShadowSoftness = ToonFaceShadowSoftness;
+	Parts.HairShadowWidth = ToonHairShadowWidth;
+	Parts.EyeShadowDistance = ToonEyeShadowDistance;
+	Parts.SeeThroughDistance = ToonSeeThroughDistance;
+	Parts.EyeHighlightSearchRadius = ToonEyeHighlightSearchRadius;
+	Parts.HairShadowDistance = ToonHairShadowDistance;
+	return Parts;
 }
 
 // シーンのメッシュのマテリアルを、メッシュに設定された Custom Primitive Data から読む
@@ -488,6 +690,12 @@ FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 	// 線の太さは、スケルタルメッシュ（キャラクターなど）とそれ以外（背景など）で分ける
 	// GPUScene のフラグで判定するため、メッシュごとの設定は不要。Custom Primitive Data で個別に上書きできる
 	Material.OutlineWidth = (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0 ? ToonOutlineWidthSkinned : ToonOutlineWidth;
+	// キャラクターごとの線の太さ（スケルタルメッシュのみ）。メッシュごとの Custom Primitive Data の [11] のほうを優先する
+	Material.Character = FindToonCharacterById(PrimitiveData);
+	if (Material.Character >= 0 && (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0)
+	{
+		Material.OutlineWidth = ToonCharacterLook1[Material.Character].a;
+	}
 	float OutlineWidthOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 11);
 	if (OutlineWidthOverride != 0.0f)
 	{
@@ -1173,17 +1381,21 @@ uint GetPayloadGeometryIndex(FDefaultPayload Payload)
 }
 
 // 目の表現：目のスロットに当たったか
-bool IsEyeSlotHit(FDefaultPayload Payload, bool bCharacter)
+bool IsEyeSlotHit(FDefaultPayload Payload, bool bCharacter, FToonCharacterParts Parts)
 {
-	return bCharacter && ((ToonEyeSlotMask >> GetPayloadGeometryIndex(Payload)) & 1u) != 0;
+	return bCharacter && IsSlotInMask(Parts.EyeSlotMask, GetPayloadGeometryIndex(Payload));
 }
 
 // 目の表現：目のスロットの、目として扱う三角形の範囲に当たったか（PrimitiveIndex はスロットの中での三角形の番号）
-bool IsEyeHit(FDefaultPayload Payload, bool bCharacter)
+bool IsEyeHit(FDefaultPayload Payload, bool bCharacter, FToonCharacterParts Parts)
 {
-	return IsEyeSlotHit(Payload, bCharacter)
-		&& Payload.PrimitiveIndex >= ToonEyeTriangleStart
-		&& (ToonEyeTriangleEnd == 0 || Payload.PrimitiveIndex < ToonEyeTriangleEnd);
+	if (!bCharacter)
+	{
+		return false;
+	}
+	return IsSlotInMask(Parts.EyeSlotMask, GetPayloadGeometryIndex(Payload))
+		&& Payload.PrimitiveIndex >= Parts.EyeTriangleStart
+		&& (Parts.EyeTriangleEnd == 0 || Payload.PrimitiveIndex < Parts.EyeTriangleEnd);
 }
 
 bool IsPayloadBackFace(FDefaultPayload Payload)
@@ -1314,9 +1526,10 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 	Rec.Material = GetSceneMaterial(CenterPayload.InstanceID);
 	Rec.ObjectId = CenterPayload.InstanceID;
 	// 目の表現：当たったパーツ（マテリアルスロット）が目か
-	Rec.Material.bEye = IsEyeHit(CenterPayload, Rec.Material.bCharacter != 0) ? 1u : 0u;
+	FToonCharacterParts Parts = GetToonCharacterParts(Rec.Position, Rec.ObjectId);
+	Rec.Material.bEye = IsEyeHit(CenterPayload, Rec.Material.bCharacter != 0, Parts) ? 1u : 0u;
 	// 顔の影：当たったパーツ（マテリアルスロット）が顔か
-	Rec.Material.bFace = Rec.Material.bCharacter != 0 && ((ToonFaceSlotMask >> GetPayloadGeometryIndex(CenterPayload)) & 1u) != 0 ? 1u : 0u;
+	Rec.Material.bFace = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.FaceSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
 
 	if (!bComputeNormal)
 	{
@@ -2486,20 +2699,10 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 // ・真横から当たる：光の側の半分が明るい（境目は顔の中央）
 // ・真後ろから当たる：顔全体が影
 // その間は、境目がまっすぐ顔の上を左右に動く（SDF の顔影と同じ動き方。面の向きによる不規則な明暗が出ない）
-bool ComputeFaceShadowNdotL(float3 Position, out float FaceNdotL)
+bool ComputeFaceShadowNdotL(float3 Position, uint ObjectId, out float FaceNdotL)
 {
 	FaceNdotL = 0.0f;
-	int BestFace = -1;
-	float BestDistance = 1.0e30f;
-	for (uint FaceIndex = 0; FaceIndex < NumToonFaces; ++FaceIndex)
-	{
-		float Distance = length(Position - ToonFaceCenter[FaceIndex].xyz);
-		if (Distance < ToonFaceForward[FaceIndex].w && Distance < BestDistance)
-		{
-			BestFace = (int)FaceIndex;
-			BestDistance = Distance;
-		}
-	}
+	int BestFace = FindToonFace(Position);
 	if (BestFace < 0)
 	{
 		return false;
@@ -2520,7 +2723,8 @@ bool ComputeFaceShadowNdotL(float3 Position, out float FaceNdotL)
 	// 光の前後の成分（1：正面、0：真横、-1：真後ろ）。補正値以下は真横より後ろとして扱い、境目を顔の中央より光の側に置く
 	// （前寄りの成分が少しだけあると、境目が中心線のすぐ影の側に来て、横から見たときに鼻筋だけが細く明るく見えるため）
 	// 正面からの光（1）はそのまま 1 になり、顔全体が明るい
-	float FrontBias = clamp(ToonFaceShadowFrontBias, 0.0f, 0.99f);
+	FToonCharacterLook Look = GetToonCharacterLook(BestFace);
+	float FrontBias = clamp(Look.FaceShadowFrontBias, 0.0f, 0.99f);
 	float Front = (LightForward / max(Horizontal, 1.0e-4f) - FrontBias) / (1.0f - FrontBias);
 	float Lit = Horizontal < TOON_FACE_VERTICAL_LIGHT ? 1.0f
 		: (LightRight >= 0.0f ? S : -S) + Front;
@@ -2529,11 +2733,11 @@ bool ComputeFaceShadowNdotL(float3 Position, out float FaceNdotL)
 	if (Horizontal >= TOON_FACE_VERTICAL_LIGHT)
 	{
 		float Sideness = abs(LightRight) / Horizontal;
-		Lit -= ToonFaceShadowCurve * Sideness * Height * Height;
+		Lit -= Look.FaceShadowCurve * Sideness * Height * Height;
 	}
 	// 全体の影の境目（ToonShadowThreshold）をまたぐように N・L の値に直す（段階数はほかの面と同じになる）
 	// 顔だけ境目のぼかしを広げるため、顔の上で ToonFaceShadowSoftness の幅が、全体のぼかし幅（ToonEdgeSoftness）になるように縮める
-	FaceNdotL = ToonShadowThreshold + Lit * max(ToonEdgeSoftness, 1.0e-4f) / max(ToonFaceShadowSoftness, 1.0e-4f);
+	FaceNdotL = ToonShadowThreshold + Lit * max(ToonEdgeSoftness, 1.0e-4f) / max(ToonCharacterParams[BestFace].z, 1.0e-4f);
 	return true;
 }
 
@@ -2544,6 +2748,7 @@ bool ComputeFaceShadowNdotL(float3 Position, out float FaceNdotL)
 // 顔や目など、髪以外のパーツは通り抜ける（服や体の影は出さず、前髪の影だけを顔に落とす）
 bool IsUnderHairShadow(float3 Origin, uint ObjectId)
 {
+	FToonCharacterParts Parts = GetToonCharacterParts(Origin, ObjectId);
 	FToonRay ShadowRay;
 	ShadowRay.Origin = Origin;
 	ShadowRay.Direction = ToLightDirection;
@@ -2552,11 +2757,11 @@ bool IsUnderHairShadow(float3 Origin, uint ObjectId)
 	for (uint Skip = 0; Skip <= TOON_HAIR_SHADOW_MAX_SKIPS; ++Skip)
 	{
 		FDefaultPayload Payload;
-		if (!TraceScene(ShadowRay, TMin, Payload) || Payload.HitT > ToonHairShadowDistance || Payload.InstanceID != ObjectId)
+		if (!TraceScene(ShadowRay, TMin, Payload) || Payload.HitT > Parts.HairShadowDistance || Payload.InstanceID != ObjectId)
 		{
 			return false;
 		}
-		if (((ToonHairSlotMask >> GetPayloadGeometryIndex(Payload)) & 1u) != 0)
+		if (IsSlotInMask(Parts.HairSlotMask, GetPayloadGeometryIndex(Payload)))
 		{
 			return true;
 		}
@@ -2574,7 +2779,8 @@ bool IsUnderBangs(float3 Position, uint ObjectId)
 	float2 LightHorizontal = ToLightDirection.xy;
 	float LightHorizontalLength = length(LightHorizontal);
 	float3 Shift = LightHorizontalLength > 1.0e-4f ? float3(LightHorizontal / LightHorizontalLength, 0.0f) : 0.0f;
-	float3 ProbePosition = Position + ToonHairShadowWidth * (float3(0.0f, 0.0f, 1.0f) + Shift * ToonHairShadowLightShift);
+	FToonCharacterParts Parts = GetToonCharacterParts(Position, ObjectId);
+	float3 ProbePosition = Position + Parts.HairShadowWidth * (float3(0.0f, 0.0f, 1.0f) + Shift * GetToonCharacterLook(Parts.Character).HairShadowLightShift);
 
 	float4 ClipPosition = mul(float4(ProbePosition, 1.0f), TranslatedWorldToClip);
 	float2 NDC = ClipPosition.xy / max(ClipPosition.w, 1.0e-6f);
@@ -2585,7 +2791,7 @@ bool IsUnderBangs(float3 Position, uint ObjectId)
 	float2 ProbeUV = float2(NDC.x * 0.5f + 0.5f, 0.5f - NDC.y * 0.5f);
 	FDefaultPayload Payload;
 	return TraceScene(GenerateCameraRay(ProbeUV), 0.0f, Payload)
-		&& Payload.InstanceID == ObjectId && ((ToonHairSlotMask >> GetPayloadGeometryIndex(Payload)) & 1u) != 0;
+		&& Payload.InstanceID == ObjectId && IsSlotInMask(Parts.HairSlotMask, GetPayloadGeometryIndex(Payload));
 }
 
 float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
@@ -2625,7 +2831,7 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 	// 3 段階のときは、中間と明るい面の境目も同じだけずれる
 	// 顔の影：顔は面の向きの代わりに、頭の向きと光の向きから計算した境目を使う（顔の不規則な明暗をなくす）
 	float FaceNdotL;
-	if (Rec.Material.bFace != 0 && bToonFaceShadow != 0 && ComputeFaceShadowNdotL(Rec.Position, FaceNdotL))
+	if (Rec.Material.bFace != 0 && bToonFaceShadow != 0 && ComputeFaceShadowNdotL(Rec.Position, Rec.ObjectId, FaceNdotL))
 	{
 		NdotL = FaceNdotL;
 	}
@@ -2672,7 +2878,7 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 			bool bHairShadowed = bToonHairShadow == 1 ? IsUnderBangs(Rec.Position, Rec.ObjectId) : IsUnderHairShadow(ShadowOrigin, Rec.ObjectId);
 			if (bHairShadowed)
 			{
-				LightLevel *= 1.0f - saturate(ToonHairShadowStrength);
+				LightLevel *= 1.0f - saturate(GetToonCharacterLook(Rec.Material.Character).HairShadowStrength);
 			}
 		}
 	}
@@ -2805,7 +3011,7 @@ float3 ComputeToonIndirect(FToonHitRecord Rec, float3 GeometricNormal, inout uin
 				Level = 0.0f;
 			}
 		}
-		Sum += Hit.Material.Albedo * lerp(ToonShadowColor, ToonLightColor, Level);
+		Sum += Hit.Material.Albedo * lerp(GetToonCharacterLook(Hit.Material.Character).ShadowColor, ToonLightColor, Level);
 	}
 	return Sum / (float)ToonIndirectSamples;
 }
@@ -2845,20 +3051,21 @@ bool IsEyeVisibleAt(float3 Position, uint ObjectId, out bool bOffscreen)
 	float2 ProbeUV = float2(NDC.x * 0.5f + 0.5f, 0.5f - NDC.y * 0.5f);
 	FDefaultPayload Payload;
 	return TraceScene(GenerateCameraRay(ProbeUV), 0.0f, Payload)
-		&& Payload.InstanceID == ObjectId && IsEyeHit(Payload, true);
+		&& Payload.InstanceID == ObjectId && IsEyeHit(Payload, true, GetToonCharacterParts(Position, ObjectId));
 }
 
 bool IsUnderEyelid(FToonHitRecord Rec, out uint Reason)
 {
 	Reason = TOON_EYELID_OFF;
-	if (ToonEyeShadowDistance <= 0.0f || TraceMode == 0)
+	float EyeShadowDistance = GetToonCharacterParts(Rec.Position, Rec.ObjectId).EyeShadowDistance;
+	if (EyeShadowDistance <= 0.0f || TraceMode == 0)
 	{
 		return false;
 	}
 
 	// 上方向はワールドの Z 軸にする（メッシュのローカル座標の Z 軸は、読み込み方によってはキャラクターの前を向くため）
 	bool bOffscreen;
-	bool bEyeVisible = IsEyeVisibleAt(Rec.Position + float3(0.0f, 0.0f, ToonEyeShadowDistance), Rec.ObjectId, bOffscreen);
+	bool bEyeVisible = IsEyeVisibleAt(Rec.Position + float3(0.0f, 0.0f, EyeShadowDistance), Rec.ObjectId, bOffscreen);
 	Reason = bOffscreen ? TOON_EYELID_OFFSCREEN : (bEyeVisible ? TOON_EYELID_VISIBLE : TOON_EYELID_SHADOWED);
 	return !bOffscreen && !bEyeVisible;
 }
@@ -2874,7 +3081,7 @@ bool IsUnderEyelid(FToonHitRecord Rec, out uint Reason)
 float FindEyeEdgeDistance(float3 Position, float3 Direction, uint ObjectId)
 {
 	bool bOffscreen;
-	float Far = ToonEyeHighlightSearchRadius;
+	float Far = GetToonCharacterParts(Position, ObjectId).EyeHighlightSearchRadius;
 	if (IsEyeVisibleAt(Position + Direction * Far, ObjectId, bOffscreen))
 	{
 		return Far;
@@ -2905,7 +3112,7 @@ float FindEyeEdgeDistance(float3 Position, float3 Direction, uint ObjectId)
 float ComputeEyeHighlight(FToonHitRecord Rec, FToonRay Ray, out float NdotH)
 {
 	NdotH = 0.0f;
-	if (ToonEyeHighlightSearchRadius <= 0.0f || TraceMode == 0)
+	if (GetToonCharacterParts(Rec.Position, Rec.ObjectId).EyeHighlightSearchRadius <= 0.0f || TraceMode == 0)
 	{
 		return 0.0f;
 	}
@@ -2929,12 +3136,13 @@ float ComputeEyeHighlight(FToonHitRecord Rec, FToonRay Ray, out float NdotH)
 	float3 LightInView = float3(dot(ToLightDirection, Right), dot(ToLightDirection, Up), dot(ToLightDirection, ToCamera));
 	float3 HalfVector = normalize(LightInView + float3(0.0f, 0.0f, 1.0f));
 	NdotH = dot(normalize(SphereNormal), HalfVector);
-	if (ToonEyeHighlightStrength <= 0.0f || bHasDirectionalLight == 0)
+	FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
+	if (Look.EyeHighlightStrength <= 0.0f || bHasDirectionalLight == 0)
 	{
 		return 0.0f;
 	}
-	return smoothstep(ToonEyeHighlightThreshold - TOON_EYE_HIGHLIGHT_SOFTNESS, ToonEyeHighlightThreshold + TOON_EYE_HIGHLIGHT_SOFTNESS, NdotH)
-		* ToonEyeHighlightStrength;
+	return smoothstep(Look.EyeHighlightThreshold - TOON_EYE_HIGHLIGHT_SOFTNESS, Look.EyeHighlightThreshold + TOON_EYE_HIGHLIGHT_SOFTNESS, NdotH)
+		* Look.EyeHighlightStrength;
 }
 
 float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState, bool bIndirect)
@@ -2943,7 +3151,7 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	if (bToonDebugGeometry == 6 && Rec.Material.bFace != 0)
 	{
 		float DebugNdotL;
-		if (!ComputeFaceShadowNdotL(Rec.Position, DebugNdotL))
+		if (!ComputeFaceShadowNdotL(Rec.Position, Rec.ObjectId, DebugNdotL))
 		{
 			return float3(1.0f, 0.0f, 1.0f);
 		}
@@ -2953,8 +3161,9 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	float3 Albedo = Rec.Material.Albedo;
 	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
 	// 鳴潮風ルック フェーズ2：肌は肌用の影色（赤みのある色）にする
-	float3 ShadowTint = Rec.Material.bSkin != 0 ? ToonSkinShadowColor
-		: (Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : ToonShadowColor);
+	FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
+	float3 ShadowTint = Rec.Material.bSkin != 0 ? Look.SkinShadowColor
+		: (Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : Look.ShadowColor);
 	// 鳴潮風ルック フェーズ3：影の面は、直接の光が届かず空や周りの光で照らされるので、Skylight の色に染める
 	// （夕方なら赤み、曇りなら灰色がかった影になり、Lumen で描いた背景になじむ）。明るい面は Directional Light の色のまま
 	if (ToonSkyTint > 0.0f)
@@ -2970,10 +3179,10 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 
 	// 影の色の鮮やかさ：明るさ（輝度）は保ったまま、輝度との差（色みの成分）を広げて彩度を上げる
 	// 影がくすんだ灰色にならず、髪や服の色に合った鮮やかな影になる（アニメ調のゲームでよく使われる塗り方）
-	if (ToonShadowSaturation > 0.0f)
+	if (Look.ShadowSaturation > 0.0f)
 	{
 		float ShadowGray = dot(ShadowColor, LuminanceWeights);
-		ShadowColor = max(ShadowGray + (ShadowColor - ShadowGray) * (1.0f + ToonShadowSaturation), 0.0f);
+		ShadowColor = max(ShadowGray + (ShadowColor - ShadowGray) * (1.0f + Look.ShadowSaturation), 0.0f);
 	}
 	float ShadowLuminance = dot(ShadowColor, LuminanceWeights);
 	float MaxShadowLuminance = dot(LitColor, LuminanceWeights) * TOON_MAX_SHADOW_TO_LIT_RATIO;
@@ -2996,7 +3205,7 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	}
 
 	// 目の表現：上まぶたの影（白目と瞳の上側を、まぶたの形に沿って暗くする）
-	if (Rec.Material.bEye != 0 && (ToonEyeShadowBrightness < 1.0f || bToonDebugGeometry == 4))
+	if (Rec.Material.bEye != 0 && (Look.EyeShadowBrightness < 1.0f || bToonDebugGeometry == 4))
 	{
 		uint EyelidReason;
 		bool bUnderEyelid = IsUnderEyelid(Rec, EyelidReason);
@@ -3006,7 +3215,7 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 		}
 		if (bUnderEyelid)
 		{
-			Color *= ToonEyeShadowBrightness;
+			Color *= Look.EyeShadowBrightness;
 		}
 	}
 
@@ -3064,7 +3273,8 @@ struct FToonPendingRay
 #define TOON_CHARACTER_RIM_PROBE_LENGTH 10.0f	// 光源の方向を画面に投影するための長さ（cm）
 float ToonCharacterRim(float2 UV, FToonHitRecord Rec)
 {
-	if (ToonCharacterRimStrength <= 0.0f || ToonCharacterRimWidth <= 0.0f || bHasDirectionalLight == 0 || TraceMode == 0)
+	FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
+	if (Look.RimStrength <= 0.0f || Look.RimWidth <= 0.0f || bHasDirectionalLight == 0 || TraceMode == 0)
 	{
 		return 0.0f;
 	}
@@ -3085,7 +3295,7 @@ float ToonCharacterRim(float2 UV, FToonHitRecord Rec)
 		return 0.0f;
 	}
 
-	float2 SampleUV = UV + PixelDelta / PixelLength * ToonCharacterRimWidth / (float2)ViewRectSize;
+	float2 SampleUV = UV + PixelDelta / PixelLength * Look.RimWidth / (float2)ViewRectSize;
 	if (any(SampleUV < 0.0f) || any(SampleUV > 1.0f))
 	{
 		return 0.0f;
@@ -3109,14 +3319,11 @@ float ToonCharacterRim(float2 UV, FToonHitRecord Rec)
 #define TOON_SEE_THROUGH_START_MARGIN 0.1f
 
 // 眉毛の透け：髪越しに見せるパーツ（マテリアルスロット）のビットを返す
-// 通常はパネルで指定した全体の設定を使い、Custom Primitive Data の [13] を設定したメッシュだけ、その値で上書きする
+// 通常はパネルで指定した全体の設定を使い、Toon Character コンポーネントか Custom Primitive Data の [13] を設定したメッシュだけ上書きする
 // スロット番号 n のパーツを見せるなら 2^n を足した値（例：スロット 4 なら 16、スロット 4 と 5 なら 48）
-uint GetSeeThroughSectionMask(uint GPUSceneInstanceId)
+uint2 GetSeeThroughSectionMask(float3 Position, uint GPUSceneInstanceId)
 {
-	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
-	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
-	float MaskOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 13);
-	return MaskOverride > 0.0f ? (uint)round(MaskOverride) : ToonSeeThroughSlotMask;
+	return GetToonCharacterParts(Position, GPUSceneInstanceId).SeeThroughSlotMask;
 }
 
 // 眉毛の透け（アニメ調のキャラクターで、前髪の上に眉毛を見せる表現）
@@ -3137,7 +3344,7 @@ uint GetSeeThroughSectionMask(uint GPUSceneInstanceId)
 float ComputeToonSeeThrough(FToonRay Ray, FToonHitRecord Rec, out uint Reason)
 {
 	Reason = TOON_SEE_THROUGH_NOT_TARGET;
-	if (ToonSeeThroughOpacity <= 0.0f || TraceMode == 0 || Rec.Material.bCharacter == 0)
+	if (GetToonCharacterLook(Rec.Material.Character).SeeThroughOpacity <= 0.0f || TraceMode == 0 || Rec.Material.bCharacter == 0)
 	{
 		return 0.0f;
 	}
@@ -3146,8 +3353,9 @@ float ComputeToonSeeThrough(FToonRay Ray, FToonHitRecord Rec, out uint Reason)
 		Reason = TOON_SEE_THROUGH_SKIN;
 		return 0.0f;
 	}
-	uint SectionMask = GetSeeThroughSectionMask(Rec.ObjectId);
-	if (SectionMask == 0)
+	FToonCharacterParts Parts = GetToonCharacterParts(Rec.Position, Rec.ObjectId);
+	uint2 SectionMask = Parts.SeeThroughSlotMask;
+	if (all(SectionMask == 0u))
 	{
 		Reason = TOON_SEE_THROUGH_NO_MASK;
 		return 0.0f;
@@ -3155,7 +3363,7 @@ float ComputeToonSeeThrough(FToonRay Ray, FToonHitRecord Rec, out uint Reason)
 
 	// 最初の面から順に奥へ進む。最初の面が見せるパーツそのもの（髪に隠れていない眉毛）なら透かさない
 	float TMin = max(Rec.T - TOON_SEE_THROUGH_START_MARGIN, 0.0f);
-	float TMax = Rec.T + ToonSeeThroughDistance;
+	float TMax = Rec.T + Parts.SeeThroughDistance;
 	[loop]
 	for (uint Skip = 0; Skip <= TOON_SEE_THROUGH_MAX_SKIPS; ++Skip)
 	{
@@ -3175,7 +3383,7 @@ float ComputeToonSeeThrough(FToonRay Ray, FToonHitRecord Rec, out uint Reason)
 			Reason = TOON_SEE_THROUGH_OTHER_OBJECT;
 			return 0.0f;
 		}
-		if (((SectionMask >> GetPayloadGeometryIndex(Payload)) & 1u) != 0)
+		if (IsSlotInMask(SectionMask, GetPayloadGeometryIndex(Payload)))
 		{
 			Reason = Skip == 0 ? TOON_SEE_THROUGH_VISIBLE : TOON_SEE_THROUGH_FOUND;
 			return Skip == 0 ? 0.0f : 1.0f;
@@ -3221,11 +3429,12 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 			return 0.0f;
 		}
 		bool bCharacter = GetSceneMaterial(DebugPayload.InstanceID).bCharacter != 0;
-		if (!IsEyeSlotHit(DebugPayload, bCharacter))
+		FToonCharacterParts DebugParts = GetToonCharacterParts(CameraRay.At(DebugPayload.HitT), DebugPayload.InstanceID);
+		if (!IsEyeSlotHit(DebugPayload, bCharacter, DebugParts))
 		{
 			return 0.1f;
 		}
-		return IsEyeHit(DebugPayload, bCharacter) ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+		return IsEyeHit(DebugPayload, bCharacter, DebugParts) ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
 	}
 
 	FToonPendingRay Pending[TOON_MAX_PENDING_RAYS];
@@ -3241,6 +3450,8 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 	float3 CharacterRim = 0.0f;
 	// 眉毛の透け：髪の奥に眉毛などがあれば 1
 	float SeeThrough = 0.0f;
+	float SeeThroughOpacity = ToonSeeThroughOpacity;
+	float SeeThroughBrightness = ToonSeeThroughBrightness;
 
 	// 1本のレイから最大2本に分かれるため、処理するレイの総数にも上限を設ける
 	[loop]
@@ -3293,13 +3504,16 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 			// 鳴潮風ルック フェーズ2：キャラクターの線の色とリムライト（どちらも素材の色に合わせる）
 			if (Rec.Material.bCharacter != 0)
 			{
-				if (ToonCharacterOutlineColorScale > 0.0f)
+				FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
+				if (Look.OutlineColorScale > 0.0f)
 				{
-					OutlineColor = Rec.Material.Albedo * ToonCharacterOutlineColorScale;
+					OutlineColor = Rec.Material.Albedo * Look.OutlineColorScale;
 				}
-				CharacterRim = Rec.Material.Albedo * ToonLightColor * (ToonCharacterRimStrength * ToonCharacterRim(UV, Rec));
+				CharacterRim = Rec.Material.Albedo * ToonLightColor * (Look.RimStrength * ToonCharacterRim(UV, Rec));
 				uint SeeThroughReason;
 				SeeThrough = ComputeToonSeeThrough(Current.Ray, Rec, SeeThroughReason);
+				SeeThroughOpacity = Look.SeeThroughOpacity;
+				SeeThroughBrightness = Look.SeeThroughBrightness;
 				if (bToonDebugGeometry == 2)
 				{
 					return GetDebugSeeThroughColor(SeeThroughReason);
@@ -3431,7 +3645,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 	}
 
 	// 眉毛の透け：髪の色を暗くして眉毛の形を浮かび上がらせる（隠れた眉毛そのものの色は分からないため、髪の色の濃淡で表す）
-	float3 Shaded = (Color + CharacterRim) * lerp(1.0f, ToonSeeThroughBrightness, SeeThrough * ToonSeeThroughOpacity);
+	float3 Shaded = (Color + CharacterRim) * lerp(1.0f, SeeThroughBrightness, SeeThrough * SeeThroughOpacity);
 	return lerp(Shaded, OutlineColor, Outline);
 }
 
@@ -3473,7 +3687,12 @@ bool IsPixelMoving(float2 UV)
 // 動いていない・深度も変わらないと判定され、線の残像が残る。線の太さ分だけ離れたピクセルも調べる
 bool IsNeighborhoodMoving(float2 UV)
 {
-	float Radius = bToonOutline != 0 ? ceil(max(ToonOutlineWidth, ToonOutlineWidthSkinned)) + 1.0f : 1.0f;
+	float MaxOutlineWidth = max(ToonOutlineWidth, ToonOutlineWidthSkinned);
+	for (uint FaceIndex = 0; FaceIndex < NumToonFaces; ++FaceIndex)
+	{
+		MaxOutlineWidth = max(MaxOutlineWidth, ToonCharacterLook1[FaceIndex].a);
+	}
+	float Radius = bToonOutline != 0 ? ceil(MaxOutlineWidth) + 1.0f : 1.0f;
 	float2 UVStep = Radius / (float2)ViewRectSize;
 	for (int OffsetY = -1; OffsetY <= 1; ++OffsetY)
 	{
