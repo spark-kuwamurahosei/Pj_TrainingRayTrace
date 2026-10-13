@@ -209,6 +209,10 @@ class FToonRayGenShader : public FGlobalShader
 		// 目の表現：上まぶたの影を調べる距離（cm）と、影の部分の明るさの倍率
 		SHADER_PARAMETER(float, ToonEyeShadowDistance)
 		SHADER_PARAMETER(float, ToonEyeShadowBrightness)
+		// 目の表現：光に合わせた瞳のハイライトの強さと、N・H のしきい値
+		SHADER_PARAMETER(float, ToonEyeHighlightStrength)
+		SHADER_PARAMETER(float, ToonEyeHighlightThreshold)
+		SHADER_PARAMETER(float, ToonEyeHighlightSearchRadius)
 		SHADER_PARAMETER(uint32, bToonDebugGeometry)
 		// 鳴潮風ルック フェーズ3：影の面を Skylight の色にどれだけ染めるか
 		SHADER_PARAMETER(float, ToonSkyTint)

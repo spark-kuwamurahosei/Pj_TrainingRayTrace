@@ -216,6 +216,18 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：上まぶたの影の明るさ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float EyeShadowBrightness;
 
+	/** 光に合わせた瞳のハイライトの強さ。目を球とみなした仮の向きと光の向きから、くっきりした光の点を加える。0 ならなし */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：ハイライトの強さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float EyeHighlightStrength;
+
+	/** 瞳のハイライトのしきい値（N・H）。1 に近いほど点が小さい（r.ToonRayTracer.Debug.Geometry 5 で確認できる） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：ハイライトのしきい値", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.9", UIMax = "1.0"))
+	float EyeHighlightThreshold;
+
+	/** 瞳のハイライト：目を球とみなすために、見えている目の範囲の端を探す最大の距離（cm）。目の半径より大きくする */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：ハイライトの探す距離（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
+	float EyeHighlightSearchRadius;
+
 	// ---- トゥーン：陰影 ----
 
 	/** 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） */
