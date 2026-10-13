@@ -164,6 +164,8 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	EyeTriangleStart = 1850;
 	EyeTriangleEnd = 0;
 	bEyeUnlit = true;
+	EyeShadowDistance = 2.0f;
+	EyeShadowBrightness = 0.7f;
 	ShadowThreshold = 0.0f;
 	LitThreshold = 0.5f;
 	EdgeSoftness = 0.02f;
@@ -246,6 +248,8 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetInt(TEXT("r.ToonRayTracer.Toon.EyeUnlit"), bEyeUnlit ? 1 : 0);
 	SetInt(TEXT("r.ToonRayTracer.Toon.EyeTriangleStart"), EyeTriangleStart);
 	SetInt(TEXT("r.ToonRayTracer.Toon.EyeTriangleEnd"), EyeTriangleEnd);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.EyeShadowDistance"), EyeShadowDistance);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.EyeShadowBrightness"), EyeShadowBrightness);
 	SetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);
@@ -337,6 +341,8 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	}
 	GetInt(TEXT("r.ToonRayTracer.Toon.EyeTriangleStart"), EyeTriangleStart);
 	GetInt(TEXT("r.ToonRayTracer.Toon.EyeTriangleEnd"), EyeTriangleEnd);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.EyeShadowDistance"), EyeShadowDistance);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.EyeShadowBrightness"), EyeShadowBrightness);
 	GetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);

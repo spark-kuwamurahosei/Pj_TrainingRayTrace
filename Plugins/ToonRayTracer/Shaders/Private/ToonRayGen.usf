@@ -210,9 +210,14 @@ uint ToonEyeTriangleStart;
 uint ToonEyeTriangleEnd;
 // 目の表現：1 なら、目には陰影を付けず、いつも明るい面の色で塗る
 uint bToonEyeUnlit;
+// 目の表現：上まぶたの影。目の点からキャラクターの上方向へ ToonEyeShadowDistance cm 以内にまぶたなどがあれば、
+// 色を ToonEyeShadowBrightness 倍にする（1 なら影なし）
+float ToonEyeShadowDistance;
+float ToonEyeShadowBrightness;
 // 確認用：1 なら、カメラのレイが当たった面のジオメトリ番号（マテリアルスロット）を色で表示する
 // 2 なら、眉毛の透けの判定結果を色で表示する（GetDebugSeeThroughColor を参照）
 // 3 なら、目のスロットで、目として扱う三角形を緑、範囲外の三角形を赤で表示する
+// 4 なら、目の上まぶたの影の判定結果を色で表示する（GetDebugEyelidColor を参照）
 uint bToonDebugGeometry;
 // 鳴潮風ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
 float ToonSkyTint;
@@ -2628,6 +2633,52 @@ float3 ComputeToonIndirect(FToonHitRecord Rec, float3 GeometricNormal, inout uin
 	return Sum / (float)ToonIndirectSamples;
 }
 
+// 目の表現：上まぶたの影
+// 目の点を上方向（ワールドの Z 軸）へ ToonEyeShadowDistance cm ずらした位置を、カメラから見たときに、
+// まだ同じキャラクターの目が見えていれば影なし、まぶた・まつ毛・前髪などが見えていれば影とする
+// 目の見えている部分の上の縁に沿って、まぶたの形の帯状の影ができる
+// （上へレイを飛ばしてまぶたを探す方法は、顔が正面だけの殻になっているモデルでは何にも当たらないため、見え方で判定する）
+
+// 確認用：上まぶたの影の判定結果
+#define TOON_EYELID_SHADOWED	0	// ずらした位置にまぶたなどが見える（影）
+#define TOON_EYELID_VISIBLE		1	// ずらした位置にも目が見える（影なし）
+#define TOON_EYELID_OFFSCREEN	2	// ずらした位置が画面の外
+#define TOON_EYELID_OFF			3	// 無効
+
+// 確認用：上まぶたの影の判定結果の色（赤：影、緑：影なし、黄：画面の外、灰色：無効）
+float3 GetDebugEyelidColor(uint Reason)
+{
+	const float3 Colors[4] = {
+		float3(1.0f, 0.0f, 0.0f), float3(0.0f, 1.0f, 0.0f), float3(1.0f, 1.0f, 0.0f), float3(0.3f, 0.3f, 0.3f) };
+	return Colors[min(Reason, 3u)];
+}
+
+bool IsUnderEyelid(FToonHitRecord Rec, out uint Reason)
+{
+	Reason = TOON_EYELID_OFF;
+	if (ToonEyeShadowDistance <= 0.0f || TraceMode == 0)
+	{
+		return false;
+	}
+
+	// 上方向はワールドの Z 軸にする（メッシュのローカル座標の Z 軸は、読み込み方によってはキャラクターの前を向くため）
+	float3 ProbePosition = Rec.Position + float3(0.0f, 0.0f, ToonEyeShadowDistance);
+	float4 ClipPosition = mul(float4(ProbePosition, 1.0f), TranslatedWorldToClip);
+	float2 NDC = ClipPosition.xy / max(ClipPosition.w, 1.0e-6f);
+	if (ClipPosition.w <= 0.0f || any(abs(NDC) > 1.0f))
+	{
+		Reason = TOON_EYELID_OFFSCREEN;
+		return false;
+	}
+
+	float2 ProbeUV = float2(NDC.x * 0.5f + 0.5f, 0.5f - NDC.y * 0.5f);
+	FDefaultPayload Payload;
+	bool bEyeVisible = TraceScene(GenerateCameraRay(ProbeUV), 0.0f, Payload)
+		&& Payload.InstanceID == Rec.ObjectId && IsEyeHit(Payload, true);
+	Reason = bEyeVisible ? TOON_EYELID_VISIBLE : TOON_EYELID_SHADOWED;
+	return !bEyeVisible;
+}
+
 float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState, bool bIndirect)
 {
 	float3 Albedo = Rec.Material.Albedo;
@@ -2665,6 +2716,21 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	if (bIndirect && !bUnlitEye)
 	{
 		Color += Albedo * ComputeToonIndirect(Rec, GeometricNormal, RandomState) * ToonIndirectStrength;
+	}
+
+	// 目の表現：上まぶたの影（白目と瞳の上側を、まぶたの形に沿って暗くする）
+	if (Rec.Material.bEye != 0 && (ToonEyeShadowBrightness < 1.0f || bToonDebugGeometry == 4))
+	{
+		uint EyelidReason;
+		bool bUnderEyelid = IsUnderEyelid(Rec, EyelidReason);
+		if (bToonDebugGeometry == 4)
+		{
+			return GetDebugEyelidColor(EyelidReason);
+		}
+		if (bUnderEyelid)
+		{
+			Color *= ToonEyeShadowBrightness;
+		}
 	}
 	return Color;
 }
