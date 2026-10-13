@@ -261,6 +261,8 @@ float ToonHairShadowLightShift;
 uint bToonDebugGeometry;
 // 鳴潮風ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
 float ToonSkyTint;
+// 影の色の鮮やかさ：影の色（素材の色 × 影色）の明るさは保ったまま、彩度をどれだけ上げるか（0 なら変えない）
+float ToonShadowSaturation;
 // シャドウレイの始点をずらす量の倍率（強さ × 揺れの大きさ × この値 cm だけずらす）
 // 大きすぎるとずれの変化がノイズの模様より急になり、境目が折り返して点々になる
 #define TOON_SHADOW_NOISE_OFFSET_SCALE 2.0f
@@ -2965,6 +2967,14 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	float3 LitColor = Albedo * ToonLightColor;
 	float3 ShadowColor = Albedo * ShadowTint;
 	const float3 LuminanceWeights = float3(0.2126f, 0.7152f, 0.0722f);
+
+	// 影の色の鮮やかさ：明るさ（輝度）は保ったまま、輝度との差（色みの成分）を広げて彩度を上げる
+	// 影がくすんだ灰色にならず、髪や服の色に合った鮮やかな影になる（アニメ調のゲームでよく使われる塗り方）
+	if (ToonShadowSaturation > 0.0f)
+	{
+		float ShadowGray = dot(ShadowColor, LuminanceWeights);
+		ShadowColor = max(ShadowGray + (ShadowColor - ShadowGray) * (1.0f + ToonShadowSaturation), 0.0f);
+	}
 	float ShadowLuminance = dot(ShadowColor, LuminanceWeights);
 	float MaxShadowLuminance = dot(LitColor, LuminanceWeights) * TOON_MAX_SHADOW_TO_LIT_RATIO;
 	if (ShadowLuminance > MaxShadowLuminance)
