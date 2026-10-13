@@ -225,6 +225,13 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceCenter, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceRight, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceForward, [MaxFaces])
+		// 前髪の影：有効か、髪のマテリアルスロットのビット、髪を探す距離（cm）、影の濃さ
+		SHADER_PARAMETER(uint32, bToonHairShadow)
+		SHADER_PARAMETER(uint32, ToonHairSlotMask)
+		SHADER_PARAMETER(float, ToonHairShadowDistance)
+		SHADER_PARAMETER(float, ToonHairShadowStrength)
+		SHADER_PARAMETER(float, ToonHairShadowWidth)
+		SHADER_PARAMETER(float, ToonHairShadowLightShift)
 		SHADER_PARAMETER(uint32, bToonDebugGeometry)
 		// 鳴潮風ルック フェーズ3：影の面を Skylight の色にどれだけ染めるか
 		SHADER_PARAMETER(float, ToonSkyTint)
