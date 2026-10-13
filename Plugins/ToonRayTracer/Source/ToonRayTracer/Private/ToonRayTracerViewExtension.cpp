@@ -189,6 +189,13 @@ namespace
 		ECVF_RenderThreadSafe);
 
 	// 影の色の鮮やかさ：影の色の明るさは保ったまま、彩度を上げる
+	// マテリアルの発光：UE のマテリアルの発光（エミッシブ）を、トゥーンの塗りに足す強さ
+	TAutoConsoleVariable<float> CVarToonRayTracerToonEmissiveStrength(
+		TEXT("r.ToonRayTracer.Toon.EmissiveStrength"),
+		1.0f,
+		TEXT("Strength of the material emissive color added on top of the toon shading, for surfaces seen from the camera (0: off)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowSaturation(
 		TEXT("r.ToonRayTracer.Toon.ShadowSaturation"),
 		0.6f,
@@ -1181,6 +1188,33 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 	}
 }
 
+void ToonRayTracerViewExtension::PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily)
+{
+	// 前のフレームのテクスチャ（別のグラフのもの）を使わないよう、フレームの始めに捨てる
+	EmissiveTextures_RenderThread.Reset();
+}
+
+void ToonRayTracerViewExtension::PostRenderBasePassDeferred_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView, const FRenderTargetBindingSlots& RenderTargets, TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures)
+{
+	// トゥーンの表示でシーンのレイを使い、発光を足すときだけ写し取る
+	if (CVarToonRayTracerShadingMode.GetValueOnRenderThread() != 3 || CVarToonRayTracerTraceMode.GetValueOnRenderThread() == 0
+		|| CVarToonRayTracerToonEmissiveStrength.GetValueOnRenderThread() <= 0.0f)
+	{
+		return;
+	}
+
+	// 1 つ目のレンダーターゲットがシーンの色。ベースパスの直後はライティング前なので、マテリアルの発光（と Unlit の色）だけが入っている
+	FRDGTextureRef SceneColor = RenderTargets[0].GetTexture();
+	if (!SceneColor)
+	{
+		return;
+	}
+	const FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(SceneColor->Desc.Extent, SceneColor->Desc.Format, FClearValueBinding::Black, TexCreate_ShaderResource);
+	FRDGTextureRef Emissive = GraphBuilder.CreateTexture(Desc, TEXT("ToonRayTracer.Emissive"));
+	AddCopyTexturePass(GraphBuilder, SceneColor, Emissive);
+	EmissiveTextures_RenderThread.Add(&InView, Emissive);
+}
+
 void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFamily)
 {
 	// ライトの情報はゲームスレッド側にしかないため、ここで取得してレンダースレッドへ渡す
@@ -1669,6 +1703,13 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonLightColor = PassParameters->LightColor * ToonLightScale;
 	PassParameters->ToonSkyTint = ToonSkyTint;
 	PassParameters->ToonShadowSaturation = ToonShadowSaturation;
+	// マテリアルの発光：このビューのベースパスの直後に写し取ったテクスチャ（なければ黒）
+	{
+		const FRDGTextureRef* Emissive = EmissiveTextures_RenderThread.Find(&View);
+		const bool bHasEmissive = Emissive && *Emissive && bHasGBuffer;
+		PassParameters->ToonEmissiveTexture = bHasEmissive ? *Emissive : GSystemTextures.GetBlackDummy(GraphBuilder);
+		PassParameters->ToonEmissiveStrength = bHasEmissive ? FMath::Max(CVarToonRayTracerToonEmissiveStrength.GetValueOnRenderThread(), 0.0f) : 0.0f;
+	}
 	PassParameters->bToonCastShadows = bToonCastShadows ? 1u : 0u;
 	PassParameters->ToonShadowBias = ToonShadowBias;
 	// 円錐の全体の角度（度）から、半角の cos にする

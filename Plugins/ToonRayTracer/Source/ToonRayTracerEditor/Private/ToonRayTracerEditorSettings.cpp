@@ -210,6 +210,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	LightScale = 1.0f;
 	SkyTint = 0.3f;
 	ShadowSaturation = 0.6f;
+	EmissiveStrength = 1.0f;
 
 	bCastShadows = true;
 	ShadowBias = 2.0f;
@@ -315,6 +316,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.LightScale"), LightScale);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SkyTint"), SkyTint);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowSaturation"), ShadowSaturation);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.EmissiveStrength"), EmissiveStrength);
 
 	SetBool(TEXT("r.ToonRayTracer.Toon.CastShadows"), bCastShadows);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowBias"), ShadowBias);
@@ -438,6 +440,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.LightScale"), LightScale);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SkyTint"), SkyTint);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowSaturation"), ShadowSaturation);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.EmissiveStrength"), EmissiveStrength);
 
 	GetBool(TEXT("r.ToonRayTracer.Toon.CastShadows"), bCastShadows);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowBias"), ShadowBias);
