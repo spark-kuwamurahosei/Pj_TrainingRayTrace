@@ -208,6 +208,14 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：陰影を付けない"))
 	bool bEyeUnlit;
 
+	/** 上まぶたの影：目の見えている部分の上の縁から、何 cm の幅を影にするか。大きいほど影の帯が太くなる。0 なら影なし */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：上まぶたの影の太さ（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "5.0"))
+	float EyeShadowDistance;
+
+	/** 上まぶたの影の部分の明るさの倍率（1 なら影なし） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "目：上まぶたの影の明るさ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float EyeShadowBrightness;
+
 	// ---- トゥーン：陰影 ----
 
 	/** 陰影の段階数（2: 影 / 明るい面、3: 影 / 中間 / 明るい面） */
