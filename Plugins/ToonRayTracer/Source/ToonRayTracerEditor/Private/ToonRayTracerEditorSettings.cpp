@@ -192,6 +192,13 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	FaceShadowCurve = 0.15f;
 	FaceShadowSoftness = 0.03f;
 	FaceShadowFrontBias = 0.4f;
+	HairShadowMode = 1;
+	HairShadowWidth = 4.0f;
+	HairShadowLightShift = 0.5f;
+	// Kanau では、髪（h1）がエレメント 6
+	HairSlots = { 6 };
+	HairShadowDistance = 30.0f;
+	HairShadowStrength = 1.0f;
 	FaceHeadBone = TEXT("jnt_head");
 	FaceLeftEyeBone = TEXT("jnt_eyeL");
 	FaceRightEyeBone = TEXT("jnt_eyeR");
@@ -288,6 +295,12 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowCurve"), FaceShadowCurve);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowSoftness"), FaceShadowSoftness);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowFrontBias"), FaceShadowFrontBias);
+	SetInt(TEXT("r.ToonRayTracer.Toon.HairShadow"), HairShadowMode);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.HairShadowWidth"), HairShadowWidth);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.HairShadowLightShift"), HairShadowLightShift);
+	SetInt(TEXT("r.ToonRayTracer.Toon.HairSlotMask"), SlotsToMask(HairSlots));
+	SetFloat(TEXT("r.ToonRayTracer.Toon.HairShadowDistance"), HairShadowDistance);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.HairShadowStrength"), HairShadowStrength);
 	SetString(TEXT("r.ToonRayTracer.Toon.FaceHeadBone"), FaceHeadBone);
 	SetString(TEXT("r.ToonRayTracer.Toon.FaceLeftEyeBone"), FaceLeftEyeBone);
 	SetString(TEXT("r.ToonRayTracer.Toon.FaceRightEyeBone"), FaceRightEyeBone);
@@ -399,6 +412,16 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowCurve"), FaceShadowCurve);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowSoftness"), FaceShadowSoftness);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowFrontBias"), FaceShadowFrontBias);
+	{
+		GetInt(TEXT("r.ToonRayTracer.Toon.HairShadow"), HairShadowMode);
+		int32 SlotMask = 0;
+		GetInt(TEXT("r.ToonRayTracer.Toon.HairSlotMask"), SlotMask);
+		HairSlots = MaskToSlots(SlotMask);
+	}
+	GetFloat(TEXT("r.ToonRayTracer.Toon.HairShadowDistance"), HairShadowDistance);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.HairShadowStrength"), HairShadowStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.HairShadowWidth"), HairShadowWidth);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.HairShadowLightShift"), HairShadowLightShift);
 	GetString(TEXT("r.ToonRayTracer.Toon.FaceHeadBone"), FaceHeadBone);
 	GetString(TEXT("r.ToonRayTracer.Toon.FaceLeftEyeBone"), FaceLeftEyeBone);
 	GetString(TEXT("r.ToonRayTracer.Toon.FaceRightEyeBone"), FaceRightEyeBone);

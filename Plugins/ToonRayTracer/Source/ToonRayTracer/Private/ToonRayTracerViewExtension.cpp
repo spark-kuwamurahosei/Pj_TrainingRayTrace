@@ -331,6 +331,43 @@ namespace
 		TEXT("Subtracted from the front component of the light (-1 to 1) for the face shadow, so light slightly in front of the side does not leave only a thin lit strip along the nose when viewed from the side (0: off)"),
 		ECVF_RenderThreadSafe);
 
+	// 前髪の影：顔に髪の影だけを落とす
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonHairShadow(
+		TEXT("r.ToonRayTracer.Toon.HairShadow"),
+		1,
+		TEXT("Bangs shadow on the character's face, even when the character does not receive its own shadow. 0: off, 1: band under the edge of the bangs (decided by what the camera sees above each face point), 2: shadow rays toward the light that only hit the hair"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonHairSlotMask(
+		TEXT("r.ToonRayTracer.Toon.HairSlotMask"),
+		64,
+		TEXT("Bit mask of the material slots treated as the character's hair (slot n: 2^n, e.g. 64 for slot 6)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairShadowDistance(
+		TEXT("r.ToonRayTracer.Toon.HairShadowDistance"),
+		30.0f,
+		TEXT("Mode 2: maximum distance (cm) from the face toward the light to look for the hair casting the bangs shadow"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairShadowWidth(
+		TEXT("r.ToonRayTracer.Toon.HairShadowWidth"),
+		4.0f,
+		TEXT("Mode 1: width (cm) of the bangs shadow band under the edge of the bangs"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairShadowLightShift(
+		TEXT("r.ToonRayTracer.Toon.HairShadowLightShift"),
+		0.5f,
+		TEXT("Mode 1: horizontal shift toward the light, relative to the band width, so the bangs shadow moves with the light"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairShadowStrength(
+		TEXT("r.ToonRayTracer.Toon.HairShadowStrength"),
+		1.0f,
+		TEXT("Strength of the bangs shadow on the face (0-1)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceWidthScale(
 		TEXT("r.ToonRayTracer.Toon.FaceWidthScale"),
 		1.0f,
@@ -1258,6 +1295,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonFaceShadowCurve = FMath::Max(CVarToonRayTracerToonFaceShadowCurve.GetValueOnRenderThread(), 0.0f);
 	const float ToonFaceShadowSoftness = FMath::Max(CVarToonRayTracerToonFaceShadowSoftness.GetValueOnRenderThread(), 0.001f);
 	const float ToonFaceShadowFrontBias = FMath::Clamp(CVarToonRayTracerToonFaceShadowFrontBias.GetValueOnRenderThread(), 0.0f, 0.99f);
+	const uint32 ToonHairShadowMode = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonHairShadow.GetValueOnRenderThread(), 0, 2));
+	const float ToonHairShadowWidth = FMath::Max(CVarToonRayTracerToonHairShadowWidth.GetValueOnRenderThread(), 0.0f);
+	const float ToonHairShadowLightShift = FMath::Max(CVarToonRayTracerToonHairShadowLightShift.GetValueOnRenderThread(), 0.0f);
+	const uint32 ToonHairSlotMask = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonHairSlotMask.GetValueOnRenderThread(), 0));
+	const float ToonHairShadowDistance = FMath::Max(CVarToonRayTracerToonHairShadowDistance.GetValueOnRenderThread(), 0.0f);
+	const float ToonHairShadowStrength = FMath::Clamp(CVarToonRayTracerToonHairShadowStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const uint32 ToonEyeTriangleStart = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeTriangleStart.GetValueOnRenderThread(), 0));
 	const uint32 ToonEyeTriangleEnd = static_cast<uint32>(FMath::Max(CVarToonRayTracerToonEyeTriangleEnd.GetValueOnRenderThread(), 0));
 	const float ToonEyeShadowDistance = FMath::Max(CVarToonRayTracerToonEyeShadowDistance.GetValueOnRenderThread(), 0.0f);
@@ -1303,7 +1346,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
 		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
-				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias))))), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
+				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias)),
+					HashCombine(HashCombine(HashCombine(GetTypeHash(ToonHairShadowMode), GetTypeHash(ToonHairSlotMask)), HashCombine(GetTypeHash(ToonHairShadowWidth), GetTypeHash(ToonHairShadowLightShift))), HashCombine(GetTypeHash(ToonHairShadowDistance), GetTypeHash(ToonHairShadowStrength))))))), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
 	const uint32 SettingsHash = HashCombine(HashCombine(HashCombine(
 		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), HashCombine(GetTypeHash(SamplesPerPixel), GetTypeHash(bStratifiedSampling))), HashCombine(HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth)), GetTypeHash(ScatterSampling))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
@@ -1546,6 +1590,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonFaceShadowCurve = ToonFaceShadowCurve;
 	PassParameters->ToonFaceShadowSoftness = ToonFaceShadowSoftness;
 	PassParameters->ToonFaceShadowFrontBias = ToonFaceShadowFrontBias;
+	PassParameters->bToonHairShadow = ToonHairShadowMode;
+	PassParameters->ToonHairShadowWidth = ToonHairShadowWidth;
+	PassParameters->ToonHairShadowLightShift = ToonHairShadowLightShift;
+	PassParameters->ToonHairSlotMask = ToonHairSlotMask;
+	PassParameters->ToonHairShadowDistance = ToonHairShadowDistance;
+	PassParameters->ToonHairShadowStrength = ToonHairShadowStrength;
 	{
 		const FVector FacePreViewTranslation = View.ViewMatrices.GetPreViewTranslation();
 		for (int32 Index = 0; Index < FToonRayGenShader::MaxFaces; ++Index)

@@ -239,6 +239,19 @@ float ToonFaceShadowFrontBias;
 float4 ToonFaceCenter[TOON_MAX_FACES];
 float4 ToonFaceRight[TOON_MAX_FACES];
 float4 ToonFaceForward[TOON_MAX_FACES];
+// 前髪の影：顔のピクセルから光へシャドウレイを飛ばし、同じキャラクターの髪のパーツに当たったときだけ影にする
+// ・bToonHairShadow：0 なら無効、1 なら見え方で決める（前髪の縁の下に帯状の影）、2 なら光の方向へシャドウレイを飛ばす
+// ・ToonHairSlotMask：髪のマテリアルスロット（スロット番号 n なら 2^n のビット）
+// ・ToonHairShadowDistance：2 のとき、髪を探す距離（cm）
+// ・ToonHairShadowStrength：影の濃さ（0 ～ 1）
+// ・ToonHairShadowWidth：1 のとき、前髪の縁の下の影の幅（cm）
+// ・ToonHairShadowLightShift：1 のとき、影の幅に対して、光の側へずらす割合
+uint bToonHairShadow;
+uint ToonHairSlotMask;
+float ToonHairShadowDistance;
+float ToonHairShadowStrength;
+float ToonHairShadowWidth;
+float ToonHairShadowLightShift;
 // 確認用：1 なら、カメラのレイが当たった面のジオメトリ番号（マテリアルスロット）を色で表示する
 // 2 なら、眉毛の透けの判定結果を色で表示する（GetDebugSeeThroughColor を参照）
 // 3 なら、目のスロットで、目として扱う三角形を緑、範囲外の三角形を赤で表示する
@@ -2522,6 +2535,57 @@ bool ComputeFaceShadowNdotL(float3 Position, out float FaceNdotL)
 	return true;
 }
 
+// 前髪の影：髪を探すときに、通り抜ける髪以外の面（顔、目、まつ毛など）の数の上限
+#define TOON_HAIR_SHADOW_MAX_SKIPS 8
+
+// 前髪の影：Origin から光の方向へ ToonHairShadowDistance cm 以内に、同じキャラクターの髪があるか
+// 顔や目など、髪以外のパーツは通り抜ける（服や体の影は出さず、前髪の影だけを顔に落とす）
+bool IsUnderHairShadow(float3 Origin, uint ObjectId)
+{
+	FToonRay ShadowRay;
+	ShadowRay.Origin = Origin;
+	ShadowRay.Direction = ToLightDirection;
+	float TMin = TOON_RAY_TMIN;
+	[loop]
+	for (uint Skip = 0; Skip <= TOON_HAIR_SHADOW_MAX_SKIPS; ++Skip)
+	{
+		FDefaultPayload Payload;
+		if (!TraceScene(ShadowRay, TMin, Payload) || Payload.HitT > ToonHairShadowDistance || Payload.InstanceID != ObjectId)
+		{
+			return false;
+		}
+		if (((ToonHairSlotMask >> GetPayloadGeometryIndex(Payload)) & 1u) != 0)
+		{
+			return true;
+		}
+		TMin = Payload.HitT + TOON_RAY_TMIN;
+	}
+	return false;
+}
+
+// 前髪の影（見え方で決める方式）：顔の点を上へ ToonHairShadowWidth cm、光の側（水平）へその ToonHairShadowLightShift 倍ずらした位置を
+// カメラから見て、同じキャラクターの髪が見えていれば影にする
+// 前髪の縁の形に沿った帯状の影になり、光の方向へ素直に影を落とすと出る横の髪の束の大きな影が出ない（アニメ調のゲームでよく使われる方法）
+// 光の側へずらすので、光の向きに合わせて影が少し左右に動く
+bool IsUnderBangs(float3 Position, uint ObjectId)
+{
+	float2 LightHorizontal = ToLightDirection.xy;
+	float LightHorizontalLength = length(LightHorizontal);
+	float3 Shift = LightHorizontalLength > 1.0e-4f ? float3(LightHorizontal / LightHorizontalLength, 0.0f) : 0.0f;
+	float3 ProbePosition = Position + ToonHairShadowWidth * (float3(0.0f, 0.0f, 1.0f) + Shift * ToonHairShadowLightShift);
+
+	float4 ClipPosition = mul(float4(ProbePosition, 1.0f), TranslatedWorldToClip);
+	float2 NDC = ClipPosition.xy / max(ClipPosition.w, 1.0e-6f);
+	if (ClipPosition.w <= 0.0f || any(abs(NDC) > 1.0f))
+	{
+		return false;
+	}
+	float2 ProbeUV = float2(NDC.x * 0.5f + 0.5f, 0.5f - NDC.y * 0.5f);
+	FDefaultPayload Payload;
+	return TraceScene(GenerateCameraRay(ProbeUV), 0.0f, Payload)
+		&& Payload.InstanceID == ObjectId && ((ToonHairSlotMask >> GetPayloadGeometryIndex(Payload)) & 1u) != 0;
+}
+
 float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
 	if (bHasDirectionalLight == 0)
@@ -2599,6 +2663,16 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 
 		// 光が届く割合（くっきりした影なら 0 か 1、面光源のやわらかい影なら途中の値もとる）
 		LightLevel *= ComputeToonShadowVisibility(Rec, ShadowOrigin, bGeometryFacesAwayFromLight, RandomState);
+
+		// 前髪の影：キャラクターは自分の影を受けない設定でも、顔には髪の影だけを落とす
+		if (Rec.Material.bFace != 0 && bToonHairShadow != 0 && LightLevel > 0.0f)
+		{
+			bool bHairShadowed = bToonHairShadow == 1 ? IsUnderBangs(Rec.Position, Rec.ObjectId) : IsUnderHairShadow(ShadowOrigin, Rec.ObjectId);
+			if (bHairShadowed)
+			{
+				LightLevel *= 1.0f - saturate(ToonHairShadowStrength);
+			}
+		}
 	}
 
 	return LightLevel;

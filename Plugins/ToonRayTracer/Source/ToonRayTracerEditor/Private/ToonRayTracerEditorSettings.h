@@ -252,6 +252,33 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：幅（両目の距離の倍率）", ClampMin = "0.1", UIMin = "0.5", UIMax = "2.0"))
 	float FaceWidthScale;
 
+	/** 前髪の影。キャラクターが自分の影を受けない設定でも、顔には前髪の影が落ちる
+	 *  0：なし
+	 *  1：見え方で決める。顔の点を上（と光の側）へずらした位置に髪が見えれば影にする。前髪の縁の下に帯状の影
+	 *  2：光の方向へシャドウレイを飛ばし、髪に当たったときだけ影にする（横の髪の束の影も落ちる） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪の影（0：なし、1：縁の下、2：光の方向）", ClampMin = "0", ClampMax = "2", UIMin = "0", UIMax = "2"))
+	int32 HairShadowMode;
+
+	/** 髪として扱うパーツのマテリアルスロット番号（スケルタルメッシュのエディタのエレメント番号） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪：スロット番号"))
+	TArray<int32> HairSlots;
+
+	/** 前髪の影（1）：前髪の縁の下の影の幅（cm） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪の影：幅（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "10.0"))
+	float HairShadowWidth;
+
+	/** 前髪の影（1）：影の幅に対して、光の側へずらす割合。光の向きに合わせて影が左右に動く */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪の影：光の側へのずれ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
+	float HairShadowLightShift;
+
+	/** 前髪の影（2）：顔から光の方向へ、髪を探す距離（cm） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪の影：探す距離（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "100.0"))
+	float HairShadowDistance;
+
+	/** 前髪の影の濃さ（0 ～ 1） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪の影：濃さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float HairShadowStrength;
+
 	/** 顔の向きを求めるための、頭のボーンの名前 */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：頭のボーン"))
 	FString FaceHeadBone;
