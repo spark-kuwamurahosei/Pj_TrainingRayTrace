@@ -235,6 +235,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, bToonDebugGeometry)
 		// 鳴潮風ルック フェーズ3：影の面を Skylight の色にどれだけ染めるか
 		SHADER_PARAMETER(float, ToonSkyTint)
+		// 影の色の鮮やかさ（彩度を上げる量）
+		SHADER_PARAMETER(float, ToonShadowSaturation)
 		// Translated World 空間の原点のワールド座標（メッシュのローカル座標を求めるため、double を High と Low に分けたもの）
 		SHADER_PARAMETER(FVector3f, PreViewTranslationHigh)
 		SHADER_PARAMETER(FVector3f, PreViewTranslationLow)

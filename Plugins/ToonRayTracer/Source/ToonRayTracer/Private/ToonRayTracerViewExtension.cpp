@@ -185,6 +185,13 @@ namespace
 		TEXT("How much the shadow bands are tinted with the average Skylight color (0-1), so toon surfaces blend with the regularly lit background"),
 		ECVF_RenderThreadSafe);
 
+	// 影の色の鮮やかさ：影の色の明るさは保ったまま、彩度を上げる
+	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowSaturation(
+		TEXT("r.ToonRayTracer.Toon.ShadowSaturation"),
+		0.6f,
+		TEXT("How much the saturation of the shadow color is increased while keeping its luminance, so shadows are vivid instead of dull gray (0: unchanged)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonLightScale(
 		TEXT("r.ToonRayTracer.Toon.LightScale"),
 		1.0f,
@@ -1310,6 +1317,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonEyeHighlightSearchRadius = FMath::Max(CVarToonRayTracerToonEyeHighlightSearchRadius.GetValueOnRenderThread(), 0.0f);
 	const float ToonLightScale = FMath::Max(CVarToonRayTracerToonLightScale.GetValueOnRenderThread(), 0.0f);
 	const float ToonSkyTint = FMath::Clamp(CVarToonRayTracerToonSkyTint.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonShadowSaturation = FMath::Max(CVarToonRayTracerToonShadowSaturation.GetValueOnRenderThread(), 0.0f);
 	const bool bToonCastShadows = CVarToonRayTracerToonCastShadows.GetValueOnRenderThread() != 0;
 	const float ToonShadowBias = FMath::Max(CVarToonRayTracerToonShadowBias.GetValueOnRenderThread(), 0.0f);
 	const float ToonSoftShadowAngle = FMath::Clamp(CVarToonRayTracerToonSoftShadowAngle.GetValueOnRenderThread(), 0.0f, 90.0f);
@@ -1338,7 +1346,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(GetTypeHash(DirectionalLight.Intensity), GetTypeHash(DirectionalLight.bValid)));
 	const uint32 ToonHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(ToonBands), GetTypeHash(ToonShadowThreshold)), HashCombine(GetTypeHash(ToonLitThreshold), GetTypeHash(ToonEdgeSoftness))),
-		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), HashCombine(GetTypeHash(ToonLightScale), GetTypeHash(ToonSkyTint))), HashCombine(HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonSoftShadowAngle), GetTypeHash(ToonSoftShadowSamples)), HashCombine(GetTypeHash(ToonSoftShadowSteps), HashCombine(GetTypeHash(ToonIndirectStrength), GetTypeHash(ToonIndirectSamples))))), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
+		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), HashCombine(GetTypeHash(ToonLightScale), HashCombine(GetTypeHash(ToonSkyTint), GetTypeHash(ToonShadowSaturation)))), HashCombine(HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonSoftShadowAngle), GetTypeHash(ToonSoftShadowSamples)), HashCombine(GetTypeHash(ToonSoftShadowSteps), HashCombine(GetTypeHash(ToonIndirectStrength), GetTypeHash(ToonIndirectSamples))))), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
 	const uint32 ToonHighlightHash = HashCombine(
 		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
@@ -1560,6 +1568,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonShadowColor = FVector3f(ToonShadowColor.R, ToonShadowColor.G, ToonShadowColor.B);
 	PassParameters->ToonLightColor = PassParameters->LightColor * ToonLightScale;
 	PassParameters->ToonSkyTint = ToonSkyTint;
+	PassParameters->ToonShadowSaturation = ToonShadowSaturation;
 	PassParameters->bToonCastShadows = bToonCastShadows ? 1u : 0u;
 	PassParameters->ToonShadowBias = ToonShadowBias;
 	// 円錐の全体の角度（度）から、半角の cos にする
