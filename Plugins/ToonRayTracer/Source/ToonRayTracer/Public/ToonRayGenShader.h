@@ -42,6 +42,8 @@ class FToonRayGenShader : public FGlobalShader
 	static constexpr int32 MaxQuads = 8;
 	// シェーダーに渡せる箱の最大数（『The Next Week』第8〜9章）
 	static constexpr int32 MaxBoxes = 4;
+	// 顔の影：シェーダーに渡せる顔（キャラクター）の最大数
+	static constexpr int32 MaxFaces = 4;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
@@ -213,6 +215,16 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonEyeHighlightStrength)
 		SHADER_PARAMETER(float, ToonEyeHighlightThreshold)
 		SHADER_PARAMETER(float, ToonEyeHighlightSearchRadius)
+		// 顔の影：有効か、顔のマテリアルスロットのビット、顔の数と位置・向き
+		SHADER_PARAMETER(uint32, bToonFaceShadow)
+		SHADER_PARAMETER(uint32, ToonFaceSlotMask)
+		SHADER_PARAMETER(uint32, NumToonFaces)
+		SHADER_PARAMETER(float, ToonFaceShadowCurve)
+		SHADER_PARAMETER(float, ToonFaceShadowSoftness)
+		SHADER_PARAMETER(float, ToonFaceShadowFrontBias)
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceCenter, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceRight, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceForward, [MaxFaces])
 		SHADER_PARAMETER(uint32, bToonDebugGeometry)
 		// 鳴潮風ルック フェーズ3：影の面を Skylight の色にどれだけ染めるか
 		SHADER_PARAMETER(float, ToonSkyTint)
@@ -251,6 +263,7 @@ class FToonRayGenShader : public FGlobalShader
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_SPHERES"), MaxSpheres);
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_QUADS"), MaxQuads);
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_BOXES"), MaxBoxes);
+		OutEnvironment.SetDefine(TEXT("TOON_MAX_FACES"), MaxFaces);
 		// GetPrimitiveData() を Primitive ユニフォームバッファではなく GPUScene のバッファから読むようにする
 		// （未定義だとメッシュ描画用の Primitive ユニフォームバッファを参照してしまい、グローバルシェーダーではバインドできない）
 		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);

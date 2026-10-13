@@ -55,6 +55,22 @@ namespace
 		}
 	}
 
+	void SetString(const TCHAR* Name, const FString& Value)
+	{
+		if (IConsoleVariable* Variable = FindToonConsoleVariable(Name))
+		{
+			Variable->Set(*Value, ECVF_SetByConsole);
+		}
+	}
+
+	void GetString(const TCHAR* Name, FString& OutValue)
+	{
+		if (IConsoleVariable* Variable = FindToonConsoleVariable(Name))
+		{
+			OutValue = Variable->GetString();
+		}
+	}
+
 	void SetBool(const TCHAR* Name, bool bValue)
 	{
 		SetInt(Name, bValue ? 1 : 0);
@@ -169,6 +185,16 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	EyeHighlightStrength = 1.0f;
 	EyeHighlightThreshold = 0.99f;
 	EyeHighlightSearchRadius = 10.0f;
+	bFaceShadow = true;
+	// Kanau では、顔（fa）がエレメント 3。ボーンの名前も Kanau のもの
+	FaceSlots = { 3 };
+	FaceWidthScale = 1.0f;
+	FaceShadowCurve = 0.15f;
+	FaceShadowSoftness = 0.03f;
+	FaceShadowFrontBias = 0.4f;
+	FaceHeadBone = TEXT("jnt_head");
+	FaceLeftEyeBone = TEXT("jnt_eyeL");
+	FaceRightEyeBone = TEXT("jnt_eyeR");
 	ShadowThreshold = 0.0f;
 	LitThreshold = 0.5f;
 	EdgeSoftness = 0.02f;
@@ -194,7 +220,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 
 	bOutline = true;
 	OutlineWidth = 1.5f;
-	OutlineWidthSkinned = 1.0f;
+	OutlineWidthSkinned = 0.5f;
 	OutlineThreshold = 1.0f;
 	OutlineColor = FLinearColor(0.02f, 0.02f, 0.04f);
 
@@ -256,6 +282,15 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.EyeHighlightStrength"), EyeHighlightStrength);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.EyeHighlightThreshold"), EyeHighlightThreshold);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.EyeHighlightSearchRadius"), EyeHighlightSearchRadius);
+	SetBool(TEXT("r.ToonRayTracer.Toon.FaceShadow"), bFaceShadow);
+	SetInt(TEXT("r.ToonRayTracer.Toon.FaceSlotMask"), SlotsToMask(FaceSlots));
+	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceWidthScale"), FaceWidthScale);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowCurve"), FaceShadowCurve);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowSoftness"), FaceShadowSoftness);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowFrontBias"), FaceShadowFrontBias);
+	SetString(TEXT("r.ToonRayTracer.Toon.FaceHeadBone"), FaceHeadBone);
+	SetString(TEXT("r.ToonRayTracer.Toon.FaceLeftEyeBone"), FaceLeftEyeBone);
+	SetString(TEXT("r.ToonRayTracer.Toon.FaceRightEyeBone"), FaceRightEyeBone);
 	SetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);
@@ -352,6 +387,21 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.EyeHighlightStrength"), EyeHighlightStrength);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.EyeHighlightThreshold"), EyeHighlightThreshold);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.EyeHighlightSearchRadius"), EyeHighlightSearchRadius);
+	{
+		int32 Value = 0;
+		GetInt(TEXT("r.ToonRayTracer.Toon.FaceShadow"), Value);
+		bFaceShadow = Value != 0;
+		int32 SlotMask = 0;
+		GetInt(TEXT("r.ToonRayTracer.Toon.FaceSlotMask"), SlotMask);
+		FaceSlots = MaskToSlots(SlotMask);
+	}
+	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceWidthScale"), FaceWidthScale);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowCurve"), FaceShadowCurve);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowSoftness"), FaceShadowSoftness);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowFrontBias"), FaceShadowFrontBias);
+	GetString(TEXT("r.ToonRayTracer.Toon.FaceHeadBone"), FaceHeadBone);
+	GetString(TEXT("r.ToonRayTracer.Toon.FaceLeftEyeBone"), FaceLeftEyeBone);
+	GetString(TEXT("r.ToonRayTracer.Toon.FaceRightEyeBone"), FaceRightEyeBone);
 	GetInt(TEXT("r.ToonRayTracer.Toon.Bands"), Bands);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowThreshold"), ShadowThreshold);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.LitThreshold"), LitThreshold);

@@ -66,8 +66,26 @@ private:
 	// ゲームスレッドで、ビューファミリーのワールドから Directional Light を探す
 	static FToonDirectionalLight FindDirectionalLight(const FSceneViewFamily& ViewFamily);
 
+	// 顔の影：キャラクターの顔の位置と向き（頭と両目のボーンから求める）
+	struct FToonFace
+	{
+		// 両目の中点（ワールド空間）
+		FVector Center = FVector::ZeroVector;
+		// 顔の右と前の向き（水平、正規化済み）
+		FVector3f Right = FVector3f(1.0f, 0.0f, 0.0f);
+		FVector3f Forward = FVector3f(0.0f, 1.0f, 0.0f);
+		// 顔の半分の幅と、この顔として扱う範囲の半径（cm）
+		float HalfWidth = 0.0f;
+		float Radius = 0.0f;
+	};
+
+	// ゲームスレッドで、ビューファミリーのワールドにあるスケルタルメッシュから、顔の位置と向きを集める
+	static void FindFaces(const FSceneViewFamily& ViewFamily, TArray<FToonFace>& OutFaces);
+
 	// レンダースレッドからのみアクセスする。BeginRenderViewFamily でレンダーコマンド経由で更新される
 	FToonDirectionalLight DirectionalLight_RenderThread;
+	// 顔の影：キャラクターの顔の位置と向き
+	TArray<FToonFace> Faces_RenderThread;
 	// トゥーンの影色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonShadowColor_RenderThread = FLinearColor(0.35f, 0.4f, 0.6f);
 	// 肌の影色（文字列のコンソール変数をゲームスレッドで変換したもの）
