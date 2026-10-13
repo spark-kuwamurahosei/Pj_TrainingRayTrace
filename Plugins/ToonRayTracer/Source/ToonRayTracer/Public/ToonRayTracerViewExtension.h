@@ -23,7 +23,9 @@ public:
 	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override {}
 	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) override {}
 	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override;
-	virtual void PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily) override {}
+	virtual void PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily) override;
+	// マテリアルの発光：ベースパスの直後のシーンの色（ライティング前なので、発光だけが入っている）を写し取る
+	virtual void PostRenderBasePassDeferred_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView, const FRenderTargetBindingSlots& RenderTargets, TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures) override;
 	virtual void PreRenderView_RenderThread(FRDGBuilder& GraphBuilder, FSceneView& InView) override {}
 
 	virtual void SubscribeToPostProcessingPass(
@@ -100,6 +102,8 @@ private:
 	FToonDirectionalLight DirectionalLight_RenderThread;
 	// 顔の影：キャラクターの顔の位置と向き
 	TArray<FToonFace> Faces_RenderThread;
+	// マテリアルの発光：ビューごとに、ベースパスの直後に写し取ったシーンの色（同じフレームのトゥーンのパスで使う）
+	TMap<const FSceneView*, FRDGTextureRef> EmissiveTextures_RenderThread;
 	// トゥーンの影色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonShadowColor_RenderThread = FLinearColor(0.35f, 0.4f, 0.6f);
 	// 肌の影色（文字列のコンソール変数をゲームスレッドで変換したもの）

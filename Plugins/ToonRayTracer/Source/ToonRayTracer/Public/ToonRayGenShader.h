@@ -145,6 +145,9 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferBTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferCTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthTexture)
+		// マテリアルの発光：ベースパスの直後のシーンの色と、足す強さ（0 なら足さない）
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonEmissiveTexture)
+		SHADER_PARAMETER(float, ToonEmissiveStrength)
 		// GBuffer 内の描画範囲（描画解像度。アップスケール後の ViewRect とは異なることがある）
 		SHADER_PARAMETER(FIntPoint, GBufferViewRectMin)
 		SHADER_PARAMETER(FIntPoint, GBufferViewRectSize)

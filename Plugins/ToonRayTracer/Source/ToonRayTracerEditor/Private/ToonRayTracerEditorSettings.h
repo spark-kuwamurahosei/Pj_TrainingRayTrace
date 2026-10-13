@@ -329,6 +329,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "影の色の鮮やかさ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
 	float ShadowSaturation;
 
+	/** マテリアルの発光の強さ。UE のマテリアルの発光（エミッシブ）の色を、トゥーンの塗りに足す。カメラから見えている面だけ。0 なら足さない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "発光の強さ", ClampMin = "0.0", UIMax = "4.0"))
+	float EmissiveStrength;
+
 	// ---- トゥーン：影 ----
 
 	/** シャドウレイによるくっきりした影を付ける */
