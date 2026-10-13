@@ -252,6 +252,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：幅（両目の距離の倍率）", ClampMin = "0.1", UIMin = "0.5", UIMax = "2.0"))
 	float FaceWidthScale;
 
+	/** 大きさの基準。全体の設定の幅や距離（cm）を合わせたキャラクターの両目の間の距離（cm）。ほかのキャラクターでは両目の間の距離に比例して拡大縮小する。0 なら拡大縮小しない（両目の間の距離は Toon Character コンポーネントで確認できる） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "大きさの基準（両目の間の距離 cm）", ClampMin = "0.0", UIMax = "20.0"))
+	float ReferenceEyeDistance;
+
 	/** 前髪の影。キャラクターが自分の影を受けない設定でも、顔には前髪の影が落ちる
 	 *  0：なし
 	 *  1：見え方で決める。顔の点を上（と光の側）へずらした位置に髪が見えれば影にする。前髪の縁の下に帯状の影

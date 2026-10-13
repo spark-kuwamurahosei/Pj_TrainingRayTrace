@@ -189,6 +189,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	// Kanau では、顔（fa）がエレメント 3。ボーンの名前も Kanau のもの
 	FaceSlots = { 3 };
 	FaceWidthScale = 1.0f;
+	ReferenceEyeDistance = 39.6f;
 	FaceShadowCurve = 0.15f;
 	FaceShadowSoftness = 0.03f;
 	FaceShadowFrontBias = 0.4f;
@@ -293,6 +294,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetBool(TEXT("r.ToonRayTracer.Toon.FaceShadow"), bFaceShadow);
 	SetInt(TEXT("r.ToonRayTracer.Toon.FaceSlotMask"), SlotsToMask(FaceSlots));
 	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceWidthScale"), FaceWidthScale);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.ReferenceEyeDistance"), ReferenceEyeDistance);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowCurve"), FaceShadowCurve);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowSoftness"), FaceShadowSoftness);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowFrontBias"), FaceShadowFrontBias);
@@ -411,6 +413,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 		FaceSlots = MaskToSlots(SlotMask);
 	}
 	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceWidthScale"), FaceWidthScale);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.ReferenceEyeDistance"), ReferenceEyeDistance);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowCurve"), FaceShadowCurve);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowSoftness"), FaceShadowSoftness);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceShadowFrontBias"), FaceShadowFrontBias);

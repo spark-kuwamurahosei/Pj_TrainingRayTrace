@@ -43,7 +43,7 @@ class FToonRayGenShader : public FGlobalShader
 	// シェーダーに渡せる箱の最大数（『The Next Week』第8〜9章）
 	static constexpr int32 MaxBoxes = 4;
 	// 顔の影：シェーダーに渡せる顔（キャラクター）の最大数
-	static constexpr int32 MaxFaces = 4;
+	static constexpr int32 MaxFaces = 8;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
@@ -225,6 +225,17 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceCenter, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceRight, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceForward, [MaxFaces])
+		// キャラクターごとの設定（顔ごと）：パーツのスロットのビットと、幅や距離
+		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots2, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams2, [MaxFaces])
+		// キャラクターごとの見た目（全体の設定と組み合わせ済み）
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook0, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook1, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook2, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook3, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook4, [MaxFaces])
 		// 前髪の影：有効か、髪のマテリアルスロットのビット、髪を探す距離（cm）、影の濃さ
 		SHADER_PARAMETER(uint32, bToonHairShadow)
 		SHADER_PARAMETER(uint32, ToonHairSlotMask)
