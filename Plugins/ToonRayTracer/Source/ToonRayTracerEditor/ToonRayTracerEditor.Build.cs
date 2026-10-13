@@ -21,6 +21,8 @@ public class ToonRayTracerEditor : ModuleRules
 				"UnrealEd",
 				"PropertyEditor",
 				"WorkspaceMenuStructure",
+				"AssetTools",
+				"ToonRayTracer",
 			}
 			);
 	}
