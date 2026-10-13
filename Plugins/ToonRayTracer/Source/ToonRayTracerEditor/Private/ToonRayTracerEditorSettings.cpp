@@ -165,7 +165,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	bCharacterSelfShadow = false;
 	bSkin = true;
 	SkinShadowThreshold = -0.3f;
-	SkinShadowColor = FLinearColor(0.75f, 0.5f, 0.5f);
+	SkinShadowColor = FLinearColor(0.62f, 0.42f, 0.45f);
 	CharacterRimStrength = 1.5f;
 	CharacterRimWidth = 2.5f;
 	CharacterOutlineColorScale = 0.25f;

@@ -156,11 +156,11 @@ namespace
 
 	TAutoConsoleVariable<FString> CVarToonRayTracerToonSkinShadowColor(
 		TEXT("r.ToonRayTracer.Toon.SkinShadowColor"),
-		TEXT("0.75,0.5,0.5"),
+		TEXT("0.62,0.42,0.45"),
 		TEXT("Linear RGB tint multiplied with the skin color in shadow bands, as \"R,G,B\""),
 		ECVF_Default);
 
-	const FLinearColor DefaultToonSkinShadowColor(0.75f, 0.5f, 0.5f);
+	const FLinearColor DefaultToonSkinShadowColor(0.62f, 0.42f, 0.45f);
 
 	// 鳴潮風ルック フェーズ2：キャラクターのリムライトと線の色
 	TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimStrength(

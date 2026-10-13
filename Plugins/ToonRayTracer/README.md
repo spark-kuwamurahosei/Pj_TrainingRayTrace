@@ -155,7 +155,7 @@ ToonRayTracer パネルの「キャラクター」欄でも、同じことがで
 | `CharacterSelfShadow` | 0 | キャラクターが自分自身の影を受けるか。0 ならキャラクターの面からのシャドウレイは自分自身を通り抜け、背景や小物など、ほかの物体の影だけ受ける（服のシワや重なりのまだらな影、顔に落ちる前髪や頭の影が消える） |
 | `Skin` | 1 | UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面を肌とし、下の肌用の境目と影色で塗る。顔のマテリアルのシェーディングモデルをこれらにして使う |
 | `SkinShadowThreshold` | -0.3 | 肌の影との境目の N・L。`ShadowThreshold` より下げると、顔に細かい影が入りにくくなる |
-| `SkinShadowColor` | `0.75,0.5,0.5` | 肌の影色（線形の R,G,B）。赤みのある影にする。メッシュごとの影色（Custom Primitive Data）より優先する |
+| `SkinShadowColor` | `0.62,0.42,0.45` | 肌の影色（線形の R,G,B）。少し青みを入れたローズ系の影にする（影の色の鮮やかさで赤くなりすぎない）。メッシュごとの影色（Custom Primitive Data）より優先する |
 | `CharacterRimStrength` | 1.5 | キャラクターのリムライトの強さ。画面上で光源の方向へ `CharacterRimWidth` ずらした位置が十分奥（背景や空）なら、光源の側の輪郭とみなし、素材の色 × ライトの色で明るい縁を加える。面の向きではなく深度の差で判定するため、縁の幅が一定になる。0 なら入れない |
 | `CharacterRimWidth` | 2.5 | キャラクターのリムライトの幅（ピクセル） |
 | `CharacterOutlineColorScale` | 0.25 | キャラクターの線を、黒ではなく素材の色にこの値を掛けた色にする（色つきの線）。0 なら `OutlineColor` |
