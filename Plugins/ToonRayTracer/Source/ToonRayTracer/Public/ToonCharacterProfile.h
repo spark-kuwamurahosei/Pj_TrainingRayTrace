@@ -101,7 +101,7 @@ public:
 
 	/** 肌の影の面の色。チェックを入れたときだけ使い、外していれば全体の設定 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|影", meta = (DisplayName = "肌の影色", EditCondition = "bOverrideSkinShadowColor"))
-	FLinearColor SkinShadowColor = FLinearColor(0.75f, 0.5f, 0.5f);
+	FLinearColor SkinShadowColor = FLinearColor(0.62f, 0.42f, 0.45f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|影", meta = (InlineEditConditionToggle))
 	bool bOverrideShadowSaturation = false;

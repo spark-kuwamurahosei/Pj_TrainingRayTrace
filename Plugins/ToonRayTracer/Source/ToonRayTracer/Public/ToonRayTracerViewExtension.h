@@ -107,7 +107,7 @@ private:
 	// トゥーンの影色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonShadowColor_RenderThread = FLinearColor(0.35f, 0.4f, 0.6f);
 	// 肌の影色（文字列のコンソール変数をゲームスレッドで変換したもの）
-	FLinearColor ToonSkinShadowColor_RenderThread = FLinearColor(0.75f, 0.5f, 0.5f);
+	FLinearColor ToonSkinShadowColor_RenderThread = FLinearColor(0.62f, 0.42f, 0.45f);
 	// トゥーンのアウトラインの色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonOutlineColor_RenderThread = FLinearColor(0.02f, 0.02f, 0.04f);
 
