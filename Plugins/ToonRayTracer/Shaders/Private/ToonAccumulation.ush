@@ -1,0 +1,103 @@
+#pragma once
+
+// フレームをまたいだ蓄積のための、動く物体の検出（速度・深度の変化・ピクセル中心で見えているものの要約）
+
+// 動く物体への対応：GBuffer の速度から、そのピクセルに見えている物体が動いているかを調べる
+// 速度を書き込まない（動いていない）物体は 0 のまま（EncodeVelocityToTexture は 0 を「速度なし」として残している）
+bool IsPixelMoving(float2 UV)
+{
+	float4 EncodedVelocity = GBufferVelocityTexture.Load(int3(GetGBufferPixel(UV), 0));
+	if (EncodedVelocity.x <= 0.0f)
+	{
+		return false;
+	}
+	// 速度はクリップ空間（-1 ～ 1）での移動量なので、半分にして画面のピクセル数を掛けるとピクセル単位になる
+	float2 Velocity = DecodeVelocityFromTexture(EncodedVelocity).xy;
+	return any(abs(Velocity) * 0.5f * (float2)GBufferViewRectSize > TOON_MOTION_MIN_PIXELS);
+}
+
+// 動く物体への対応：周囲のピクセルも含めて、動いている物体が見えているかを調べる
+// アウトラインは物体の輪郭の外側（背景のピクセル）にも描かれるため、そのピクセルだけを見ると
+// 動いていない・深度も変わらないと判定され、線の残像が残る。線の太さ分だけ離れたピクセルも調べる
+bool IsNeighborhoodMoving(float2 UV)
+{
+	float MaxOutlineWidth = max(ToonOutlineWidth, ToonOutlineWidthSkinned);
+	for (uint FaceIndex = 0; FaceIndex < NumToonFaces; ++FaceIndex)
+	{
+		MaxOutlineWidth = max(MaxOutlineWidth, ToonCharacterLook1[FaceIndex].a);
+	}
+	float Radius = bToonOutline != 0 ? ceil(MaxOutlineWidth) + 1.0f : 1.0f;
+	float2 UVStep = Radius / (float2)ViewRectSize;
+	for (int OffsetY = -1; OffsetY <= 1; ++OffsetY)
+	{
+		for (int OffsetX = -1; OffsetX <= 1; ++OffsetX)
+		{
+			if (IsPixelMoving(saturate(UV + float2(OffsetX, OffsetY) * UVStep)))
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// 動く物体への対応：前のフレームの深度が、今のフレームの周囲 3x3 ピクセルの深度の範囲から外れていれば、
+// 見えている物体が変わった（物体が動いて後ろが見えた、など）とみなす
+// 1 ピクセルだけで比べると、GBuffer の TAA のジッターで輪郭の深度が毎フレーム入れ替わり、輪郭の蓄積が進まなくなるため範囲で比べる
+bool HasDepthChanged(float2 UV, float PreviousDeviceZ, out float CurrentDeviceZ)
+{
+	int2 Center = GetGBufferPixel(UV);
+	int2 PixelMin = GBufferViewRectMin;
+	int2 PixelMax = GBufferViewRectMin + GBufferViewRectSize - 1;
+	CurrentDeviceZ = SceneDepthTexture.Load(int3(Center, 0)).r;
+
+	float MinDeviceZ = CurrentDeviceZ;
+	float MaxDeviceZ = CurrentDeviceZ;
+	for (int OffsetY = -1; OffsetY <= 1; ++OffsetY)
+	{
+		for (int OffsetX = -1; OffsetX <= 1; ++OffsetX)
+		{
+			float DeviceZ = SceneDepthTexture.Load(int3(clamp(Center + int2(OffsetX, OffsetY), PixelMin, PixelMax), 0)).r;
+			MinDeviceZ = min(MinDeviceZ, DeviceZ);
+			MaxDeviceZ = max(MaxDeviceZ, DeviceZ);
+		}
+	}
+
+	// Reversed-Z の深度はカメラからの距離に反比例するため、割合で比べれば距離の割合で比べたのと同じになる
+	float Tolerance = PreviousDeviceZ * TOON_MOTION_DEPTH_TOLERANCE;
+	return PreviousDeviceZ < MinDeviceZ - Tolerance || PreviousDeviceZ > MaxDeviceZ + Tolerance;
+}
+
+// 動く物体への対応：ピクセルの中心のレイで「何が見えているか」の要約（シグネチャ）を作る
+// 見えている物体、その点に光が届くか、その点で鏡のように反射した先の物体のどれかが変わると値が変わる
+// （動く物体の影が落ちてきた、鏡に動く物体が映り込んだ、などを検出する）
+// ジッターのない中心のレイと、GBuffer を使わない面ごとの法線だけで作るため、何も動いていなければ毎フレーム同じ値になる
+// 反射した先は素材に関係なく調べる（金属でない面で値が変わっても、そのピクセルの蓄積がやり直されるだけで見た目は変わらない）
+uint ComputePixelSignature(float2 UV)
+{
+	if (TraceMode == 0)
+	{
+		return 0;
+	}
+
+	FToonRay Ray = GenerateCameraRay(UV);
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (!HitAnything(Ray, 0.0f, Rec))
+	{
+		return 0;
+	}
+
+	bool bLit = false;
+	if (bHasDirectionalLight != 0 && dot(Rec.Normal, ToLightDirection) > 0.0f)
+	{
+		bLit = bToonCastShadows == 0 || IsLightVisible(Rec.Position + Rec.Normal * ToonShadowBias, false);
+	}
+
+	FToonRay ReflectedRay;
+	ReflectedRay.Origin = Rec.Position;
+	ReflectedRay.Direction = reflect(Ray.Direction, Rec.Normal);
+	FDefaultPayload ReflectedPayload;
+	uint ReflectedObject = TraceScene(ReflectedRay, TOON_RAY_TMIN, ReflectedPayload) ? ReflectedPayload.InstanceID + 1 : 0;
+
+	return ToonPcgHash(ToonPcgHash(Rec.ObjectId * 2u + (bLit ? 1u : 0u)) ^ ReflectedObject) | 1u;
+}
