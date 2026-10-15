@@ -59,6 +59,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "髪越しに見せるスロット", GetOptions = "GetSlotNameOptions"))
 	TArray<FName> SeeThroughSlots;
 
+	/** 目のスロットの中で、上まぶたの影をかけないパーツ（瞳・角膜など）。空なら目のスロット全体にかける */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "上まぶたの影をかけないスロット", GetOptions = "GetSlotNameOptions"))
+	TArray<FName> EyeShadowExcludeSlots;
+
 	/** 顔の半分の幅（両目の間の距離の何倍か）。0 なら全体の設定 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "大きさ（両目の間の距離に対する倍率）", meta = (DisplayName = "顔の半分の幅", ClampMin = "0.0", UIMax = "3.0"))
 	float FaceWidthScale = 0.0f;
@@ -201,6 +205,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|前髪・眉毛", meta = (DisplayName = "眉毛の透けの明るさ", EditCondition = "bOverrideSeeThroughBrightness", ClampMin = "0.0", ClampMax = "1.0"))
 	float SeeThroughBrightness = 0.5f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|前髪・眉毛", meta = (InlineEditConditionToggle))
+	bool bOverrideSeeThroughColor = false;
+
+	/** チェックを入れると、前髪の上の眉毛を、髪の色を暗くする代わりに眉毛そのものの色で塗る（光の色と、髪の明るさを掛ける）
+	 * 色は、前髪から出て直接見えている部分の UE のマテリアルの色を自動で使う。まだ一度も画面に見えていないときだけ、ここで指定した色を使う */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|前髪・眉毛", meta = (DisplayName = "眉毛の透けの色", EditCondition = "bOverrideSeeThroughColor", HideAlphaChannel))
+	FLinearColor SeeThroughColor = FLinearColor(0.3f, 0.08f, 0.09f);
+
 	/** 対象のモデルのボーンとマテリアルスロットの名前から、ボーンとパーツの候補を自動で入れ、大きさの項目にも全体の設定から求めた値を入れる（入っている値は上書きする） */
 	UFUNCTION(CallInEditor, Category = "モデル", meta = (DisplayName = "候補を自動で入れる"))
 	void FillCandidates();
@@ -226,7 +238,8 @@ public:
 	//   [2] 線の色の倍率、リムライトの強さ、リムライトの幅、顔の境目の曲がり
 	//   [3] 顔の前からの光の補正、上まぶたの影の明るさ、瞳のハイライトの強さ、しきい値
 	//   [4] 前髪の影の濃さ、前髪の影の光の側へのずらし、眉毛の透けの濃さ、明るさ
-	static constexpr int32 NumLookVectors = 5;
+	//   [5] 眉毛の透けで塗る色 RGB、色で塗る割合
+	static constexpr int32 NumLookVectors = 6;
 	void GetLookOverrides(uint32& OutMask, FVector4f (&OutLook)[NumLookVectors]) const;
 
 	// メッシュのマテリアルスロットの名前を、レイトレーシングのジオメトリ番号（LOD 0 のセクション番号）のビットに変換する（0 ～ 63 番）

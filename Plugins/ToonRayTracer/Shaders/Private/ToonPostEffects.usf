@@ -1,0 +1,218 @@
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/TonemapCommon.ush"
+
+// 鳴潮モードの仕上げ（レイトレーシングの後に、画面全体へ掛ける）
+// 参考にした手順（合成ソフトでのレイヤーの重ね方）を、次の 3 つのパスで行う
+// 1. ToonPostEffectsPrepareCS：半分の解像度で、ぼかす元の画像を 3 枚作る
+// 2. ToonPostEffectsBlurCS：それぞれを横と縦にぼかす（ガウスぼかし）
+// 3. ToonPostEffectsCS：元の画面に重ね、最後に上から下へのグラデーションを掛ける
+//
+// 重ねる計算は、画面に出る色（0 ～ 1 の表示の値）で行う（乗算やスクリーンは、表示の値で使う前提の合成のため）
+// キャラクターのピクセルの表示の値は、蓄積テクスチャの線形の色にガンマ 2 を掛けて求める（RayGen と同じ変換）
+
+// ---- 共通 ----
+
+// 出力テクスチャ内の描画範囲（ViewRect）と、半分の解像度のテクスチャの大きさ
+int2 ViewRectMin;
+int2 ViewRectSize;
+int2 HalfSize;
+
+// RayGen の結果（ViewRect 内のローカル座標）
+// AccumulationTexture：線形の色、ToonGlowTexture：rgb は光の側のリムの色、a は鳴潮モードのキャラクターなら 1、その目なら 2
+// （サンプルやフレームの平均なので途中の値もとる。キャラクターの割合は a を 1 で切った値、目の割合は a - 1）
+Texture2D<float4> AccumulationTexture;
+Texture2D<float4> ToonGlowTexture;
+
+// キャラクターのピクセルの、表示の値（0 ～ 1）
+float3 GetDisplayColor(int2 LocalPixel)
+{
+	return saturate(sqrt(max(AccumulationTexture.Load(int3(LocalPixel, 0)).rgb, 0.0f)));
+}
+
+// ---- 1. ぼかす元の画像を作る ----
+
+// Diffusion Filter で掛ける光の色（明るさをそろえた Directional Light の色）
+float3 DiffusionLightColor;
+
+// rgb：素材の色 × 素材の色 × 光の色（Diffusion Filter の元）、a：キャラクターの割合
+RWTexture2D<float4> DiffusionSourceTexture;
+// rgb：キャラクターの色 × キャラクターの割合、a：キャラクターの割合（Soft Focus の元。ぼかした後に a で割り、背景の色を混ぜない）
+RWTexture2D<float4> SoftFocusSourceTexture;
+// rgb：光の側のリムの色（Bloom の元）
+RWTexture2D<float4> BloomSourceTexture;
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ToonPostEffectsPrepareCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (any(DispatchThreadId >= (uint2)HalfSize))
+	{
+		return;
+	}
+
+	// 元の解像度の 2 × 2 ピクセルの平均にする
+	float4 Diffusion = 0.0f;
+	float4 SoftFocus = 0.0f;
+	float3 Bloom = 0.0f;
+	for (uint Index = 0; Index < 4; ++Index)
+	{
+		int2 LocalPixel = min((int2)DispatchThreadId * 2 + int2(Index & 1, Index >> 1), ViewRectSize - 1);
+		float4 Glow = ToonGlowTexture.Load(int3(LocalPixel, 0));
+		float Mask = saturate(Glow.a);
+		float3 Display = GetDisplayColor(LocalPixel);
+		Diffusion += float4(Display * Display * DiffusionLightColor * Mask, Mask);
+		SoftFocus += float4(Display * Mask, Mask);
+		Bloom += max(Glow.rgb, 0.0f);
+	}
+	DiffusionSourceTexture[DispatchThreadId] = Diffusion * 0.25f;
+	SoftFocusSourceTexture[DispatchThreadId] = SoftFocus * 0.25f;
+	BloomSourceTexture[DispatchThreadId] = float4(Bloom * 0.25f, 0.0f);
+}
+
+// ---- 2. ぼかす ----
+
+Texture2D<float4> BlurInputTexture;
+RWTexture2D<float4> BlurOutputTexture;
+// ぼかす向き（横なら (1, 0)、縦なら (0, 1)）と、ぼかしの半径（半分の解像度のピクセル）
+int2 BlurDirection;
+float BlurRadius;
+
+// 1 回にたどるピクセル数の上限（片側）
+#define TOON_BLUR_MAX_TAPS 32
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ToonPostEffectsBlurCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (any(DispatchThreadId >= (uint2)HalfSize))
+	{
+		return;
+	}
+
+	// 半径の位置で重みが十分小さくなるよう、標準偏差を半径の半分にする
+	int Taps = min((int)ceil(BlurRadius), TOON_BLUR_MAX_TAPS);
+	float Sigma = max(BlurRadius * 0.5f, 0.5f);
+	float4 Sum = 0.0f;
+	float WeightSum = 0.0f;
+	for (int Offset = -Taps; Offset <= Taps; ++Offset)
+	{
+		int2 Pixel = clamp((int2)DispatchThreadId + BlurDirection * Offset, 0, HalfSize - 1);
+		float Weight = exp(-0.5f * (float)(Offset * Offset) / (Sigma * Sigma));
+		Sum += BlurInputTexture.Load(int3(Pixel, 0)) * Weight;
+		WeightSum += Weight;
+	}
+	BlurOutputTexture[DispatchThreadId] = Sum / WeightSum;
+}
+
+// ---- 3. 重ねる ----
+
+// レイトレーシングの結果（背景を含む画面全体）。その場で書き換える
+RWTexture2D<float4> OutputTexture;
+
+// ぼかした画像（半分の解像度）
+Texture2D<float4> DiffusionBlurTexture;
+Texture2D<float4> SoftFocusBlurTexture;
+Texture2D<float4> BloomBlurTexture;
+SamplerState BlurSampler;
+
+// それぞれの強さ（0 なら重ねない）
+float DiffusionStrength;
+float SoftFocusStrength;
+float BloomStrength;
+
+// 出力の色の形式：0 なら表示の値（トーンマップの後に描くとき）、1 ならトーンマップの逆をかけた値、2 なら線形の色（トーンマップの前に描き、逆をかけないとき）
+uint OutputEncoding;
+// トーンマップで掛かる露出（0 なら不明として露出の補正をしない）
+float ToonEyeAdaptationExposure;
+
+// 鳴潮モード：上から下へのグラデーション
+// 画面の上端では GradationTopColor、下端では GradationBottomColor を掛ける（間はなめらかにつなぐ）
+// GradationStrength が 1 ならそのまま、0 なら掛けない
+float GradationStrength;
+float3 GradationTopColor;
+float3 GradationBottomColor;
+
+// 表示の値を、出力テクスチャの色の形式にする（RayGen の最後と同じ変換）
+float3 DisplayToOutput(float3 Display)
+{
+	if (OutputEncoding == 1)
+	{
+		float ExposureScale = ToonEyeAdaptationExposure > 0.0f ? View.PreExposure / ToonEyeAdaptationExposure : 1.0f;
+		return FilmToneMapInverse(sRGBToLinear(saturate(Display))) * ExposureScale;
+	}
+	if (OutputEncoding == 2)
+	{
+		return Display * Display;
+	}
+	return Display;
+}
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ToonPostEffectsCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (any(DispatchThreadId >= (uint2)ViewRectSize))
+	{
+		return;
+	}
+
+	int2 LocalPixel = (int2)DispatchThreadId;
+	int2 Pixel = ViewRectMin + LocalPixel;
+	float4 Color = OutputTexture[Pixel];
+
+	if (DiffusionStrength > 0.0f || SoftFocusStrength > 0.0f || BloomStrength > 0.0f)
+	{
+		// 半分の解像度のテクスチャは、元の解像度の 2 ピクセルが 1 ピクセルに対応する
+		float2 HalfUV = ((float2)LocalPixel + 0.5f) / (2.0f * (float2)HalfSize);
+		float GlowAlpha = ToonGlowTexture.Load(int3(LocalPixel, 0)).a;
+		float Mask = saturate(GlowAlpha);
+		float EyeMask = saturate(GlowAlpha - 1.0f);
+
+		// Bloom：ぼかした光の側のリムを加える（キャラクターの外側にもにじむ）
+		float3 Bloom = BloomBlurTexture.SampleLevel(BlurSampler, HalfUV, 0).rgb * BloomStrength;
+
+		if (Mask > 0.0f)
+		{
+			float3 Base = GetDisplayColor(LocalPixel);
+			float3 Display = Base;
+
+			// Diffusion Filter：素材の色どうしを乗算した色（暗く鮮やかになる）に、ぼかした「乗算した色 × 光の色」をスクリーンで重ね、
+			// 元の色と比べて明るい方を残す（比較(明)）。明るい部分が光の色でふんわりにじみ、暗い部分はそのまま
+			if (DiffusionStrength > 0.0f)
+			{
+				float3 Multiplied = Base * Base;
+				float3 Glow = saturate(DiffusionBlurTexture.SampleLevel(BlurSampler, HalfUV, 0).rgb);
+				float3 Screen = 1.0f - (1.0f - Multiplied) * (1.0f - Glow);
+				Display = lerp(Display, max(Base, Screen), DiffusionStrength);
+			}
+
+			// Soft Focus：キャラクターの色だけをぼかした画像を薄く重ね、輪郭や細い線を柔らかくする
+			// 目には重ねない（瞳の模様やハイライトをくっきり残す）
+			if (SoftFocusStrength > 0.0f)
+			{
+				float4 Soft = SoftFocusBlurTexture.SampleLevel(BlurSampler, HalfUV, 0);
+				if (Soft.a > 1.0e-3f)
+				{
+					Display = lerp(Display, Soft.rgb / Soft.a, saturate(SoftFocusStrength) * Mask * (1.0f - EyeMask));
+				}
+			}
+
+			// 表示の値の差を出力の形式に直して足す（発光など、RayGen が後から足した分はそのまま残る）
+			Color.rgb += DisplayToOutput(Display + Bloom) - DisplayToOutput(Base);
+		}
+		else
+		{
+			// 背景のピクセルの表示の値は分からないため、ほぼ黒の上に足したときの差を足す
+			// （0 を渡すと、トーンマップの逆の計算が定数のまま無限大の対数になり、シェーダーの検証で失敗するため、ごく小さい値にする）
+			const float3 Reference = 1.0e-3f;
+			Color.rgb += DisplayToOutput(Reference + Bloom) - DisplayToOutput(Reference);
+		}
+	}
+
+	if (GradationStrength > 0.0f)
+	{
+		// 画面の上端を 0、下端を 1 とした位置で、上の色から下の色へなめらかに移す
+		float Height = ((float)DispatchThreadId.y + 0.5f) / (float)ViewRectSize.y;
+		float3 Gradation = lerp(GradationTopColor, GradationBottomColor, smoothstep(0.0f, 1.0f, Height));
+		Color.rgb *= lerp(1.0f, Gradation, GradationStrength);
+	}
+
+	OutputTexture[Pixel] = Color;
+}

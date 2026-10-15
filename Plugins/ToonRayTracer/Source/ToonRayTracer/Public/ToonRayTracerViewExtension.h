@@ -82,8 +82,10 @@ private:
 		// キャラクターごとの設定（プロファイルか全体の設定から、このキャラクター用に求めた値）
 		// Slots：顔のスロット（0 ～ 31 番、32 ～ 63 番のビット）、目のスロット（同じ）
 		// Slots2：髪のスロット、髪越しに見せるスロット
+		// Slots3：上まぶたの影をかけないスロット、（未使用）
 		FUintVector4 Slots = FUintVector4(0, 0, 0, 0);
 		FUintVector4 Slots2 = FUintVector4(0, 0, 0, 0);
+		FUintVector4 Slots3 = FUintVector4(0, 0, 0, 0);
 		// Params：目の三角形の開始番号、終了番号、顔の境目のぼかし、前髪の影の幅（cm）
 		// Params2：上まぶたの影の太さ（cm）、眉毛の透けの探す距離（cm）、瞳のハイライトの探す距離（cm）、前髪の影の探す距離（cm）
 		FVector4f Params = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
@@ -92,7 +94,7 @@ private:
 		uint32 CharacterId = 0;
 		// 見た目の上書き（UToonCharacterProfile::GetLookOverrides を参照）。全体の設定との組み合わせはレンダースレッドで決める
 		uint32 LookOverrideMask = 0;
-		FVector4f Look[5] = { FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f) };
+		FVector4f Look[6] = { FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f) };
 	};
 
 	// ゲームスレッドで、ビューファミリーのワールドにあるスケルタルメッシュから、顔の位置と向きを集める
@@ -110,6 +112,11 @@ private:
 	FLinearColor ToonSkinShadowColor_RenderThread = FLinearColor(0.62f, 0.42f, 0.45f);
 	// トゥーンのアウトラインの色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonOutlineColor_RenderThread = FLinearColor(0.02f, 0.02f, 0.04f);
+	// 鳴潮モード：画面の上端と下端に掛けるグラデーションの色（文字列のコンソール変数をゲームスレッドで変換したもの）
+	// 眉毛の透けで塗る色（文字列のコンソール変数をゲームスレッドで変換したもの）
+	FLinearColor ToonSeeThroughColor_RenderThread = FLinearColor(0.3f, 0.08f, 0.09f);
+	FLinearColor ToonGradationTopColor_RenderThread = FLinearColor(1.06f, 1.03f, 0.96f);
+	FLinearColor ToonGradationBottomColor_RenderThread = FLinearColor(0.9f, 0.92f, 1.0f);
 
 	// 『The Next Week』第4章：球に貼る画像（r.ToonRayTracer.ImageTexture のパスから読み込む）
 	// ゲームスレッドで読み込み、ガベージコレクションで消えないよう保持する
@@ -127,6 +134,8 @@ private:
 		TRefCountPtr<IPooledRenderTarget> DepthTexture;
 		// 動く物体への対応：ピクセルの中心で何が見えていたかの要約（影や映り込みが変わったかを調べる）
 		TRefCountPtr<IPooledRenderTarget> SignatureTexture;
+		// 鳴潮モードの仕上げのぼかしの元（光の側のリムの色と、キャラクターの割合）の平均
+		TRefCountPtr<IPooledRenderTarget> GlowTexture;
 		// 動く物体への対応：前のフレームに、シーン内で物体が動いていたかのフラグ
 		TRefCountPtr<FRDGPooledBuffer> SceneMotionBuffer;
 		// テクスチャに蓄積済みのフレーム数（上限で止まる）

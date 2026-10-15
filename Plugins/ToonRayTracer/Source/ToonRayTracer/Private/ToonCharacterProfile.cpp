@@ -207,6 +207,7 @@ void UToonCharacterProfile::FillLookFromGlobalSettings()
 	HairShadowLightShift = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.HairShadowLightShift"));
 	SeeThroughOpacity = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughOpacity"));
 	SeeThroughBrightness = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"));
+	SeeThroughColor = GetConsoleColor(TEXT("r.ToonRayTracer.Toon.SeeThroughColor"), SeeThroughColor);
 }
 
 void UToonCharacterProfile::GetLookOverrides(uint32& OutMask, FVector4f (&OutLook)[NumLookVectors]) const
@@ -246,6 +247,9 @@ void UToonCharacterProfile::GetLookOverrides(uint32& OutMask, FVector4f (&OutLoo
 	SetFloat(bOverrideHairShadowLightShift, 4, 1, HairShadowLightShift);
 	SetFloat(bOverrideSeeThroughOpacity, 4, 2, SeeThroughOpacity);
 	SetFloat(bOverrideSeeThroughBrightness, 4, 3, SeeThroughBrightness);
+	// 色を指定したら、髪を暗くする代わりにその色で塗る
+	SetColor(bOverrideSeeThroughColor, 5, SeeThroughColor);
+	SetFloat(bOverrideSeeThroughColor, 5, 3, 1.0f);
 }
 
 uint64 UToonCharacterProfile::SlotNamesToSectionMask(const USkeletalMeshComponent* Mesh, const TArray<FName>& SlotNames)

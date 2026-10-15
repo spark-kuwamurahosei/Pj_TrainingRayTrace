@@ -21,6 +21,8 @@ float ToonEyeAdaptationExposure;
 
 // フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
 RWTexture2D<float4> AccumulationTexture;
+// 鳴潮モードの仕上げのぼかしの元（ToonGlowSample のフレームをまたいだ平均。ViewRect 内のローカル座標）
+RWTexture2D<float4> ToonGlowTexture;
 
 // AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）
 uint AccumulatedFrames;
@@ -190,6 +192,23 @@ uint bToonCharacterSelfShadow;
 // UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面を肌とし、
 // 影との境目の N・L と影色を肌用の値にする（顔に細かい影が入りにくく、影は赤みのある色にする）
 uint bToonSkin;
+// 鳴潮モード：ゲームのテクスチャ（影色の LD、ハイライトの HM、影の出やすさの VC）で影とハイライトを決める
+// マテリアルのシェーディングモデルを Two Sided Foliage にし、空いている GBuffer の欄に書き込んで渡す
+//   Subsurface Color（GBufferD の rgb）：影の部分の色（LD）
+//   Metallic（GBufferB の r）：髪のハイライトの形（HM の G）
+//   Specular（GBufferB の g）：キラッと光る小さなハイライト（HM の R）
+//   Roughness（GBufferB の b）：影の出やすさ（VC の G。0.5 で変化なし、小さいほど影になりやすい）
+// ・bToonWutheringMode：1 なら有効
+// ・ToonWutheringHighlightStrength：髪のハイライトの強さ
+// ・ToonWutheringSparkleStrength：キラッと光る小さなハイライトの強さ
+// ・ToonWutheringShadowBias：影の出やすさを N・L に足すときの倍率
+uint bToonWutheringMode;
+float ToonWutheringHighlightStrength;
+float ToonWutheringSparkleStrength;
+float ToonWutheringShadowBias;
+// ・ToonWutheringReflectionRimStrength：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）の強さ（キャラクターのリムライトの強さに掛ける）
+float ToonWutheringReflectionRimStrength;
+Texture2D GBufferDTexture;
 float ToonSkinShadowThreshold;
 float3 ToonSkinShadowColor;
 // 鳴潮風ルック フェーズ2：キャラクターのリムライトと線の色
@@ -202,6 +221,9 @@ float ToonCharacterOutlineColorScale;
 // そのピクセルの色を ToonSeeThroughBrightness 倍に暗くした色を、ToonSeeThroughOpacity の割合で重ねる（0 なら透かさない）
 float ToonSeeThroughOpacity;
 float ToonSeeThroughBrightness;
+// 眉毛の透けで塗る色と、色で塗る割合（0 なら髪の色を暗くするだけ、1 ならこの色で塗る）
+float3 ToonSeeThroughColor;
+float ToonSeeThroughColorBlend;
 float ToonSeeThroughDistance;
 // 見せるパーツのマテリアルスロット（スロット番号 n なら 2^n のビット）。Custom Primitive Data の [13] を設定していないキャラクターに使う
 uint ToonSeeThroughSlotMask;
@@ -245,6 +267,8 @@ float4 ToonFaceForward[TOON_MAX_FACES];
 // キャラクターごとの設定（顔ごと）。GetToonCharacterParts を参照
 uint4 ToonCharacterSlots[TOON_MAX_FACES];
 uint4 ToonCharacterSlots2[TOON_MAX_FACES];
+// xy：上まぶたの影をかけないスロット
+uint4 ToonCharacterSlots3[TOON_MAX_FACES];
 float4 ToonCharacterParams[TOON_MAX_FACES];
 float4 ToonCharacterParams2[TOON_MAX_FACES];
 // キャラクターごとの見た目（全体の設定と組み合わせ済み）。GetToonCharacterLook を参照
@@ -253,6 +277,7 @@ float4 ToonCharacterLook1[TOON_MAX_FACES];
 float4 ToonCharacterLook2[TOON_MAX_FACES];
 float4 ToonCharacterLook3[TOON_MAX_FACES];
 float4 ToonCharacterLook4[TOON_MAX_FACES];
+float4 ToonCharacterLook5[TOON_MAX_FACES];
 // 前髪の影：顔のピクセルから光へシャドウレイを飛ばし、同じキャラクターの髪のパーツに当たったときだけ影にする
 // ・bToonHairShadow：0 なら無効、1 なら見え方で決める（前髪の縁の下に帯状の影）、2 なら光の方向へシャドウレイを飛ばす
 // ・ToonHairSlotMask：髪のマテリアルスロット（スロット番号 n なら 2^n のビット）
@@ -421,12 +446,20 @@ struct FToonMaterial
 	uint bSkin;
 	// 目の表現：キャラクターの目のパーツ（ToonEyeSlotMask で指定したマテリアルスロット）なら 1
 	uint bEye;
+	// 上まぶたの影をかけない目のパーツ（瞳など）か
+	uint bNoEyelidShadow;
 	// 顔の影：キャラクターの顔のパーツ（ToonFaceSlotMask で指定したマテリアルスロット）なら 1
 	uint bFace;
 	// マテリアルの発光（カメラから見えている面だけ。影や光の向きに関係なく足す）
 	float3 Emissive;
 	// キャラクターごとの設定の番号（ToonCharacterLook0 などの添え字）。なければ -1
 	int Character;
+	// 鳴潮モード：ゲームのテクスチャの値（Two Sided Foliage のマテリアルの GBuffer から読む）
+	uint bWuthering;
+	float3 WutheringShadowColor;
+	float WutheringHighlight;
+	float WutheringSparkle;
+	float WutheringShadowBias;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -448,7 +481,13 @@ FToonMaterial GetDefaultMaterial()
 	Material.Emissive = 0.0f;
 	Material.bSkin = 0;
 	Material.bEye = 0;
+	Material.bNoEyelidShadow = 0;
 	Material.bFace = 0;
+	Material.bWuthering = 0;
+	Material.WutheringShadowColor = 0.0f;
+	Material.WutheringHighlight = 0.0f;
+	Material.WutheringSparkle = 0.0f;
+	Material.WutheringShadowBias = 0.5f;
 	return Material;
 }
 
@@ -471,6 +510,8 @@ struct FToonCharacterParts
 	uint EyeTriangleEnd;
 	uint2 HairSlotMask;
 	uint2 SeeThroughSlotMask;
+	// 目のスロットの中で、上まぶたの影をかけないスロット（瞳など）
+	uint2 EyeShadowExcludeSlotMask;
 	// 顔の境目のぼかし（顔の半分の幅に対する割合）
 	float FaceShadowSoftness;
 	// キャラクターの大きさに合わせた幅や距離（cm）
@@ -552,6 +593,8 @@ struct FToonCharacterLook
 	float HairShadowLightShift;
 	float SeeThroughOpacity;
 	float SeeThroughBrightness;
+	float3 SeeThroughColor;
+	float SeeThroughColorBlend;
 };
 
 FToonCharacterLook GetToonCharacterLook(int Character)
@@ -564,6 +607,7 @@ FToonCharacterLook GetToonCharacterLook(int Character)
 		float4 Look2 = ToonCharacterLook2[Character];
 		float4 Look3 = ToonCharacterLook3[Character];
 		float4 Look4 = ToonCharacterLook4[Character];
+		float4 Look5 = ToonCharacterLook5[Character];
 		Look.ShadowColor = Look0.rgb;
 		Look.ShadowSaturation = Look0.a;
 		Look.SkinShadowColor = Look1.rgb;
@@ -580,6 +624,8 @@ FToonCharacterLook GetToonCharacterLook(int Character)
 		Look.HairShadowLightShift = Look4.y;
 		Look.SeeThroughOpacity = Look4.z;
 		Look.SeeThroughBrightness = Look4.w;
+		Look.SeeThroughColor = Look5.rgb;
+		Look.SeeThroughColorBlend = Look5.a;
 		return Look;
 	}
 	Look.ShadowColor = ToonShadowColor;
@@ -598,6 +644,8 @@ FToonCharacterLook GetToonCharacterLook(int Character)
 	Look.HairShadowLightShift = ToonHairShadowLightShift;
 	Look.SeeThroughOpacity = ToonSeeThroughOpacity;
 	Look.SeeThroughBrightness = ToonSeeThroughBrightness;
+	Look.SeeThroughColor = ToonSeeThroughColor;
+	Look.SeeThroughColorBlend = ToonSeeThroughColorBlend;
 	return Look;
 }
 
@@ -616,6 +664,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 		Parts.EyeSlotMask = Slots.zw;
 		Parts.HairSlotMask = Slots2.xy;
 		Parts.SeeThroughSlotMask = Slots2.zw;
+		Parts.EyeShadowExcludeSlotMask = ToonCharacterSlots3[Face].xy;
 		Parts.EyeTriangleStart = (uint)round(Params.x);
 		Parts.EyeTriangleEnd = (uint)round(Params.y);
 		Parts.FaceShadowSoftness = Params.z;
@@ -631,6 +680,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 	Parts.FaceSlotMask = uint2(ToonFaceSlotMask, 0u);
 	Parts.EyeSlotMask = uint2(ToonEyeSlotMask, 0u);
 	Parts.HairSlotMask = uint2(ToonHairSlotMask, 0u);
+	Parts.EyeShadowExcludeSlotMask = 0u;
 	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
 	float SeeThroughOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 13);
@@ -1534,6 +1584,7 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 	// 目の表現：当たったパーツ（マテリアルスロット）が目か
 	FToonCharacterParts Parts = GetToonCharacterParts(Rec.Position, Rec.ObjectId);
 	Rec.Material.bEye = IsEyeHit(CenterPayload, Rec.Material.bCharacter != 0, Parts) ? 1u : 0u;
+	Rec.Material.bNoEyelidShadow = Rec.Material.bEye != 0 && IsSlotInMask(Parts.EyeShadowExcludeSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
 	// 顔の影：当たったパーツ（マテリアルスロット）が顔か
 	Rec.Material.bFace = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.FaceSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
 
@@ -1709,6 +1760,7 @@ bool HitCameraVisible(FToonRay Ray, float2 UV, inout FToonHitRecord Rec, bool bC
 #define TOON_SHADINGMODELID_SUBSURFACE			2
 #define TOON_SHADINGMODELID_PREINTEGRATED_SKIN	3
 #define TOON_SHADINGMODELID_SUBSURFACE_PROFILE	5
+#define TOON_SHADINGMODELID_TWOSIDED_FOLIAGE	6
 
 // GBuffer のピクセルから、マテリアルの色と金属の判定を読んで Rec に反映する
 // ・汎用化 G1：Custom Primitive Data でマテリアルを指定していないメッシュは、素材の色を GBuffer のベースカラー
@@ -1737,9 +1789,32 @@ void ApplyGBufferMaterial(int2 GBufferPixel, inout FToonHitRecord Rec)
 	}
 
 	// 鳴潮風ルック フェーズ2：肌の判定。GBufferB の a の下位 4 ビットにシェーディングモデルが入っている（DecodeShadingModelId）
+	float4 GBufferB = GBufferBTexture.Load(int3(GBufferPixel, 0));
+	uint ShadingModelId = ((uint)round(GBufferB.a * 255.0f)) & 0xF;
+
+	// 鳴潮モード：Two Sided Foliage のマテリアルは、空いている GBuffer の欄にゲームのテクスチャの値が入っている
+	// （Metallic や Roughness は別の意味で使っているため、金属の判定もしない）
+	if (ShadingModelId == TOON_SHADINGMODELID_TWOSIDED_FOLIAGE)
+	{
+		if (bToonWutheringMode != 0)
+		{
+			// GBufferD の rgb には Subsurface Color の平方根が入っている（EncodeSubsurfaceColor）
+			float3 Encoded = GBufferDTexture.Load(int3(GBufferPixel, 0)).rgb;
+			Rec.Material.bWuthering = 1;
+			Rec.Material.WutheringShadowColor = Encoded * Encoded;
+			Rec.Material.WutheringHighlight = GBufferB.r;
+			Rec.Material.WutheringSparkle = GBufferB.g;
+			Rec.Material.WutheringShadowBias = GBufferB.b;
+		}
+		if (bUseGBufferBaseColor != 0)
+		{
+			Rec.Material.Albedo = GBufferCTexture.Load(int3(GBufferPixel, 0)).rgb;
+		}
+		return;
+	}
+
 	if (bToonSkin != 0)
 	{
-		uint ShadingModelId = ((uint)round(GBufferBTexture.Load(int3(GBufferPixel, 0)).a * 255.0f)) & 0xF;
 		Rec.Material.bSkin = (ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE
 			|| ShadingModelId == TOON_SHADINGMODELID_PREINTEGRATED_SKIN
 			|| ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE_PROFILE) ? 1u : 0u;
@@ -1804,10 +1879,9 @@ void ApplyGBufferSurface(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
 }
 
 // 汎用化 G4：物体ごとの代表色の表から、その物体の色を探す。見つからなければ false
-bool FindObjectColor(uint InstanceId, out float3 Color)
+bool FindObjectColorByKey(uint Key, out float3 Color)
 {
 	Color = 0.0f;
-	uint Key = ToonObjectColorKey(InstanceId);
 	for (uint Probe = 0; Probe < TOON_OBJECT_COLOR_MAX_PROBES; ++Probe)
 	{
 		uint TableBase = ToonObjectColorProbeSlot(Key, Probe) * TOON_OBJECT_COLOR_TABLE_STRIDE;
@@ -1827,10 +1901,14 @@ bool FindObjectColor(uint InstanceId, out float3 Color)
 }
 
 // 汎用化 G4：カメラから見えた点の UE のマテリアルの色を、物体ごとの合計に足し込む（解決パスで平均にして代表色の表に入れる）
-void RecordObjectColor(uint InstanceId, float3 BaseColor)
+// Weight は、平均を取るときの重み（整数。0 なら記録しない）
+void RecordObjectColorByKey(uint Key, float3 BaseColor, uint Weight)
 {
-	uint Key = ToonObjectColorKey(InstanceId);
-	uint3 ScaledColor = (uint3)round(saturate(BaseColor) * TOON_OBJECT_COLOR_SUM_SCALE);
+	if (Weight == 0)
+	{
+		return;
+	}
+	uint3 ScaledColor = (uint3)round(saturate(BaseColor) * TOON_OBJECT_COLOR_SUM_SCALE) * Weight;
 	for (uint Probe = 0; Probe < TOON_OBJECT_COLOR_MAX_PROBES; ++Probe)
 	{
 		uint SumBase = ToonObjectColorProbeSlot(Key, Probe) * TOON_OBJECT_COLOR_SUM_STRIDE;
@@ -1841,11 +1919,24 @@ void RecordObjectColor(uint InstanceId, float3 BaseColor)
 			InterlockedAdd(ObjectColorFrameSums[SumBase + 1], ScaledColor.r);
 			InterlockedAdd(ObjectColorFrameSums[SumBase + 2], ScaledColor.g);
 			InterlockedAdd(ObjectColorFrameSums[SumBase + 3], ScaledColor.b);
-			InterlockedAdd(ObjectColorFrameSums[SumBase + 4], 1u);
+			InterlockedAdd(ObjectColorFrameSums[SumBase + 4], Weight);
 			return;
 		}
 	}
 }
+
+bool FindObjectColor(uint InstanceId, out float3 Color)
+{
+	return FindObjectColorByKey(ToonObjectColorKey(InstanceId), Color);
+}
+
+void RecordObjectColor(uint InstanceId, float3 BaseColor)
+{
+	RecordObjectColorByKey(ToonObjectColorKey(InstanceId), BaseColor, 1u);
+}
+
+// 眉毛の透けで見せるパーツの色を記録するときの、一番暗いピクセルの重み
+#define TOON_SEE_THROUGH_PART_COLOR_WEIGHT 16.0f
 
 // 汎用化 G4：カメラからピクセルの中心へレイを飛ばし、GBuffer と同じ点に当たったら、その物体の色として記録する
 // 負荷を抑えるため、縦横 2 ピクセルごとに 1 本だけ飛ばす
@@ -1863,7 +1954,23 @@ void RecordObjectColorAtPixel(uint2 LocalPixel)
 	{
 		return;
 	}
-	RecordObjectColor(Payload.InstanceID, GBufferCTexture.Load(int3(GetGBufferPixel(UV), 0)).rgb);
+	float3 BaseColor = GBufferCTexture.Load(int3(GetGBufferPixel(UV), 0)).rgb;
+	RecordObjectColor(Payload.InstanceID, BaseColor);
+
+	// 眉毛の透け：前髪から出ていて直接見えている眉毛などのパーツの色を、パーツの色として別に記録する
+	// 前髪の奥に隠れた部分は GBuffer に色がないため、髪の上に塗るときにこの色を使う
+	if (GetSceneMaterial(Payload.InstanceID).bCharacter != 0)
+	{
+		FToonCharacterParts Parts = GetToonCharacterParts(Ray.At(Payload.HitT), Payload.InstanceID);
+		if (IsSlotInMask(Parts.SeeThroughSlotMask, GetPayloadGeometryIndex(Payload)))
+		{
+			// 眉毛のメッシュには、眉毛の線のまわりの肌も描かれていることが多いため、暗いピクセルほど重く数えて、線の色を拾う
+			// （輝度 0.1 で重み 10、0.3 で 4、肌くらいの 0.7 で 0）
+			float Darkness = 1.0f - saturate(dot(BaseColor, float3(0.2126f, 0.7152f, 0.0722f)));
+			uint Weight = (uint)round(TOON_SEE_THROUGH_PART_COLOR_WEIGHT * Pow4(Darkness));
+			RecordObjectColorByKey(ToonSeeThroughPartColorKey(Payload.InstanceID), BaseColor, Weight);
+		}
+	}
 }
 
 // 汎用化 G4：画面外や、別の物体に隠れている点を、前のフレームまでに見えたその物体の代表色にする
@@ -2859,6 +2966,11 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 	{
 		NdotL += ToonShadowThreshold - ToonSkinShadowThreshold;
 	}
+	else if (Rec.Material.bWuthering != 0)
+	{
+		// 鳴潮モード：影の出やすさ（VC）で境目をずらす。毛束の奥など暗いところほど影になりやすい
+		NdotL += (Rec.Material.WutheringShadowBias - 0.5f) * ToonWutheringShadowBias;
+	}
 
 	float LightLevel = ToonLightLevel(NdotL);
 
@@ -3165,8 +3277,10 @@ float ComputeEyeHighlight(FToonHitRecord Rec, FToonRay Ray, out float NdotH)
 		* Look.EyeHighlightStrength;
 }
 
-float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState, bool bIndirect)
+// OutLightLevel には、光の当たり具合（0：影 ～ 1：明るい面）を返す（鳴潮モードのリムのマスクに使う）
+float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState, bool bIndirect, out float OutLightLevel)
 {
+	OutLightLevel = 0.0f;
 	// 確認用：顔の影の結果（黄：明るい面、青：影、マゼンタ：近くに顔が見つからない）
 	if (bToonDebugGeometry == 6 && Rec.Material.bFace != 0)
 	{
@@ -3204,6 +3318,11 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 		float ShadowGray = dot(ShadowColor, LuminanceWeights);
 		ShadowColor = max(ShadowGray + (ShadowColor - ShadowGray) * (1.0f + Look.ShadowSaturation), 0.0f);
 	}
+	// 鳴潮モード：影の部分の色はゲームのテクスチャ（LD）をそのまま使う（作り手が描いた影色。空の色にだけ少し染める）
+	if (Rec.Material.bWuthering != 0)
+	{
+		ShadowColor = Rec.Material.WutheringShadowColor * (ToonSkyTint > 0.0f ? lerp(1.0f, GetToonSkyHue(), ToonSkyTint) : 1.0f);
+	}
 	float ShadowLuminance = dot(ShadowColor, LuminanceWeights);
 	float MaxShadowLuminance = dot(LitColor, LuminanceWeights) * TOON_MAX_SHADOW_TO_LIT_RATIO;
 	if (ShadowLuminance > MaxShadowLuminance)
@@ -3214,9 +3333,18 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	// 目の表現：アニメ調では、目は光の向きや影に関係なく明るく描く（白目が影の色で沈まないようにする）
 	bool bUnlitEye = Rec.Material.bEye != 0 && bToonEyeUnlit != 0;
 	float LightLevel = bUnlitEye ? 1.0f : ComputeToonLightLevel(Rec, GeometricNormal, RandomState);
+	OutLightLevel = LightLevel;
 	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
 	Color += ComputeToonRim(Rec, Ray, LightLevel);
+
+	// 鳴潮モード：髪のハイライト（HM の G の形）と、キラッと光る小さなハイライト（HM の R）を、光の当たる側に入れる
+	if (Rec.Material.bWuthering != 0)
+	{
+		Color += LitColor * (saturate(Rec.Material.WutheringHighlight) * LightLevel * ToonWutheringHighlightStrength);
+		float Sparkle = smoothstep(0.4f, 0.6f, Rec.Material.WutheringSparkle) * LightLevel * ToonWutheringSparkleStrength;
+		Color = lerp(Color, max(ToonLightColor, 1.0f), saturate(Sparkle));
+	}
 
 	// 照り返し（間接光）：周りの面の色を、自分の素材の色に掛けて足す（カメラから直接見える面だけ。映り込みの先では省く）
 	if (bIndirect && !bUnlitEye)
@@ -3231,9 +3359,11 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 		bool bUnderEyelid = IsUnderEyelid(Rec, EyelidReason);
 		if (bToonDebugGeometry == 4)
 		{
-			return GetDebugEyelidColor(EyelidReason);
+			// 上まぶたの影をかけないパーツ（瞳など）は、影の判定に関係なく青
+			return Rec.Material.bNoEyelidShadow != 0 ? float3(0.0f, 0.0f, 1.0f) : GetDebugEyelidColor(EyelidReason);
 		}
-		if (bUnderEyelid)
+		// 瞳など、上まぶたの影をかけないパーツは暗くしない
+		if (bUnderEyelid && Rec.Material.bNoEyelidShadow == 0)
 		{
 			Color *= Look.EyeShadowBrightness;
 		}
@@ -3293,9 +3423,10 @@ struct FToonPendingRay
 // 画面上で光源の方向へ ToonCharacterRimWidth ピクセルずらした位置の深度を GBuffer から読み、
 // 自分より十分奥（背景や空）なら、そこは光源の側の輪郭とみなして明るい縁を入れる
 // 面の向き（N・V）ではなく画面上の深度の差で判定するため、縁の幅が一定になり、法線のばらつきでまだらにならない
+// ProbeDirection は、ずらす向き（光源の方向。鳴潮モードの影の側のリムでは、その逆向き）
 #define TOON_CHARACTER_RIM_DEPTH_GAP 10.0f		// 奥とみなす深度の差（cm）
 #define TOON_CHARACTER_RIM_PROBE_LENGTH 10.0f	// 光源の方向を画面に投影するための長さ（cm）
-float ToonCharacterRim(float2 UV, FToonHitRecord Rec)
+float ToonCharacterRim(float2 UV, FToonHitRecord Rec, float3 ProbeDirection)
 {
 	FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
 	if (Look.RimStrength <= 0.0f || Look.RimWidth <= 0.0f || bHasDirectionalLight == 0 || TraceMode == 0)
@@ -3305,7 +3436,7 @@ float ToonCharacterRim(float2 UV, FToonHitRecord Rec)
 
 	// 光源の方向を画面上の向き（ピクセル）にする。光源がカメラの真正面や真後ろで、画面上の向きが決まらなければ縁は入れない
 	float4 ClipPosition = mul(float4(Rec.Position, 1.0f), TranslatedWorldToClip);
-	float4 ClipLight = mul(float4(Rec.Position + ToLightDirection * TOON_CHARACTER_RIM_PROBE_LENGTH, 1.0f), TranslatedWorldToClip);
+	float4 ClipLight = mul(float4(Rec.Position + ProbeDirection * TOON_CHARACTER_RIM_PROBE_LENGTH, 1.0f), TranslatedWorldToClip);
 	if (ClipPosition.w <= 0.0f || ClipLight.w <= 0.0f)
 	{
 		return 0.0f;
@@ -3438,8 +3569,13 @@ float3 GetDebugGeometryColor(uint GeometryIndex)
 	return GeometryIndex < 8 ? Colors[GeometryIndex] : 0.3f;
 }
 
+// 鳴潮モードの仕上げのぼかし（ToonPostEffects.usf）に渡す、このサンプルの値
+// rgb：光の側のリムの色（Bloom の元）、a：カメラから見えている面が鳴潮モードのキャラクターなら 1、その目なら 2
+static float4 ToonGlowSample = 0.0f;
+
 float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 {
+	ToonGlowSample = 0.0f;
 	if (bToonDebugGeometry == 1 && TraceMode != 0)
 	{
 		FDefaultPayload DebugPayload;
@@ -3472,10 +3608,17 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 	// 鳴潮風ルック フェーズ2：キャラクターでは、線の色を素材の色を暗くした色にし、リムライトを加える
 	float3 OutlineColor = ToonOutlineColor;
 	float3 CharacterRim = 0.0f;
+	float3 CharacterReflectionRim = 0.0f;
 	// 眉毛の透け：髪の奥に眉毛などがあれば 1
 	float SeeThrough = 0.0f;
 	float SeeThroughOpacity = ToonSeeThroughOpacity;
 	float SeeThroughBrightness = ToonSeeThroughBrightness;
+	float3 SeeThroughColor = ToonSeeThroughColor;
+	float SeeThroughColorBlend = ToonSeeThroughColorBlend;
+	// 眉毛を塗るときに、髪の明るさ（光の当たり具合）を合わせるための、髪の素材の色
+	float3 SeeThroughHairAlbedo = 1.0f;
+	// 眉毛を塗るときの、キャラクターの物体の番号（パーツの色を探す）
+	uint SeeThroughObjectId = 0;
 
 	// 1本のレイから最大2本に分かれるため、処理するレイの総数にも上限を設ける
 	[loop]
@@ -3533,11 +3676,21 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 				{
 					OutlineColor = Rec.Material.Albedo * Look.OutlineColorScale;
 				}
-				CharacterRim = Rec.Material.Albedo * ToonLightColor * (Look.RimStrength * ToonCharacterRim(UV, Rec));
+				CharacterRim = Rec.Material.Albedo * ToonLightColor * (Look.RimStrength * ToonCharacterRim(UV, Rec, ToLightDirection));
+				// 鳴潮モード：光と反対の側の輪郭にも、空の色（青み）の縁を入れる（照り返しのリム）。光の当たり方によるマスクは、陰影を計算した後で掛ける
+				if (Rec.Material.bWuthering != 0 && ToonWutheringReflectionRimStrength > 0.0f)
+				{
+					CharacterReflectionRim = Rec.Material.Albedo * GetToonSkyHue()
+						* (Look.RimStrength * ToonWutheringReflectionRimStrength * ToonCharacterRim(UV, Rec, -ToLightDirection));
+				}
 				uint SeeThroughReason;
 				SeeThrough = ComputeToonSeeThrough(Current.Ray, Rec, SeeThroughReason);
 				SeeThroughOpacity = Look.SeeThroughOpacity;
 				SeeThroughBrightness = Look.SeeThroughBrightness;
+				SeeThroughColor = Look.SeeThroughColor;
+				SeeThroughColorBlend = Look.SeeThroughColorBlend;
+				SeeThroughHairAlbedo = Rec.Material.Albedo;
+				SeeThroughObjectId = Rec.ObjectId;
 				if (bToonDebugGeometry == 2)
 				{
 					return GetDebugSeeThroughColor(SeeThroughReason);
@@ -3616,7 +3769,22 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 		if (!bReflective || Current.Depth >= ToonReflectionDepth)
 		{
 			// 普通の素材か、反射回数の上限に達した場合は、その場で塗って終わる（黒にはしない）
-			Color += Current.Throughput * ShadeToonOpaque(Rec, Current.Ray, GeometricNormal, RandomState, bCameraRay);
+			float LightLevel;
+			Color += Current.Throughput * ShadeToonOpaque(Rec, Current.Ray, GeometricNormal, RandomState, bCameraRay, LightLevel);
+			// 鳴潮モード：光の側のリムは光の当たる部分だけ、照り返しのリムは影の部分だけに入れる
+			// どちらも、光の方向を向いている度合い（N・L）でなだらかに弱める（Falloff）
+			if (bCameraRay && Rec.Material.bWuthering != 0)
+			{
+				float HalfNdotL = dot(Rec.Normal, ToLightDirection) * 0.5f + 0.5f;
+				CharacterRim *= LightLevel * HalfNdotL;
+				CharacterReflectionRim *= (1.0f - LightLevel) * (1.0f - HalfNdotL);
+			}
+			// 鳴潮モードの仕上げのぼかしは、キャラクター全体（顔や肌など、ゲームのテクスチャを使っていない素材も含む）に掛ける
+			// 目は 2 にして、Soft Focus でぼかさないようにする（瞳の模様やハイライトをくっきり残す）
+			if (bCameraRay && bToonWutheringMode != 0 && Rec.Material.bCharacter != 0)
+			{
+				ToonGlowSample.a = Rec.Material.bEye != 0 ? 2.0f : 1.0f;
+			}
 			continue;
 		}
 
@@ -3669,7 +3837,27 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 	}
 
 	// 眉毛の透け：髪の色を暗くして眉毛の形を浮かび上がらせる（隠れた眉毛そのものの色は分からないため、髪の色の濃淡で表す）
-	float3 Shaded = (Color + CharacterRim) * lerp(1.0f, SeeThroughBrightness, SeeThrough * SeeThroughOpacity);
+	float3 Base = Color + CharacterRim + CharacterReflectionRim;
+	float3 Shaded = Base;
+	if (SeeThrough > 0.0f)
+	{
+		float3 Darkened = Base * SeeThroughBrightness;
+		// 眉毛の色で塗る場合：光の色を掛け、髪が影なら同じ割合で暗くする（髪の明るさ ÷ 光が当たったときの髪の明るさ）
+		const float3 LuminanceWeights = float3(0.2126f, 0.7152f, 0.0722f);
+		float LitHair = dot(SeeThroughHairAlbedo * ToonLightColor, LuminanceWeights);
+		float HairBrightness = LitHair > 1.0e-4f ? saturate(dot(Color, LuminanceWeights) / LitHair) : 1.0f;
+		// 色は、前髪から出て直接見えている部分で記録した眉毛そのものの色（UE のマテリアルの色）を使う
+		// まだ一度も見えていなければ、設定の色を使う
+		float3 PartColor;
+		if (bUseGBufferBaseColor != 0 && FindObjectColorByKey(ToonSeeThroughPartColorKey(SeeThroughObjectId), PartColor))
+		{
+			SeeThroughColor = PartColor;
+		}
+		float3 Painted = SeeThroughColor * ToonLightColor * HairBrightness;
+		Shaded = lerp(Base, lerp(Darkened, Painted, SeeThroughColorBlend), SeeThrough * SeeThroughOpacity);
+	}
+	// 線の上は光らせない
+	ToonGlowSample.rgb = ToonGlowSample.a > 0.0f ? CharacterRim * (1.0f - Outline) : 0.0f;
 	return lerp(Shaded, OutlineColor, Outline);
 }
 
@@ -3853,6 +4041,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		RecordObjectColorAtPixel(LocalPixel);
 		// 次にキャラが映ったときは、蓄積を最初からやり直す
 		AccumulationTexture[LocalPixel] = 0.0f;
+		ToonGlowTexture[LocalPixel] = 0.0f;
 		OutputTexture[ViewRectMin + LocalPixel] = SceneColorTexture.Load(int3(ViewRectMin + LocalPixel, 0));
 		return;
 	}
@@ -3888,6 +4077,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 
 		// フェーズ5：ピクセル内のランダムな位置に複数のレイを飛ばして平均する（本の第8章）
 		float3 ColorSum = 0.0f;
+		float4 GlowSum = 0.0f;
 		uint ValidSamples = 0;
 		// カメラが動いている間（蓄積をやり直したピクセル）と物体が動いている間は、サンプル数を減らして負荷を下げる
 		// TSR の前に描く場合は、ピクセル中心に 1 本だけ（TSR がジッターを使ってアンチエイリアスする）
@@ -3925,10 +4115,12 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			if (all(isfinite(SampleColor)))
 			{
 				ColorSum += SampleColor;
+				GlowSum += all(isfinite(ToonGlowSample)) ? ToonGlowSample : 0.0f;
 				++ValidSamples;
 			}
 		}
 		Color = ValidSamples > 0 ? ColorSum / (float)ValidSamples : 0.0f;
+		float4 Glow = ValidSamples > 0 ? GlowSum / (float)ValidSamples : 0.0f;
 
 		// フェーズ7：カメラが静止している間、これまでのフレームの平均と混ぜる
 		// N フレーム分の平均に新しい1フレームを 1/(N+1) の重みで加えると、N+1 フレーム分の平均になる
@@ -3940,8 +4132,13 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			Color = ValidSamples > 0
 				? lerp(History.rgb, Color, 1.0f / (float)(PreviousFrames + 1))
 				: History.rgb;
+			float4 GlowHistory = ToonGlowTexture[LocalPixel];
+			Glow = ValidSamples > 0
+				? lerp(GlowHistory, Glow, 1.0f / (float)(PreviousFrames + 1))
+				: GlowHistory;
 		}
 		AccumulationTexture[LocalPixel] = float4(Color, (float)(PreviousFrames + 1));
+		ToonGlowTexture[LocalPixel] = Glow;
 	}
 
 	// ガンマ補正（本の linear_to_gamma）

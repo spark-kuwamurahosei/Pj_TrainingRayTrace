@@ -6,6 +6,7 @@
 // ・ObjectColorTable：物体ごとの平均色（フレームをまたいで保持。解決パスで書き込み、RayGen で読む）
 //   1 要素 = TOON_OBJECT_COLOR_TABLE_STRIDE 個の uint（キー、R・G・B の float のビット列）
 // キーは GPUScene のインスタンス番号 + 1（0 は空き）
+// 眉毛の透けで見せるパーツ（眉毛など）の色は、最上位のビットを立てたキーで、物体全体の色とは別に覚える
 // TOON_OBJECT_COLOR_TABLE_SIZE（2 のべき乗）は C++ から定義される
 
 #define TOON_OBJECT_COLOR_SUM_STRIDE 5
@@ -20,6 +21,11 @@
 uint ToonObjectColorKey(uint InstanceId)
 {
 	return InstanceId + 1;
+}
+
+uint ToonSeeThroughPartColorKey(uint InstanceId)
+{
+	return ToonObjectColorKey(InstanceId) | 0x80000000u;
 }
 
 // キーから最初に調べる要素の番号を求める
