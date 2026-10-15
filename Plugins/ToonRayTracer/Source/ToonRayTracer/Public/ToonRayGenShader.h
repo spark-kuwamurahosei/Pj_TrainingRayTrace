@@ -147,6 +147,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferBTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferCTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthTexture)
+		// 眉毛の透け：眉毛の線の形（Toon Character コンポーネントが作るメッシュの複製が描く）
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, CustomDepthTexture)
 		// マテリアルの発光：ベースパスの直後のシーンの色と、足す強さ（0 なら足さない）
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonEmissiveTexture)
 		SHADER_PARAMETER(float, ToonEmissiveStrength)
@@ -278,6 +280,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonOutlineWidth)
 		SHADER_PARAMETER(float, ToonOutlineWidthSkinned)
 		SHADER_PARAMETER(float, ToonOutlineThreshold)
+		SHADER_PARAMETER(float, ToonFaceOutlineTolerance)
 		SHADER_PARAMETER(FVector3f, ToonOutlineColor)
 		// トゥーン T7：金属・ガラスで反射・屈折を追いかける回数の上限
 		SHADER_PARAMETER(uint32, ToonReflectionDepth)

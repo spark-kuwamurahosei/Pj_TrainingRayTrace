@@ -134,6 +134,8 @@ Texture2D GBufferCTexture;
 Texture2D ToonEmissiveTexture;
 float ToonEmissiveStrength;
 Texture2D SceneDepthTexture;
+// 眉毛の透け：眉毛の線の形だけを描いた深度（Toon Character コンポーネントが作るメッシュの複製が描く。何もなければ 0）
+Texture2D CustomDepthTexture;
 // GBuffer 内の描画範囲（描画解像度）
 int2 GBufferViewRectMin;
 int2 GBufferViewRectSize;
@@ -324,6 +326,8 @@ float ToonOutlineWidth;
 // スケルタルメッシュ（キャラクターなど）の線の太さ（ピクセル）
 float ToonOutlineWidthSkinned;
 float ToonOutlineThreshold;
+// 顔の中の線：顔のパーツどうしの間では、面の折れ目の線を引かず、段差の許容量をこの倍率で広げる（唇などの小さな凹凸に線を出さない）
+float ToonFaceOutlineTolerance;
 float3 ToonOutlineColor;
 
 // 別の物体が「遠く手前にある（遮っている）」とみなす距離の差（補助レイをずらした量の何倍か）
@@ -512,6 +516,8 @@ struct FToonCharacterParts
 	uint2 SeeThroughSlotMask;
 	// 目のスロットの中で、上まぶたの影をかけないスロット（瞳など）
 	uint2 EyeShadowExcludeSlotMask;
+	// 眉毛の線の形を Custom Depth に描いているか
+	bool bSeeThroughCustomDepth;
 	// 顔の境目のぼかし（顔の半分の幅に対する割合）
 	float FaceShadowSoftness;
 	// キャラクターの大きさに合わせた幅や距離（cm）
@@ -665,6 +671,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 		Parts.HairSlotMask = Slots2.xy;
 		Parts.SeeThroughSlotMask = Slots2.zw;
 		Parts.EyeShadowExcludeSlotMask = ToonCharacterSlots3[Face].xy;
+		Parts.bSeeThroughCustomDepth = ToonCharacterSlots3[Face].z != 0u;
 		Parts.EyeTriangleStart = (uint)round(Params.x);
 		Parts.EyeTriangleEnd = (uint)round(Params.y);
 		Parts.FaceShadowSoftness = Params.z;
@@ -681,6 +688,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 	Parts.EyeSlotMask = uint2(ToonEyeSlotMask, 0u);
 	Parts.HairSlotMask = uint2(ToonHairSlotMask, 0u);
 	Parts.EyeShadowExcludeSlotMask = 0u;
+	Parts.bSeeThroughCustomDepth = false;
 	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
 	float SeeThroughOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 13);
@@ -2739,8 +2747,14 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 			continue;
 		}
 
+		// 顔の中（同じキャラクターで、中心と補助レイの点の両方が顔のパーツ）は、唇や鼻の小さな凹凸に線を出さない
+		// 見下ろす角度では口のテクスチャがつぶれて見えなくなり、唇の凹凸の線だけが「ω」のように残って不自然になるため
+		// 面の折れ目では線を引かず、段差の許容量を広げる
+		// 顔と首・髪・背景の境目（あごや頬の輪郭）は、片方が顔ではないので、今までどおり線を引く
+		bool bFaceArea = NeighborRec.ObjectId == Rec.ObjectId && Rec.Material.bFace != 0 && NeighborRec.Material.bFace != 0;
+
 		// 面の折れ目
-		if (dot(CenterNormal, NeighborRec.Normal) < TOON_OUTLINE_CREASE_COS)
+		if (!bFaceArea && dot(CenterNormal, NeighborRec.Normal) < TOON_OUTLINE_CREASE_COS)
 		{
 			return 1.0f;
 		}
@@ -2750,7 +2764,8 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 		float3 ToNeighbor = NeighborRec.Position - Rec.Position;
 		float NeighborFromCenterPlane = abs(dot(ToNeighbor, CenterNormal));
 		float CenterFromNeighborPlane = abs(dot(ToNeighbor, NeighborRec.Normal));
-		float Tolerance = ToonOutlineThreshold * OffsetDistance * (NeighborRec.ObjectId == Rec.ObjectId ? TOON_OUTLINE_SAME_OBJECT_SCALE : 1.0f);
+		float Tolerance = ToonOutlineThreshold * OffsetDistance * (NeighborRec.ObjectId == Rec.ObjectId ? TOON_OUTLINE_SAME_OBJECT_SCALE : 1.0f)
+			* (bFaceArea ? ToonFaceOutlineTolerance : 1.0f);
 		if (max(NeighborFromCenterPlane, CenterFromNeighborPlane) > Tolerance)
 		{
 			return 1.0f;
@@ -3514,6 +3529,44 @@ float ComputeToonSeeThrough(FToonRay Ray, FToonHitRecord Rec, out uint Reason)
 	{
 		Reason = TOON_SEE_THROUGH_NO_MASK;
 		return 0.0f;
+	}
+
+	// 眉毛の線の形を Custom Depth に描いている場合：画面のその位置に眉毛の線があり、それが当たった面（前髪）の奥
+	// ToonSeeThroughDistance 以内なら見せる。レイトレーシングでは隠れた眉毛のテクスチャの色が分からず、メッシュの形のまま
+	// 帯のように塗ってしまうため、テクスチャで切り抜いた線の形を使う
+	if (Parts.bSeeThroughCustomDepth)
+	{
+		float4 ClipPosition = mul(float4(Rec.Position, 1.0f), TranslatedWorldToClip);
+		if (ClipPosition.w <= 0.0f)
+		{
+			Reason = TOON_SEE_THROUGH_MISS;
+			return 0.0f;
+		}
+		float2 NDC = ClipPosition.xy / ClipPosition.w;
+		float2 ScreenUV = saturate(float2(NDC.x * 0.5f + 0.5f, 0.5f - NDC.y * 0.5f));
+		// Reversed-Z のため 0 は何も描かれていない
+		float CustomDeviceZ = CustomDepthTexture.Load(int3(GetGBufferPixel(ScreenUV), 0)).r;
+		if (CustomDeviceZ <= 0.0f)
+		{
+			Reason = TOON_SEE_THROUGH_MISS;
+			return 0.0f;
+		}
+		// Translated World 空間の原点はカメラの位置なので、位置の長さがカメラからの距離になる
+		float4 CustomPosition = mul(float4(UVToNDC(ScreenUV), CustomDeviceZ, 1.0f), ClipToTranslatedWorld);
+		float Behind = length(CustomPosition.xyz / CustomPosition.w) - length(Rec.Position);
+		if (Behind <= TOON_SEE_THROUGH_START_MARGIN)
+		{
+			// 眉毛の線そのものが見えている（前髪に隠れていない）
+			Reason = TOON_SEE_THROUGH_VISIBLE;
+			return 0.0f;
+		}
+		if (Behind > Parts.SeeThroughDistance)
+		{
+			Reason = TOON_SEE_THROUGH_TOO_FAR;
+			return 0.0f;
+		}
+		Reason = TOON_SEE_THROUGH_FOUND;
+		return 1.0f;
 	}
 
 	// 最初の面から順に奥へ進む。最初の面が見せるパーツそのもの（髪に隠れていない眉毛）なら透かさない

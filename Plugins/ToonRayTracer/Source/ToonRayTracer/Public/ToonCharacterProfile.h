@@ -91,6 +91,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "大きさ（両目の間の距離に対する倍率）", meta = (DisplayName = "眉毛の透けの探す距離", ClampMin = "0.0", UIMax = "10.0"))
 	float SeeThroughDistance = 0.0f;
 
+	/** 前髪の上に見せる眉毛を、眉毛のテクスチャに描かれた線の形にするときの明るさのしきい値（線形の輝度）
+	 * テクスチャのこの明るさより暗い部分を眉毛の線とみなし、その形だけを Custom Depth に描いて、前髪の上に見せる
+	 * 0 なら線の形を使わず、眉毛のメッシュの形のまま見せる（マテリアル M_ToonSeeThroughMask がないときも同じ） */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "髪越しに見せる線のしきい値", ClampMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
+	float SeeThroughMaskThreshold = 0.3f;
+
 	// ---- 見た目（チェックを入れた項目だけ、全体の設定を上書きする） ----
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|影", meta = (InlineEditConditionToggle))
@@ -225,6 +231,11 @@ public:
 	/** 見た目の項目に、今の全体の設定の値を入れる（チェックは変えない）。チェックを入れたときに、全体の設定から調整を始められる */
 	UFUNCTION(CallInEditor, Category = "モデル", meta = (DisplayName = "見た目に全体の設定を入れる"))
 	void FillLookFromGlobalSettings();
+
+#if WITH_EDITOR
+	// 髪越しに見せるスロットや線のしきい値を変えたら、このプロファイルを使うキャラクターの眉毛の線の形を作り直す
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	UFUNCTION()
 	TArray<FString> GetBoneNameOptions() const;

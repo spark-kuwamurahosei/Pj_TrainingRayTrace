@@ -621,6 +621,14 @@ namespace
 		TEXT("Outline is drawn where the neighbor ray hits farther than this multiple of the ray offset from the extended center plane. Smaller draws lines at gentler creases"),
 		ECVF_RenderThreadSafe);
 
+	// 顔の中の線：顔のパーツどうしの間では、面の折れ目の線を引かず、段差の許容量を広げる
+	// 唇や鼻の小さな凹凸に線が出ないようにする（見下ろす角度で、口が「ω」のような線になるのを防ぐ）。顔と首・髪の境目（輪郭）には線が残る
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceOutlineTolerance(
+		TEXT("r.ToonRayTracer.Toon.FaceOutlineTolerance"),
+		100.0f,
+		TEXT("Between points that are both on the face slots, creases are not outlined and the depth step tolerance is multiplied by this value, so small bumps such as the lips get no lines. 1: same as other parts"),
+		ECVF_RenderThreadSafe);
+
 	// 文字列型のため ECVF_RenderThreadSafe は付けられない。ゲームスレッドで読んでレンダースレッドへ渡す
 	// 『The Next Week』第4章：第10章のシーンで球に貼る画像（本の earthmap.jpg）のアセットのパス
 	// 見つからなければ UV のチェッカーで代用する。文字列型のためゲームスレッドで読む
@@ -1204,7 +1212,8 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 	for (TObjectIterator<USkeletalMeshComponent> It; It && OutFaces.Num() < FToonRayGenShader::MaxFaces; ++It)
 	{
 		const USkeletalMeshComponent* Mesh = *It;
-		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !Mesh->IsVisible())
+		// 眉毛の線の形を Custom Depth に描く複製は、キャラクターとして扱わない
+		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !Mesh->IsVisible() || UToonCharacterComponent::IsSeeThroughMaskMesh(Mesh))
 		{
 			continue;
 		}
@@ -1268,7 +1277,9 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 		Face.Slots2 = FUintVector4(static_cast<uint32>(HairMask), static_cast<uint32>(HairMask >> 32), static_cast<uint32>(SeeThroughSectionMask), static_cast<uint32>(SeeThroughSectionMask >> 32));
 		// 上まぶたの影をかけないパーツは、プロファイルでだけ指定する（全体の設定はない）
 		const uint64 EyeShadowExcludeMask = GetMask(&UToonCharacterProfile::EyeShadowExcludeSlots, 0u);
-		Face.Slots3 = FUintVector4(static_cast<uint32>(EyeShadowExcludeMask), static_cast<uint32>(EyeShadowExcludeMask >> 32), 0u, 0u);
+		// z：眉毛の線の形を Custom Depth に描いているか
+		const bool bSeeThroughCustomDepth = Character && Character->HasSeeThroughMaskMesh();
+		Face.Slots3 = FUintVector4(static_cast<uint32>(EyeShadowExcludeMask), static_cast<uint32>(EyeShadowExcludeMask >> 32), bSeeThroughCustomDepth ? 1u : 0u, 0u);
 
 		// 幅や距離：プロファイルの値は両目の間の距離に対する倍率。0 なら全体の設定（cm）を、大きさの基準との比で拡大縮小する
 		const double SizeScale = ReferenceEyeDistance > 0.0 ? EyeDistance / ReferenceEyeDistance : 1.0;
@@ -1570,6 +1581,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonOutlineWidth = FMath::Max(CVarToonRayTracerToonOutlineWidth.GetValueOnRenderThread(), 0.0f);
 	const float ToonOutlineWidthSkinned = FMath::Max(CVarToonRayTracerToonOutlineWidthSkinned.GetValueOnRenderThread(), 0.0f);
 	const float ToonOutlineThreshold = FMath::Max(CVarToonRayTracerToonOutlineThreshold.GetValueOnRenderThread(), 0.0f);
+	const float ToonFaceOutlineTolerance = FMath::Max(CVarToonRayTracerToonFaceOutlineTolerance.GetValueOnRenderThread(), 1.0f);
 	const FLinearColor ToonOutlineColor = ToonOutlineColor_RenderThread;
 	const uint32 ToonReflectionDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonReflectionDepth.GetValueOnRenderThread(), 0, 16));
 
@@ -1585,7 +1597,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
 	const uint32 ToonOutlineHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
-		HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
+		HashCombine(HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonFaceOutlineTolerance)), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
 				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias)),
 					HashCombine(HashCombine(HashCombine(GetTypeHash(ToonHairShadowMode), GetTypeHash(ToonHairSlotMask)), HashCombine(GetTypeHash(ToonHairShadowWidth), GetTypeHash(ToonHairShadowLightShift))), HashCombine(GetTypeHash(ToonHairShadowDistance), GetTypeHash(ToonHairShadowStrength))))))), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
@@ -1596,7 +1608,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		CharacterHash = HashCombine(CharacterHash, HashCombine(
 			HashCombine(HashCombine(GetTypeHash(Face.Slots.X), GetTypeHash(Face.Slots.Y)), HashCombine(GetTypeHash(Face.Slots.Z), GetTypeHash(Face.Slots.W))),
 			HashCombine(HashCombine(HashCombine(GetTypeHash(Face.Slots2.X), GetTypeHash(Face.Slots2.Y)), HashCombine(GetTypeHash(Face.Slots2.Z), GetTypeHash(Face.Slots2.W))),
-				HashCombine(GetTypeHash(Face.Slots3.X), GetTypeHash(Face.Slots3.Y)))));
+				HashCombine(HashCombine(GetTypeHash(Face.Slots3.X), GetTypeHash(Face.Slots3.Y)), GetTypeHash(Face.Slots3.Z)))));
 		CharacterHash = HashCombine(CharacterHash, HashCombine(
 			HashCombine(HashCombine(GetTypeHash(Face.Params.X), GetTypeHash(Face.Params.Y)), HashCombine(GetTypeHash(Face.Params.Z), GetTypeHash(Face.Params.W))),
 			HashCombine(HashCombine(GetTypeHash(Face.Params2.X), GetTypeHash(Face.Params2.Y)), HashCombine(GetTypeHash(Face.Params2.Z), GetTypeHash(Face.Params2.W)))));
@@ -1809,6 +1821,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		PassParameters->GBufferDTexture = SceneTextureParameters->GBufferDTexture ? SceneTextureParameters->GBufferDTexture : GSystemTextures.GetBlackDummy(GraphBuilder);
 		PassParameters->GBufferCTexture = SceneTextureParameters->GBufferCTexture;
 		PassParameters->SceneDepthTexture = SceneTextureParameters->SceneDepthTexture;
+		PassParameters->CustomDepthTexture = SceneTextureParameters->CustomDepthTexture ? SceneTextureParameters->CustomDepthTexture : GSystemTextures.GetDepthDummy(GraphBuilder);
 		PassParameters->GBufferViewRectMin = GBufferViewRect.Min;
 		PassParameters->GBufferViewRectSize = GBufferViewRect.Size();
 	}
@@ -1819,6 +1832,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		PassParameters->GBufferDTexture = GSystemTextures.GetBlackDummy(GraphBuilder);
 		PassParameters->GBufferCTexture = GSystemTextures.GetBlackDummy(GraphBuilder);
 		PassParameters->SceneDepthTexture = GSystemTextures.GetDepthDummy(GraphBuilder);
+		PassParameters->CustomDepthTexture = GSystemTextures.GetDepthDummy(GraphBuilder);
 		PassParameters->GBufferViewRectMin = FIntPoint::ZeroValue;
 		PassParameters->GBufferViewRectSize = FIntPoint(1, 1);
 	}
@@ -1954,6 +1968,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonOutlineWidth = ToonOutlineWidth;
 	PassParameters->ToonOutlineWidthSkinned = ToonOutlineWidthSkinned;
 	PassParameters->ToonOutlineThreshold = ToonOutlineThreshold;
+	PassParameters->ToonFaceOutlineTolerance = ToonFaceOutlineTolerance;
 	PassParameters->ToonReflectionDepth = ToonReflectionDepth;
 	PassParameters->ToonOutlineColor = FVector3f(ToonOutlineColor.R, ToonOutlineColor.G, ToonOutlineColor.B);
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ

@@ -248,6 +248,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	OutlineWidth = 1.5f;
 	OutlineWidthSkinned = 0.5f;
 	OutlineThreshold = 1.0f;
+	FaceOutlineTolerance = 100.0f;
 	OutlineColor = FLinearColor(0.02f, 0.02f, 0.04f);
 
 	ReflectionDepth = 4;
@@ -370,6 +371,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidth"), OutlineWidth);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidthSkinned"), OutlineWidthSkinned);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.OutlineThreshold"), OutlineThreshold);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.FaceOutlineTolerance"), FaceOutlineTolerance);
 	SetColor(TEXT("r.ToonRayTracer.Toon.OutlineColor"), OutlineColor);
 
 	SetInt(TEXT("r.ToonRayTracer.Toon.ReflectionDepth"), ReflectionDepth);
@@ -510,6 +512,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidth"), OutlineWidth);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidthSkinned"), OutlineWidthSkinned);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.OutlineThreshold"), OutlineThreshold);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.FaceOutlineTolerance"), FaceOutlineTolerance);
 	GetColor(TEXT("r.ToonRayTracer.Toon.OutlineColor"), OutlineColor);
 
 	GetInt(TEXT("r.ToonRayTracer.Toon.ReflectionDepth"), ReflectionDepth);
