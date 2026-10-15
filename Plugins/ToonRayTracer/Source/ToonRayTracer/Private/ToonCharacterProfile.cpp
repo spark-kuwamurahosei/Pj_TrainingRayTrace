@@ -1,4 +1,6 @@
 #include "ToonCharacterProfile.h"
+#include "ToonCharacterComponent.h"
+#include "UObject/UObjectIterator.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkinnedAssetCommon.h"
@@ -280,3 +282,17 @@ uint64 UToonCharacterProfile::SlotNamesToSectionMask(const USkeletalMeshComponen
 	}
 	return Mask;
 }
+
+#if WITH_EDITOR
+void UToonCharacterProfile::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	for (TObjectIterator<UToonCharacterComponent> It; It; ++It)
+	{
+		if (It->Profile == this)
+		{
+			It->RefreshSeeThroughMaskMesh();
+		}
+	}
+}
+#endif

@@ -82,7 +82,7 @@ private:
 		// キャラクターごとの設定（プロファイルか全体の設定から、このキャラクター用に求めた値）
 		// Slots：顔のスロット（0 ～ 31 番、32 ～ 63 番のビット）、目のスロット（同じ）
 		// Slots2：髪のスロット、髪越しに見せるスロット
-		// Slots3：上まぶたの影をかけないスロット、（未使用）
+		// Slots3：上まぶたの影をかけないスロット、眉毛の線の形を Custom Depth に描いているか（z）
 		FUintVector4 Slots = FUintVector4(0, 0, 0, 0);
 		FUintVector4 Slots2 = FUintVector4(0, 0, 0, 0);
 		FUintVector4 Slots3 = FUintVector4(0, 0, 0, 0);

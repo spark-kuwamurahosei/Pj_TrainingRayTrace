@@ -354,7 +354,7 @@ void SToonRayTracerPanel::RebuildCharacterList()
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		AActor* Actor = *It;
-		const USkeletalMeshComponent* Mesh = Actor->FindComponentByClass<USkeletalMeshComponent>();
+		const USkeletalMeshComponent* Mesh = UToonCharacterComponent::FindCharacterMesh(Actor);
 		if (!Mesh || !Mesh->GetSkeletalMeshAsset())
 		{
 			continue;
@@ -443,7 +443,7 @@ void SToonRayTracerPanel::RebuildCharacterList()
 				.Text_Lambda([WeakActor]()
 				{
 					const AActor* Target = WeakActor.Get();
-					const USkeletalMeshComponent* TargetMesh = Target ? Target->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
+					const USkeletalMeshComponent* TargetMesh = UToonCharacterComponent::FindCharacterMesh(Target);
 					return TargetMesh ? GetCharacterStatus(TargetMesh, GetActorProfile(Target)) : FText::GetEmpty();
 				})
 				.ColorAndOpacity(FSlateColor::UseSubduedForeground())
@@ -515,7 +515,7 @@ void SToonRayTracerPanel::ShowProfile(UToonCharacterProfile* Profile)
 FReply SToonRayTracerPanel::OnCreateProfileClicked(TWeakObjectPtr<AActor> Actor)
 {
 	AActor* Target = Actor.Get();
-	const USkeletalMeshComponent* Mesh = Target ? Target->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
+	const USkeletalMeshComponent* Mesh = UToonCharacterComponent::FindCharacterMesh(Target);
 	USkeletalMesh* SkeletalMesh = Mesh ? Mesh->GetSkeletalMeshAsset() : nullptr;
 	if (!SkeletalMesh)
 	{

@@ -475,6 +475,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "線のしきい値", ClampMin = "0.0", UIMin = "0.1", UIMax = "5.0", EditCondition = "bOutline"))
 	float OutlineThreshold;
 
+	/** 顔の中の線：顔のパーツどうしの間では、面の折れ目の線を引かず、段差の許容量をこの倍率で広げる。唇や鼻の小さな凹凸に線が出ない（見下ろす角度で口が「ω」のような線になるのを防ぐ）。顔と首・髪の境目（輪郭）には影響しない。1 なら他の部分と同じ */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "顔の中の線の許容量（倍率）", ClampMin = "1.0", UIMin = "1.0", UIMax = "200.0", EditCondition = "bOutline"))
+	float FaceOutlineTolerance;
+
 	/** 線の色 */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "線の色", HideAlphaChannel, EditCondition = "bOutline"))
 	FLinearColor OutlineColor;
