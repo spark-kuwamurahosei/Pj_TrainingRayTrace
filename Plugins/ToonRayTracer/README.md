@@ -30,6 +30,21 @@ UE5.8 のハードウェアレイトレーシング（DXR）を使ったトゥ�
   | 夕方 | 6°・橙色・4 lux | 暖色 |
   | 夜 | 40°・白に近い青の月の光・0.5 lux（空の太陽として使わないので空は暗くなる） | 青みのある弱い光 |
 
+## 検証用・サンプルのレベル
+
+プラグインの Content の `/ToonRayTracer/Maps` に、モデルを含まない検証用のレベルがある（UE エンジンの基本形状だけで組み立てている）。
+レベルは `Scripts/create_sample_levels.py` で作り直せる（エディタのコンソールで `py "<プラグインのパス>/Scripts/create_sample_levels.py"`。今開いているレベルは先に保存しておく）。
+コンテンツブラウザで見つからないときは、表示設定の「プラグインのコンテンツを表示」を有効にする。
+
+| レベル | 内容 | おすすめの設定 |
+|---|---|---|
+| `L_ToonRT_Materials` | 素材の検証。メッシュごとの設定（Custom Primitive Data）の見本を並べる（設定なしで UE のマテリアルの色、ランバート、ハイライトとリムライト、銀と金の金属、ガラス、影色の上書き、線なし）。正面と横のカメラ付き | `r.ToonRayTracer.Toon.CharacterOnly 0`（全体をトゥーンにする） |
+| `L_ToonRT_Character` | キャラクターの検証。原点の `CharacterSpot_PlaceCharacterHere` にキャラクターを置き、Toon Character コンポーネントを付けてプロファイルを選ぶ。正面・斜め・横・見下ろし・全身のカメラ付き（身長 160cm 前後の顔の高さに合わせている） | `r.ToonRayTracer.Toon.CharacterOnly 1`（キャラクターだけトゥーン、背景は Lumen） |
+| `L_ToonRT_Analytic` | 解析的な物体のシーンの検証。シーンごとに、本のカメラに相当する位置と画角のカメラを置く（`Cam_Scene0_OneWeekend`、`Cam_Scene1_SimpleLight`、`Cam_Scene2to4_6_CornellBox`、`Cam_Scene5_FinalScene`） | `r.ToonRayTracer.TraceMode 0` と `r.ToonRayTracer.AnalyticScene`（0 ～ 6） |
+
+カメラは、アウトライナーの `Cameras` フォルダのカメラを選び、ビューポートの「パイロット」で視点を合わせる。
+光の向きは `DirectionalLight` の回転（またはビューポートで Ctrl + L を押しながらマウスを動かす）で変える。
+
 ## 表示モード
 
 `r.ToonRayTracer.ShadingMode` で切り替える。
