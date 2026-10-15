@@ -1,0 +1,611 @@
+#pragma once
+
+// シーンのメッシュ（TLAS）の交差判定と、通常の描画の結果（GBuffer）・物体ごとの代表色との連携
+
+// ペイロードはエンジン定義の FDefaultPayload で、表裏を入れる欄がないため、
+// InstanceIndex の最上位ビットに「裏面に当たった」フラグを入れる（DXR のインスタンス番号は 24 ビットまでなので衝突しない）
+#define TOON_PAYLOAD_BACK_FACE_BIT 0x80000000u
+// 眉毛の透け：その下の 7 ビット（24 ～ 30 ビット目）に、当たったジオメトリの番号を入れる（127 以上は 127 にまとめる）
+#define TOON_PAYLOAD_GEOMETRY_SHIFT 24u
+#define TOON_PAYLOAD_GEOMETRY_MASK 0x7Fu
+
+uint GetPayloadGeometryIndex(FDefaultPayload Payload)
+{
+	return (Payload.InstanceIndex >> TOON_PAYLOAD_GEOMETRY_SHIFT) & TOON_PAYLOAD_GEOMETRY_MASK;
+}
+
+// 目の表現：目のスロットに当たったか
+bool IsEyeSlotHit(FDefaultPayload Payload, bool bCharacter, FToonCharacterParts Parts)
+{
+	return bCharacter && IsSlotInMask(Parts.EyeSlotMask, GetPayloadGeometryIndex(Payload));
+}
+
+// 目の表現：目のスロットの、目として扱う三角形の範囲に当たったか（PrimitiveIndex はスロットの中での三角形の番号）
+bool IsEyeHit(FDefaultPayload Payload, bool bCharacter, FToonCharacterParts Parts)
+{
+	if (!bCharacter)
+	{
+		return false;
+	}
+	return IsSlotInMask(Parts.EyeSlotMask, GetPayloadGeometryIndex(Payload))
+		&& Payload.PrimitiveIndex >= Parts.EyeTriangleStart
+		&& (Parts.EyeTriangleEnd == 0 || Payload.PrimitiveIndex < Parts.EyeTriangleEnd);
+}
+
+bool IsPayloadBackFace(FDefaultPayload Payload)
+{
+	return (Payload.InstanceIndex & TOON_PAYLOAD_BACK_FACE_BIT) != 0;
+}
+
+// シーンの TLAS に対してレイを1本飛ばす
+bool TraceScene(FToonRay Ray, float TMin, out FDefaultPayload Payload)
+{
+	RayDesc Desc;
+	Desc.Origin = Ray.Origin;
+	Desc.Direction = Ray.Direction;
+	Desc.TMin = TMin;
+	Desc.TMax = RAY_DEFAULT_T_MAX;
+
+	Payload = (FDefaultPayload)0;
+	TraceRay(
+		TLAS,
+		RAY_FLAG_FORCE_OPAQUE,				// AnyHit シェーダーを使わない（すべて不透明として扱う）
+		RAY_TRACING_MASK_ALL,				// InstanceInclusionMask
+		RAY_TRACING_SHADER_SLOT_MATERIAL,	// RayContributionToHitGroupIndex
+		RAY_TRACING_NUM_SHADER_SLOTS,		// MultiplierForGeometryContributionToHitGroupIndex
+		0,									// MissShaderIndex
+		Desc,
+		Payload);
+
+	return Payload.IsHit();
+}
+
+// 法線を求めるための補助レイを、ヒット位置でどれだけ離れた点に向けるか（cm）
+// ヒットまでの距離に比例させ、近すぎる場合は float 精度を考えて下限を設ける
+#define TOON_NORMAL_PROBE_RELATIVE_DISTANCE 1.0e-4f
+#define TOON_NORMAL_PROBE_MIN_DISTANCE 0.02f
+
+// 汎用化 G3：法線をなめらかにするため、レイの向きを Tangent の両方向に傾けた補助レイのヒット位置の差（中心差分）を求める
+// 補助レイの間隔をポリゴン1枚分程度に広げると、隣り合うポリゴンをまたいだ平均的な向きになり、法線がなめらかにつながる
+// 別の物体に当たった補助レイは法線が崩れるため使わない（片側だけ同じ物体に当たれば、その片側で求める）
+bool ProbeSmoothSurfaceEdge(FToonRay Ray, float3 Tangent, float ProbeSlope, float TMin, FDefaultPayload CenterPayload, float3 CenterPosition, out float3 Edge)
+{
+	Edge = 0.0f;
+	float3 ProbePositions[2] = { CenterPosition, CenterPosition };
+	bool bHit[2] = { false, false };
+
+	[loop]
+	for (int Index = 0; Index < 2; ++Index)
+	{
+		float Sign = Index == 0 ? 1.0f : -1.0f;
+		FToonRay ProbeRay;
+		ProbeRay.Origin = Ray.Origin;
+		ProbeRay.Direction = normalize(Ray.Direction + Tangent * (ProbeSlope * Sign));
+		FDefaultPayload ProbePayload;
+		if (TraceScene(ProbeRay, TMin, ProbePayload) && ProbePayload.InstanceID == CenterPayload.InstanceID)
+		{
+			ProbePositions[Index] = ProbeRay.At(ProbePayload.HitT);
+			bHit[Index] = true;
+		}
+	}
+
+	if (!bHit[0] && !bHit[1])
+	{
+		return false;
+	}
+
+	// 両側に当たれば中心差分、片側だけなら中心からの差分（当たらなかった側は中心の位置のまま）
+	Edge = ProbePositions[0] - ProbePositions[1];
+	return true;
+}
+
+// 中心のヒット位置から、レイの向きを Tangent 方向に少し傾けたレイのヒット位置までのベクトルを求める
+// 同じ三角形に当たれば、そのベクトルは三角形の面上にある
+bool ProbeSurfaceEdge(FToonRay Ray, float3 Tangent, float ProbeSlope, float TMin, FDefaultPayload CenterPayload, float3 CenterPosition, out float3 Edge)
+{
+	Edge = 0.0f;
+	bool bFound = false;
+
+	// まず + 方向、同じ三角形に当たらなければ - 方向を試す
+	[loop]
+	for (int Sign = 1; Sign >= -1; Sign -= 2)
+	{
+		FToonRay ProbeRay;
+		ProbeRay.Origin = Ray.Origin;
+		ProbeRay.Direction = normalize(Ray.Direction + Tangent * (ProbeSlope * Sign));
+		FDefaultPayload ProbePayload;
+		if (!TraceScene(ProbeRay, TMin, ProbePayload))
+		{
+			continue;
+		}
+
+		float3 ProbeEdge = (ProbeRay.At(ProbePayload.HitT) - CenterPosition) * Sign;
+		bool bSameTriangle = ProbePayload.InstanceIndex == CenterPayload.InstanceIndex
+			&& ProbePayload.PrimitiveIndex == CenterPayload.PrimitiveIndex;
+
+		if (bSameTriangle)
+		{
+			Edge = ProbeEdge;
+			return true;
+		}
+
+		// 別の三角形でも、見つからないよりは近似として使う
+		if (!bFound)
+		{
+			Edge = ProbeEdge;
+			bFound = true;
+		}
+	}
+
+	return bFound;
+}
+
+// シーンのメッシュとの交差判定
+// ClosestHit シェーダーからは頂点データを読めないため、ごく近い3本のレイのヒット位置から
+// 三角形の面の法線（フラットシェーディング相当）を求める
+// カメラレイだけでなく、反射後のレイにも使えるよう、補助レイはレイ自身の向きを傾けて作る
+// SmoothDistance が 0 より大きければ、補助レイをその間隔（cm）で両側に飛ばし、ポリゴンをまたいだなめらかな法線にする
+// bComputeNormal が false なら、補助レイを飛ばさず法線を求めない（Normal はレイと逆向きの仮の値になる）
+// GBuffer の法線に置き換える予定の点など、面の向きが要らない場合に使う（1 点あたりのレイが 3 本から 1 本になる）
+bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDistance = 0.0f, bool bComputeNormal = true)
+{
+	FDefaultPayload CenterPayload;
+	if (!TraceScene(Ray, TMin, CenterPayload))
+	{
+		return false;
+	}
+
+	Rec.T = CenterPayload.HitT;
+	Rec.Position = Ray.At(CenterPayload.HitT);
+	Rec.Material = GetSceneMaterial(CenterPayload.InstanceID);
+	Rec.ObjectId = CenterPayload.InstanceID;
+	// 目の表現：当たったパーツ（マテリアルスロット）が目か
+	FToonCharacterParts Parts = GetToonCharacterParts(Rec.Position, Rec.ObjectId);
+	Rec.Material.bEye = IsEyeHit(CenterPayload, Rec.Material.bCharacter != 0, Parts) ? 1u : 0u;
+	Rec.Material.bNoEyelidShadow = Rec.Material.bEye != 0 && IsSlotInMask(Parts.EyeShadowExcludeSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
+	// 顔の影：当たったパーツ（マテリアルスロット）が顔か
+	Rec.Material.bFace = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.FaceSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
+
+	if (!bComputeNormal)
+	{
+		Rec.Normal = -Ray.Direction;
+		Rec.bFrontFace = !IsPayloadBackFace(CenterPayload);
+		return true;
+	}
+
+	// レイの向きに垂直な2方向を作る
+	float3 Up = abs(Ray.Direction.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+	float3 TangentX = normalize(cross(Up, Ray.Direction));
+	float3 TangentY = cross(Ray.Direction, TangentX);
+
+	// ヒット位置で ProbeDistance だけ離れた点を狙う傾き
+	float ProbeDistance = max(Rec.T * TOON_NORMAL_PROBE_RELATIVE_DISTANCE, TOON_NORMAL_PROBE_MIN_DISTANCE);
+	float ProbeSlope = ProbeDistance / Rec.T;
+
+	float3 EdgeX;
+	float3 EdgeY;
+	bool bHasEdgeX;
+	bool bHasEdgeY;
+	if (SmoothDistance > ProbeDistance)
+	{
+		float SmoothSlope = SmoothDistance / Rec.T;
+		bHasEdgeX = ProbeSmoothSurfaceEdge(Ray, TangentX, SmoothSlope, TMin, CenterPayload, Rec.Position, EdgeX);
+		bHasEdgeY = ProbeSmoothSurfaceEdge(Ray, TangentY, SmoothSlope, TMin, CenterPayload, Rec.Position, EdgeY);
+	}
+	else
+	{
+		bHasEdgeX = ProbeSurfaceEdge(Ray, TangentX, ProbeSlope, TMin, CenterPayload, Rec.Position, EdgeX);
+		bHasEdgeY = ProbeSurfaceEdge(Ray, TangentY, ProbeSlope, TMin, CenterPayload, Rec.Position, EdgeY);
+	}
+
+	float3 Normal = -Ray.Direction;
+	float3 CrossEdge = cross(EdgeX, EdgeY);
+	if (bHasEdgeX && bHasEdgeY && dot(CrossEdge, CrossEdge) > 0.0f)
+	{
+		Normal = normalize(CrossEdge);
+	}
+
+	// 補助レイから求めた法線の向き（外向きか内向きか）は、辺の取り方次第で決まらないため、
+	// 法線はレイと向かい合う側に揃え、表裏は ClosestHit で得た HitKind から判定する
+	// （本の set_face_normal と同じく、Normal は常にレイと逆向き、bFrontFace は外側から当たったか）
+	Rec.Normal = dot(Normal, Ray.Direction) < 0.0f ? Normal : -Normal;
+	Rec.bFrontFace = !IsPayloadBackFace(CenterPayload);
+	return true;
+}
+
+// 反射したレイが、出発した面自身に当たってしまう問題（shadow acne）を避けるための最小距離（cm）
+// 本の interval(0.001, infinity) に相当。本の 1 単位 ≒ 1m なので、cm に換算して少し余裕を持たせる
+#define TOON_RAY_TMIN 0.01f
+
+// 『The Next Week』第9章：煙の箱に入ってから出るまでの間に、普通の物体（床など）があるかを探す
+// 箱の底面と床がぴったり重なっている場合も見つけられるよう、出る位置より少し先まで探す
+// 見つかれば Solid にその当たりを入れて true を返す（煙はその手前で終わる）
+#define TOON_VOLUME_EXIT_MARGIN 0.1f
+bool FindSolidInsideVolume(FToonRay Ray, FToonHitRecord VolumeRec, out FToonHitRecord Solid)
+{
+	Solid = (FToonHitRecord)0;
+	return HitWorld(Ray, VolumeRec.T, VolumeRec.VolumeExitT + TOON_VOLUME_EXIT_MARGIN, Solid, false);
+}
+
+// 解析的な球またはシーンのメッシュとの交差判定（TraceMode で切り替え）
+// SmoothDistance が 0 より大きければ、シーンのメッシュの法線をその間隔でなめらかにする（解析的な球は常になめらか）
+bool HitAnything(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDistance = 0.0f, bool bComputeNormal = true)
+{
+	// 三項演算子は両辺とも評価されるため、不要な TraceRay を避けるように if で分ける
+	if (TraceMode == 0)
+	{
+		return HitWorld(Ray, TMin, 1.0e8f, Rec);
+	}
+	return HitScene(Ray, TMin, Rec, SmoothDistance, bComputeNormal);
+}
+
+// GBuffer の深度から復元した位置と、レイのヒット位置がどれだけずれていたら別の面とみなすか
+// （ラスタライズ用とレイトレーシング用でメッシュが異なる場合や、TAA のジッター分のずれを許容する）
+#define TOON_GBUFFER_MATCH_MIN_DISTANCE 1.0f		// cm
+#define TOON_GBUFFER_MATCH_RELATIVE_DISTANCE 0.01f	// ヒットまでの距離に対する割合
+
+// 画面上の UV から、GBuffer のピクセル位置を求める（GBuffer は描画解像度）
+int2 GetGBufferPixel(float2 UV)
+{
+	return GBufferViewRectMin + min((int2)(UV * (float2)GBufferViewRectSize), GBufferViewRectSize - 1);
+}
+
+// 画面上の UV の位置で GBuffer に描かれている点が、Position と同じ点かどうかを深度で確かめる
+// ToleranceBaseDistance：一致とみなすずれの基準になる距離（カメラからヒット位置までの距離）
+bool IsGBufferSamePoint(float2 UV, float3 Position, float ToleranceBaseDistance)
+{
+	// Reversed-Z のため 0 は無限遠（空など、何も描かれていない）
+	float DeviceZ = SceneDepthTexture.Load(int3(GetGBufferPixel(UV), 0)).r;
+	if (DeviceZ <= 0.0f)
+	{
+		return false;
+	}
+
+	// GBuffer の深度から Translated World 空間の位置を復元し、Position と比べる
+	float4 GBufferClipPosition = mul(float4(UVToNDC(UV), DeviceZ, 1.0f), ClipToTranslatedWorld);
+	float3 GBufferPosition = GBufferClipPosition.xyz / GBufferClipPosition.w;
+	float Tolerance = max(TOON_GBUFFER_MATCH_MIN_DISTANCE, ToleranceBaseDistance * TOON_GBUFFER_MATCH_RELATIVE_DISTANCE);
+	return distance(GBufferPosition, Position) <= Tolerance;
+}
+
+// カメラから通り抜ける面の最大数
+#define TOON_MAX_MASKED_SKIPS 4
+
+// 汎用化：カメラのレイが当たった点が、通常描画（GBuffer）では描かれていない面かどうか
+// レイトレーシングではすべての面を不透明として扱うため（AnyHit シェーダーを使わない）、
+// マテリアルの透過（Masked）で抜けているはずの部分にも当たる。その点が GBuffer に描かれている一番手前の面より
+// 明らかに手前にあれば、GBuffer には描かれていない（＝透過で抜けている）とみなす
+// 周囲 3x3 ピクセルの一番手前の深度と比べ、TAA のジッターで物体の輪郭を誤って抜かないようにする
+bool IsHiddenInGBuffer(float2 UV, float3 Position)
+{
+	int2 Center = GetGBufferPixel(UV);
+	int2 PixelMin = GBufferViewRectMin;
+	int2 PixelMax = GBufferViewRectMin + GBufferViewRectSize - 1;
+
+	// Reversed-Z のため、値が大きいほど手前（0 は何も描かれていない）
+	float NearestDeviceZ = 0.0f;
+	for (int OffsetY = -1; OffsetY <= 1; ++OffsetY)
+	{
+		for (int OffsetX = -1; OffsetX <= 1; ++OffsetX)
+		{
+			NearestDeviceZ = max(NearestDeviceZ, SceneDepthTexture.Load(int3(clamp(Center + int2(OffsetX, OffsetY), PixelMin, PixelMax), 0)).r);
+		}
+	}
+	if (NearestDeviceZ <= 0.0f)
+	{
+		// 周囲に何も描かれていない（空）のに当たった
+		return true;
+	}
+
+	// Translated World 空間の原点はカメラの位置なので、位置の長さがカメラからの距離になる
+	float4 GBufferClipPosition = mul(float4(UVToNDC(UV), NearestDeviceZ, 1.0f), ClipToTranslatedWorld);
+	float GBufferDistance = length(GBufferClipPosition.xyz / GBufferClipPosition.w);
+	float HitDistance = length(Position);
+	float Tolerance = max(TOON_GBUFFER_MATCH_MIN_DISTANCE, HitDistance * TOON_GBUFFER_MATCH_RELATIVE_DISTANCE);
+	return HitDistance < GBufferDistance - Tolerance;
+}
+
+// カメラのレイ（中心のレイとアウトラインの補助レイ）の交差判定
+// GBuffer に描かれていない面（透過で抜けている部分）に当たったら、その先へ通り抜けて次の面を探す
+// Custom Primitive Data でマテリアルを指定したメッシュ（ガラスなど）は通り抜けない
+// bComputeNormal が false なら法線を求めない（HitScene を参照）
+bool HitCameraVisible(FToonRay Ray, float2 UV, inout FToonHitRecord Rec, bool bComputeNormal = true)
+{
+	float TMin = 0.0f;
+	[loop]
+	for (uint Skip = 0; Skip <= TOON_MAX_MASKED_SKIPS; ++Skip)
+	{
+		// 通り抜ける面の法線は要らないため、2 枚目以降は法線を求めずに探し、見つかった面だけ求め直す
+		if (!HitAnything(Ray, TMin, Rec, 0.0f, bComputeNormal && Skip == 0))
+		{
+			return false;
+		}
+		if (bSkipMaskedSurfaces == 0 || TraceMode == 0 || Rec.Material.Type != TOON_MATERIAL_DEFAULT || !IsHiddenInGBuffer(UV, Rec.Position))
+		{
+			if (Skip == 0 || !bComputeNormal)
+			{
+				return true;
+			}
+			return HitAnything(Ray, TMin, Rec);
+		}
+		TMin = Rec.T + TOON_RAY_TMIN;
+		Rec = (FToonHitRecord)0;
+	}
+	return HitAnything(Ray, TMin, Rec, 0.0f, bComputeNormal);
+}
+
+// 肌として扱うシェーディングモデル（Engine/Shaders/Private/ShadingCommon.ush の SHADINGMODELID_*）
+#define TOON_SHADINGMODELID_SUBSURFACE			2
+#define TOON_SHADINGMODELID_PREINTEGRATED_SKIN	3
+#define TOON_SHADINGMODELID_SUBSURFACE_PROFILE	5
+#define TOON_SHADINGMODELID_TWOSIDED_FOLIAGE	6
+
+// GBuffer のピクセルから、マテリアルの色と金属の判定を読んで Rec に反映する
+// ・汎用化 G1：Custom Primitive Data でマテリアルを指定していないメッシュは、素材の色を GBuffer のベースカラー
+//   （UE のマテリアルのテクスチャの色）にする。メッシュごとの設定なしで、UE のマテリアルの色がトゥーンの塗りに使われる
+// ・汎用化 G2：同じくマテリアル未指定のメッシュは、GBuffer のメタリックとラフネスから金属かどうかを判定する
+//   メタリックが高く、ラフネスが小さい（つやのある）金属だけを鏡面反射の金属として扱う
+// マテリアルの発光を、最後にシーンの色（HDR）のまま足すか（TSR の前に描き、トーンマップの逆をかける場合）
+bool IsEmissiveAddedAsSceneColor()
+{
+	return ShadingMode != 0 && bBeforeTSR != 0 && bToonInverseTonemap != 0;
+}
+
+void ApplyGBufferMaterial(int2 GBufferPixel, inout FToonHitRecord Rec)
+{
+	// マテリアルの発光：シーンの色は露出を先に掛けた値（PreExposure）なので、それを外して自動露出を掛け、
+	// トゥーンの色（1 が白）と同じ明るさの基準にする
+	if (ToonEmissiveStrength > 0.0f)
+	{
+		float Exposure = (ToonEyeAdaptationExposure > 0.0f ? ToonEyeAdaptationExposure : 1.0f) / max(View.PreExposure, 1.0e-6f);
+		Rec.Material.Emissive = max(ToonEmissiveTexture.Load(int3(GBufferPixel, 0)).rgb, 0.0f) * Exposure * ToonEmissiveStrength;
+	}
+
+	if (Rec.Material.Type != TOON_MATERIAL_DEFAULT)
+	{
+		return;
+	}
+
+	// 鳴潮風ルック フェーズ2：肌の判定。GBufferB の a の下位 4 ビットにシェーディングモデルが入っている（DecodeShadingModelId）
+	float4 GBufferB = GBufferBTexture.Load(int3(GBufferPixel, 0));
+	uint ShadingModelId = ((uint)round(GBufferB.a * 255.0f)) & 0xF;
+
+	// 鳴潮モード：Two Sided Foliage のマテリアルは、空いている GBuffer の欄にゲームのテクスチャの値が入っている
+	// （Metallic や Roughness は別の意味で使っているため、金属の判定もしない）
+	if (ShadingModelId == TOON_SHADINGMODELID_TWOSIDED_FOLIAGE)
+	{
+		if (bToonWutheringMode != 0)
+		{
+			// GBufferD の rgb には Subsurface Color の平方根が入っている（EncodeSubsurfaceColor）
+			float3 Encoded = GBufferDTexture.Load(int3(GBufferPixel, 0)).rgb;
+			Rec.Material.bWuthering = 1;
+			Rec.Material.WutheringShadowColor = Encoded * Encoded;
+			Rec.Material.WutheringHighlight = GBufferB.r;
+			Rec.Material.WutheringSparkle = GBufferB.g;
+			Rec.Material.WutheringShadowBias = GBufferB.b;
+		}
+		if (bUseGBufferBaseColor != 0)
+		{
+			Rec.Material.Albedo = GBufferCTexture.Load(int3(GBufferPixel, 0)).rgb;
+		}
+		return;
+	}
+
+	if (bToonSkin != 0)
+	{
+		Rec.Material.bSkin = (ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE
+			|| ShadingModelId == TOON_SHADINGMODELID_PREINTEGRATED_SKIN
+			|| ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE_PROFILE) ? 1u : 0u;
+	}
+
+	// GBufferC の rgb にはベースカラーが入っている（DeferredShadingCommon の DecodeBaseColor）
+	// sRGB のレンダーターゲットなので、読み出した時点で線形の色になっている
+	float3 BaseColor = GBufferCTexture.Load(int3(GBufferPixel, 0)).rgb;
+	if (bUseGBufferBaseColor != 0)
+	{
+		Rec.Material.Albedo = BaseColor;
+	}
+
+	// GBufferB の rgb にはメタリック、スペキュラ、ラフネスが入っている（DeferredShadingCommon の DecodeGBufferData）
+	if (bUseGBufferMetal != 0)
+	{
+		float3 MetallicSpecularRoughness = GBufferBTexture.Load(int3(GBufferPixel, 0)).rgb;
+		float Metallic = MetallicSpecularRoughness.r;
+		float Roughness = MetallicSpecularRoughness.b;
+		if (Metallic >= TOON_GBUFFER_METALLIC_THRESHOLD && Roughness <= MetalRoughnessThreshold)
+		{
+			// 金属のベースカラーは映り込みの色（反射率）になる
+			Rec.Material.Type = TOON_MATERIAL_METAL;
+			Rec.Material.Albedo = BaseColor;
+			// 確認用の ShadingMode 1 ではラフネスを反射のぼけ具合に使う（トゥーンではくっきりした鏡面反射）
+			Rec.Material.Fuzz = Roughness;
+		}
+	}
+}
+
+// フェーズ10：法線を GBuffer の法線（頂点法線の補間＋法線マップ）にする
+// レイトレーシング用のメッシュデータには頂点の位置しかないため、滑らかな法線は GBuffer から得る
+void ApplyGBufferNormal(int2 GBufferPixel, FToonRay Ray, inout FToonHitRecord Rec)
+{
+	// GBufferA の rgb にはワールド空間の法線が 0 ～ 1 に変換されて入っている（DeferredShadingCommon の DecodeNormal）
+	float3 Normal = GBufferATexture.Load(int3(GBufferPixel, 0)).rgb * 2.0f - 1.0f;
+	if (dot(Normal, Normal) < 1.0e-4f)
+	{
+		return;
+	}
+	Normal = normalize(Normal);
+
+	// 本の set_face_normal と同じく、法線はレイと逆向きに揃える（表裏の判定は HitKind のまま）
+	Rec.Normal = dot(Normal, Ray.Direction) < 0.0f ? Normal : -Normal;
+}
+
+// カメラから最初に当たった面の情報を、通常描画の GBuffer の値（法線、マテリアルの色、金属の判定）に置き換える
+// UV はそのピクセルの画面上の位置。同じ面に当たっているかを深度で確かめ、違う場合は置き換えない
+void ApplyGBufferSurface(float2 UV, FToonRay Ray, inout FToonHitRecord Rec)
+{
+	if (TraceMode == 0 || !IsGBufferSamePoint(UV, Rec.Position, Rec.T))
+	{
+		return;
+	}
+
+	int2 GBufferPixel = GetGBufferPixel(UV);
+	ApplyGBufferMaterial(GBufferPixel, Rec);
+	if (bUseGBufferNormal != 0)
+	{
+		ApplyGBufferNormal(GBufferPixel, Ray, Rec);
+	}
+}
+
+// 汎用化 G4：物体ごとの代表色の表から、その物体の色を探す。見つからなければ false
+bool FindObjectColorByKey(uint Key, out float3 Color)
+{
+	Color = 0.0f;
+	for (uint Probe = 0; Probe < TOON_OBJECT_COLOR_MAX_PROBES; ++Probe)
+	{
+		uint TableBase = ToonObjectColorProbeSlot(Key, Probe) * TOON_OBJECT_COLOR_TABLE_STRIDE;
+		uint SlotKey = ObjectColorTable[TableBase];
+		if (SlotKey == Key)
+		{
+			Color = float3(asfloat(ObjectColorTable[TableBase + 1]), asfloat(ObjectColorTable[TableBase + 2]), asfloat(ObjectColorTable[TableBase + 3]));
+			return true;
+		}
+		if (SlotKey == 0)
+		{
+			// 空き要素に着いたら、この先にはない
+			return false;
+		}
+	}
+	return false;
+}
+
+// 汎用化 G4：カメラから見えた点の UE のマテリアルの色を、物体ごとの合計に足し込む（解決パスで平均にして代表色の表に入れる）
+// Weight は、平均を取るときの重み（整数。0 なら記録しない）
+void RecordObjectColorByKey(uint Key, float3 BaseColor, uint Weight)
+{
+	if (Weight == 0)
+	{
+		return;
+	}
+	uint3 ScaledColor = (uint3)round(saturate(BaseColor) * TOON_OBJECT_COLOR_SUM_SCALE) * Weight;
+	for (uint Probe = 0; Probe < TOON_OBJECT_COLOR_MAX_PROBES; ++Probe)
+	{
+		uint SumBase = ToonObjectColorProbeSlot(Key, Probe) * TOON_OBJECT_COLOR_SUM_STRIDE;
+		uint PreviousKey;
+		InterlockedCompareExchange(ObjectColorFrameSums[SumBase], 0u, Key, PreviousKey);
+		if (PreviousKey == 0 || PreviousKey == Key)
+		{
+			InterlockedAdd(ObjectColorFrameSums[SumBase + 1], ScaledColor.r);
+			InterlockedAdd(ObjectColorFrameSums[SumBase + 2], ScaledColor.g);
+			InterlockedAdd(ObjectColorFrameSums[SumBase + 3], ScaledColor.b);
+			InterlockedAdd(ObjectColorFrameSums[SumBase + 4], Weight);
+			return;
+		}
+	}
+}
+
+bool FindObjectColor(uint InstanceId, out float3 Color)
+{
+	return FindObjectColorByKey(ToonObjectColorKey(InstanceId), Color);
+}
+
+void RecordObjectColor(uint InstanceId, float3 BaseColor)
+{
+	RecordObjectColorByKey(ToonObjectColorKey(InstanceId), BaseColor, 1u);
+}
+
+// 眉毛の透けで見せるパーツの色を記録するときの、一番暗いピクセルの重み
+#define TOON_SEE_THROUGH_PART_COLOR_WEIGHT 16.0f
+
+// 汎用化 G4：カメラからピクセルの中心へレイを飛ばし、GBuffer と同じ点に当たったら、その物体の色として記録する
+// 負荷を抑えるため、縦横 2 ピクセルごとに 1 本だけ飛ばす
+void RecordObjectColorAtPixel(uint2 LocalPixel)
+{
+	if (TraceMode == 0 || bUseGBufferForReflections == 0 || bUseGBufferBaseColor == 0 || any((LocalPixel & 1u) != 0))
+	{
+		return;
+	}
+
+	float2 UV = ((float2)LocalPixel + 0.5f) / (float2)ViewRectSize;
+	FToonRay Ray = GenerateCameraRay(UV);
+	FDefaultPayload Payload;
+	if (!TraceScene(Ray, 0.0f, Payload) || !IsGBufferSamePoint(UV, Ray.At(Payload.HitT), Payload.HitT))
+	{
+		return;
+	}
+	float3 BaseColor = GBufferCTexture.Load(int3(GetGBufferPixel(UV), 0)).rgb;
+	RecordObjectColor(Payload.InstanceID, BaseColor);
+
+	// 眉毛の透け：前髪から出ていて直接見えている眉毛などのパーツの色を、パーツの色として別に記録する
+	// 前髪の奥に隠れた部分は GBuffer に色がないため、髪の上に塗るときにこの色を使う
+	if (GetSceneMaterial(Payload.InstanceID).bCharacter != 0)
+	{
+		FToonCharacterParts Parts = GetToonCharacterParts(Ray.At(Payload.HitT), Payload.InstanceID);
+		if (IsSlotInMask(Parts.SeeThroughSlotMask, GetPayloadGeometryIndex(Payload)))
+		{
+			// 眉毛のメッシュには、眉毛の線のまわりの肌も描かれていることが多いため、暗いピクセルほど重く数えて、線の色を拾う
+			// （輝度 0.1 で重み 10、0.3 で 4、肌くらいの 0.7 で 0）
+			float Darkness = 1.0f - saturate(dot(BaseColor, float3(0.2126f, 0.7152f, 0.0722f)));
+			uint Weight = (uint)round(TOON_SEE_THROUGH_PART_COLOR_WEIGHT * Pow4(Darkness));
+			RecordObjectColorByKey(ToonSeeThroughPartColorKey(Payload.InstanceID), BaseColor, Weight);
+		}
+	}
+}
+
+// 汎用化 G4：画面外や、別の物体に隠れている点を、前のフレームまでに見えたその物体の代表色にする
+// 一度も見えていない物体は置き換えない（Custom Primitive Data の色、未設定なら灰色のまま）
+void ApplyObjectColorFallback(inout FToonHitRecord Rec)
+{
+	float3 Color;
+	if (bUseGBufferBaseColor != 0 && FindObjectColor(Rec.ObjectId, Color))
+	{
+		Rec.Material.Albedo = Color;
+	}
+}
+
+// 汎用化 G3：反射・屈折した先の面でも、画面内に見えている物体ならマテリアルの色と金属の判定を使う
+// ・ヒット位置を画面に投影し、その位置の GBuffer と深度が一致すれば（＝カメラから見えている同じ点なら）、その位置の値を使う
+// ・一致しなくても（カメラから見て物体の裏側など）、その画面位置にカメラから見えているのが同じ物体なら、その位置の色を使う
+//   （確認のためカメラからその位置へレイを1本飛ばす）。1つの物体の中で色が灰色に切り替わる境目を防ぐ
+// ・法線は GBuffer のものを使わない。カメラから浅い角度で見ている部分は GBuffer の1ピクセルが広い範囲を表すため、
+//   映り込みの中で階段状になる。法線は HitScene でなめらかにした補助レイの法線に統一する
+// 画面外や、別の物体に隠れている点は、物体ごとの代表色にする（汎用化 G4。一度も見えていない物体は灰色のまま）
+void ApplyGBufferSurfaceFromScreen(inout FToonHitRecord Rec)
+{
+	if (bUseGBufferForReflections == 0 || TraceMode == 0 || Rec.Material.Type != TOON_MATERIAL_DEFAULT)
+	{
+		return;
+	}
+
+	float4 ClipPosition = mul(float4(Rec.Position, 1.0f), TranslatedWorldToClip);
+	if (ClipPosition.w <= 0.0f)
+	{
+		// カメラの後ろ側
+		ApplyObjectColorFallback(Rec);
+		return;
+	}
+
+	float2 NDC = ClipPosition.xy / ClipPosition.w;
+	if (any(abs(NDC) > 1.0f))
+	{
+		// 画面外
+		ApplyObjectColorFallback(Rec);
+		return;
+	}
+
+	// NDC（中心原点、上向き+）→ UV（左上原点、下向き+）
+	float2 UV = float2(NDC.x * 0.5f + 0.5f, 0.5f - NDC.y * 0.5f);
+
+	// Translated World 空間の原点はカメラの位置なので、ヒット位置の長さがカメラからの距離になる
+	if (!IsGBufferSamePoint(UV, Rec.Position, length(Rec.Position)))
+	{
+		FDefaultPayload CameraPayload;
+		if (!TraceScene(GenerateCameraRay(UV), 0.0f, CameraPayload) || CameraPayload.InstanceID != Rec.ObjectId)
+		{
+			// 別の物体に隠れている
+			ApplyObjectColorFallback(Rec);
+			return;
+		}
+	}
+
+	ApplyGBufferMaterial(GetGBufferPixel(UV), Rec);
+}

@@ -1,0 +1,538 @@
+#pragma once
+
+// 解析的な物体（TraceMode 0）の交差判定：球・四角形・回転した箱・地面の箱の格子・BVH・煙と、それらをまとめた HitWorld
+
+// 『The Next Week』第2章：時刻 SampleTime での球の中心（本の center.at(time)）
+float3 GetSphereCenter(uint Index)
+{
+	return Spheres[Index].xyz + SampleTime * SphereMotion[Index].xyz;
+}
+
+// 『The Next Week』第4章：球の表面の点（中心からの単位ベクトル）からテクスチャ座標を求める（本の get_sphere_uv）
+// U：経度（0 ～ 1）、V：緯度（0：南極 ～ 1：北極）
+// 本の式 theta = acos(-y), phi = atan2(-z, x) + pi を、シーンと同じ置き換え（本の x, y, z → UE の Y, Z, X）で書き直している
+float2 GetSphereUV(float3 P)
+{
+	float Theta = acos(clamp(-P.z, -1.0f, 1.0f));
+	float Phi = atan2(-P.x, P.y) + PI;
+	return float2(Phi / (2.0f * PI), Theta / PI);
+}
+
+// 『The Next Week』第10章：球の形の煙（本の constant_medium の境界が球のもの）。箱の煙と同じく、入る位置と出る位置を求める
+bool HitSphereVolume(float3 Center, float Radius, FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	float3 OC = Ray.Origin - Center;
+	float B = dot(OC, Ray.Direction);
+	float3 QC = OC - B * Ray.Direction;
+	float QCLength = length(QC);
+	float Discriminant = (Radius - QCLength) * (Radius + QCLength);
+	if (Discriminant < 0.0f)
+	{
+		return false;
+	}
+
+	float SqrtD = sqrt(Discriminant);
+	float Entry = max(-B - SqrtD, TMin);
+	float Exit = -B + SqrtD;
+	if (Exit <= Entry || TMax <= Entry)
+	{
+		return false;
+	}
+	Rec.T = Entry;
+	Rec.VolumeExitT = Exit;
+	Rec.Position = Ray.At(Entry);
+	Rec.Normal = -Ray.Direction;
+	Rec.bFrontFace = true;
+	return true;
+}
+
+// 『The Next Week』第4章：テクスチャの色を求める（本の texture::value）
+// LocalPosition は球の中心からの位置。Translated World 空間の位置をそのまま使うと、カメラが動くたびに模様がずれるため
+float3 SampleSphereTexture(uint Index, float2 UV, float3 LocalPosition)
+{
+	uint Type = (uint)round(SphereTextureParams[Index].x);
+	float Scale = max(SphereTextureParams[Index].y, 1.0e-3f);
+	float3 Even = SphereAlbedo[Index].rgb;
+	float3 Odd = SphereAlbedo2[Index].rgb;
+
+	if (Type == TOON_TEXTURE_CHECKER)
+	{
+		// 3 軸それぞれのマスの番号の和が偶数か奇数かで色を変える（立体の市松模様を表面で切り取った形になる）
+		int3 Cell = (int3)floor(LocalPosition / Scale);
+		return ((Cell.x + Cell.y + Cell.z) & 1) == 0 ? Even : Odd;
+	}
+	if (Type == TOON_TEXTURE_IMAGE && bImageTexture != 0)
+	{
+		// 本の image_texture：テクスチャ座標で画像を読む。画像は上が北なので、V（0：南極 ～ 1：北極）を上下反転する
+		// （テクスチャは sRGB として読み込まれるため、読んだ時点で線形の色になっている）
+		return ImageTexture.SampleLevel(ImageTextureSampler, float2(UV.x, 1.0f - UV.y), 0).rgb;
+	}
+	if (Type == TOON_TEXTURE_SPHERE_UV_CHECKER || Type == TOON_TEXTURE_IMAGE)
+	{
+		// 経度方向に Scale マス、緯度方向にその半分のマス（マスがほぼ正方形になる）
+		int2 Cell = (int2)floor(UV * float2(Scale, Scale * 0.5f));
+		return ((Cell.x + Cell.y) & 1) == 0 ? Even : Odd;
+	}
+	if (Type == TOON_TEXTURE_MARBLE)
+	{
+		// 本の noise_texture：color(.5, .5, .5) * (1 + sin(scale * p.z + 10 * turb(p, 7)))
+		// 本の 1 単位の長さ（cm、z に入れる。未設定なら 1m）に直して計算する。本の z（奥行き）は UE の X に当たる
+		float UnitLength = SphereTextureParams[Index].z > 0.0f ? SphereTextureParams[Index].z : 100.0f;
+		float3 P = LocalPosition / UnitLength;
+		return Even * 0.5f * (1.0f + sin(Scale * P.x + 10.0f * ToonPerlinTurbulence(P, 7)));
+	}
+	return Even;
+}
+
+// レイと球の交差判定（本の hit_sphere / sphere::hit に相当）
+// Ray.Direction は正規化済みである前提
+bool HitSphere(float3 Center, float Radius, FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	float3 OC = Ray.Origin - Center;
+	float B = dot(OC, Ray.Direction);
+
+	// 判別式を本の「b^2 - c」ではなく「r^2 - |球の中心からレイへの垂線|^2」で計算する。
+	// 地面のような巨大な球でも float の桁落ちが起きにくい
+	float3 QC = OC - B * Ray.Direction;
+	float QCLength = length(QC);
+	float Discriminant = (Radius - QCLength) * (Radius + QCLength);
+	if (Discriminant < 0.0f)
+	{
+		return false;
+	}
+
+	// 許容範囲 (TMin, TMax) 内で最も近い解を探す
+	float SqrtD = sqrt(Discriminant);
+	float Root = -B - SqrtD;
+	if (Root <= TMin || TMax <= Root)
+	{
+		Root = -B + SqrtD;
+		if (Root <= TMin || TMax <= Root)
+		{
+			return false;
+		}
+	}
+
+	Rec.T = Root;
+	Rec.Position = Ray.At(Root);
+	float3 OutwardNormal = (Rec.Position - Center) / Radius;
+	Rec.SetFaceNormal(Ray, OutwardNormal);
+	Rec.UV = GetSphereUV(OutwardNormal);
+	return true;
+}
+
+// 全オブジェクトとの交差判定（本の hittable_list::hit に相当）
+// 『The Next Week』第6章：レイと四角形の交差判定（本の quad::hit）
+// Q を角とし、U と V を 2 辺とする平行四辺形。まず平面との交点を求め、その点を U・V 方向の割合（Alpha, Beta）で表して
+// どちらも 0 ～ 1 の範囲なら四角形の内側
+bool HitQuad(float3 Q, float3 U, float3 V, FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	float3 N = cross(U, V);
+	float3 Normal = normalize(N);
+	// 平面の式 dot(Normal, P) = D
+	float D = dot(Normal, Q);
+	// 交点を Alpha, Beta に分解するためのベクトル（本の w）
+	float3 W = N / dot(N, N);
+
+	// レイが平面と平行なら当たらない
+	float Denominator = dot(Normal, Ray.Direction);
+	if (abs(Denominator) < 1.0e-8f)
+	{
+		return false;
+	}
+
+	float T = (D - dot(Normal, Ray.Origin)) / Denominator;
+	if (T <= TMin || TMax <= T)
+	{
+		return false;
+	}
+
+	float3 Planar = Ray.At(T) - Q;
+	float Alpha = dot(W, cross(Planar, V));
+	float Beta = dot(W, cross(U, Planar));
+	if (Alpha < 0.0f || 1.0f < Alpha || Beta < 0.0f || 1.0f < Beta)
+	{
+		return false;
+	}
+
+	Rec.T = T;
+	Rec.Position = Ray.At(T);
+	Rec.UV = float2(Alpha, Beta);
+	Rec.SetFaceNormal(Ray, Normal);
+	return true;
+}
+
+// 『The Next Week』第8章：レイと回転した箱の交差判定（本の box + rotate_y + translate）
+// 本は物体を動かす代わりにレイを逆向きに動かす（インスタンス）。ここでも、レイを箱の中心が原点で回転していない空間に移し、
+// 各軸の 2 枚の平面の間にいる区間（スラブ）の重なりから、箱に入る距離 TNear と出る距離 TFar を求める
+bool IntersectBox(uint Index, FToonRay Ray, out float TNear, out float TFar, out float3 NearNormal, out float3 FarNormal)
+{
+	float Yaw = BoxCenter[Index].w;
+	float CosYaw = cos(Yaw);
+	float SinYaw = sin(Yaw);
+	float3 Half = BoxHalfExtent[Index].xyz;
+
+	// ワールド → 箱の空間（上下軸まわりに -Yaw 回転）
+	float3 O = Ray.Origin - BoxCenter[Index].xyz;
+	float3 LocalOrigin = float3(CosYaw * O.x + SinYaw * O.y, -SinYaw * O.x + CosYaw * O.y, O.z);
+	float3 LocalDirection = float3(CosYaw * Ray.Direction.x + SinYaw * Ray.Direction.y, -SinYaw * Ray.Direction.x + CosYaw * Ray.Direction.y, Ray.Direction.z);
+	LocalDirection = select(abs(LocalDirection) < 1.0e-8f, (float3)1.0e-8f, LocalDirection);
+
+	float3 InvDirection = 1.0f / LocalDirection;
+	float3 T0 = (-Half - LocalOrigin) * InvDirection;
+	float3 T1 = (Half - LocalOrigin) * InvDirection;
+	float3 TMin3 = min(T0, T1);
+	float3 TMax3 = max(T0, T1);
+	TNear = max(max(TMin3.x, TMin3.y), TMin3.z);
+	TFar = min(min(TMax3.x, TMax3.y), TMax3.z);
+
+	// 入る面と出る面の外向きの法線（箱の空間）
+	float3 LocalNear = TMin3.x >= TMin3.y && TMin3.x >= TMin3.z ? float3(-sign(LocalDirection.x), 0, 0)
+		: (TMin3.y >= TMin3.z ? float3(0, -sign(LocalDirection.y), 0) : float3(0, 0, -sign(LocalDirection.z)));
+	float3 LocalFar = TMax3.x <= TMax3.y && TMax3.x <= TMax3.z ? float3(sign(LocalDirection.x), 0, 0)
+		: (TMax3.y <= TMax3.z ? float3(0, sign(LocalDirection.y), 0) : float3(0, 0, sign(LocalDirection.z)));
+
+	// 箱の空間 → ワールド（上下軸まわりに +Yaw 回転）
+	NearNormal = float3(CosYaw * LocalNear.x - SinYaw * LocalNear.y, SinYaw * LocalNear.x + CosYaw * LocalNear.y, LocalNear.z);
+	FarNormal = float3(CosYaw * LocalFar.x - SinYaw * LocalFar.y, SinYaw * LocalFar.x + CosYaw * LocalFar.y, LocalFar.z);
+	return TNear <= TFar;
+}
+
+// 箱との交差判定。普通の素材は表面に当たる。煙は箱に入る位置を T、出る位置を VolumeExitT に入れる
+// （散乱するかどうかは呼び出し側で決める。確認用モードは本と同じく確率的に、トゥーンは通る距離から透過率を求める）
+bool HitBox(uint Index, FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec)
+{
+	float TNear, TFar;
+	float3 NearNormal, FarNormal;
+	if (!IntersectBox(Index, Ray, TNear, TFar, NearNormal, FarNormal))
+	{
+		return false;
+	}
+
+	if ((uint)round(BoxMaterialParams[Index].x) == TOON_MATERIAL_VOLUME)
+	{
+		// レイの始点が箱の中なら、始点から煙の中を進む
+		float Entry = max(TNear, TMin);
+		if (TFar <= Entry || TMax <= Entry)
+		{
+			return false;
+		}
+		Rec.T = Entry;
+		Rec.VolumeExitT = TFar;
+		Rec.Position = Ray.At(Entry);
+		// 煙の中の点には面の向きがないため、レイと逆向きを仮の法線にする（本でも任意の値）
+		Rec.Normal = -Ray.Direction;
+		Rec.bFrontFace = true;
+		return true;
+	}
+
+	// 普通の素材：手前の面、始点が箱の中なら奥の面に当たる
+	float T = TNear > TMin ? TNear : TFar;
+	if (T <= TMin || TMax <= T)
+	{
+		return false;
+	}
+	Rec.T = T;
+	Rec.Position = Ray.At(T);
+	Rec.SetFaceNormal(Ray, TNear > TMin ? NearNormal : FarNormal);
+	return true;
+}
+
+// 軸に沿った箱（Min ～ Max）とレイの交差判定（スラブ法）。入る距離と出る距離、入る面の外向きの法線を返す
+bool IntersectAxisAlignedBox(float3 BoxMin, float3 BoxMax, FToonRay Ray, out float TNear, out float TFar, out float3 NearNormal)
+{
+	float3 Direction = select(abs(Ray.Direction) < 1.0e-8f, (float3)1.0e-8f, Ray.Direction);
+	float3 InvDirection = 1.0f / Direction;
+	float3 T0 = (BoxMin - Ray.Origin) * InvDirection;
+	float3 T1 = (BoxMax - Ray.Origin) * InvDirection;
+	float3 TMin3 = min(T0, T1);
+	float3 TMax3 = max(T0, T1);
+	TNear = max(max(TMin3.x, TMin3.y), TMin3.z);
+	TFar = min(min(TMax3.x, TMax3.y), TMax3.z);
+	NearNormal = TMin3.x >= TMin3.y && TMin3.x >= TMin3.z ? float3(-sign(Direction.x), 0, 0)
+		: (TMin3.y >= TMin3.z ? float3(0, -sign(Direction.y), 0) : float3(0, 0, -sign(Direction.z)));
+	return TNear <= TFar;
+}
+
+// 格子のマスの箱の高さ（本は random_double(1, 101)。ここではマスの番号をハッシュ関数に通して、毎回同じ高さにする）
+float GroundGridBoxHeight(int2 Cell)
+{
+	uint Hash = ToonPcgHash((uint)Cell.x + ToonPcgHash((uint)Cell.y + 0x9E3779B9u));
+	return lerp(GroundGridParams.z, GroundGridParams.w, ToonRandomFloat(Hash));
+}
+
+// 地面の箱の格子の 1 辺あたりのマスの数の上限
+#define TOON_GROUND_GRID_MAX_CELLS 64
+
+// 『The Next Week』第10章：地面に敷き詰めた箱の格子との交差判定
+// 本は 400 個の箱を BVH（第3章）で探すが、ここでは箱が 1 マスに 1 つずつ並んでいることを使い、
+// レイが通るマスを手前から順にたどり（DDA）、そのマスの箱だけを調べる。箱はマスからはみ出さないので、最初に当たった箱が一番近い
+bool HitGroundGrid(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, out uint CellIndex)
+{
+	CellIndex = 0;
+	float3 Origin = GroundGridOrigin.xyz;
+	float CellSize = max(GroundGridOrigin.w, 1.0f);
+	// 値が壊れていてもループが必ず終わるよう、マスの数に上限を設ける
+	int2 Count = clamp((int2)GroundGridParams.xy, int2(1, 1), int2(TOON_GROUND_GRID_MAX_CELLS, TOON_GROUND_GRID_MAX_CELLS));
+
+	// 格子全体を包む箱と交差しなければ当たらない
+	float TNear, TFar;
+	float3 Normal;
+	float3 RegionMax = Origin + float3(Count * CellSize, GroundGridParams.w);
+	if (!IntersectAxisAlignedBox(Origin, RegionMax, Ray, TNear, TFar, Normal))
+	{
+		return false;
+	}
+	float TStart = max(TNear, TMin);
+	float TEnd = min(TFar, TMax);
+	if (TEnd <= TStart)
+	{
+		return false;
+	}
+
+	// 入ったマスから、X と Y の境目を越えるたびに隣のマスへ進む
+	float2 StartPosition = (Ray.At(TStart).xy - Origin.xy) / CellSize;
+	int2 Cell = clamp((int2)floor(StartPosition), int2(0, 0), Count - 1);
+	float2 Direction = select(abs(Ray.Direction.xy) < 1.0e-8f, (float2)1.0e-8f, Ray.Direction.xy);
+	int2 Step = int2(Direction.x > 0.0f ? 1 : -1, Direction.y > 0.0f ? 1 : -1);
+	float2 TDelta = abs(CellSize / Direction);
+	float2 NextBoundary = Origin.xy + (float2(Cell) + float2(Step > 0)) * CellSize;
+	float2 TNext = (NextBoundary - Ray.Origin.xy) / Direction;
+
+	[loop]
+	for (int Iteration = 0; Iteration < Count.x + Count.y + 1; ++Iteration)
+	{
+		float3 BoxMin = Origin + float3(float2(Cell) * CellSize, 0.0f);
+		float3 BoxMax = BoxMin + float3(CellSize, CellSize, GroundGridBoxHeight(Cell));
+		float BoxNear, BoxFar;
+		float3 BoxNormal;
+		if (IntersectAxisAlignedBox(BoxMin, BoxMax, Ray, BoxNear, BoxFar, BoxNormal) && BoxNear > TMin && BoxNear < TMax)
+		{
+			Rec.T = BoxNear;
+			Rec.Position = Ray.At(BoxNear);
+			Rec.SetFaceNormal(Ray, BoxNormal);
+			CellIndex = (uint)(Cell.y * Count.x + Cell.x);
+			return true;
+		}
+
+		// 次のマスへ
+		if (TNext.x < TNext.y)
+		{
+			if (TNext.x > TEnd) break;
+			Cell.x += Step.x;
+			TNext.x += TDelta.x;
+		}
+		else
+		{
+			if (TNext.y > TEnd) break;
+			Cell.y += Step.y;
+			TNext.y += TDelta.y;
+		}
+		if (any(Cell < 0) || any(Cell >= Count))
+		{
+			break;
+		}
+	}
+	return false;
+}
+
+// 交差判定（レイを飛ばす処理）を含むループには [loop] を付け、コンパイラーにループを展開させない
+// HLSL では関数がすべて呼び出し元に展開されるため、回数の決まったループが展開されると交差判定が何十か所にもコピーされ、
+// シェーダーが巨大になってドライバーのパイプライン構築が終わらなくなる（エディタが起動しない、GPU が応答しなくなる）
+
+// 『The Next Week』第3章：BVH をたどって、一番近い小さな球を探す（本の bvh_node::hit）
+// 本は再帰で左右の子を調べるが、シェーダーでは再帰できないため、調べるノードをスタックに積んで順に取り出す
+// レイが箱に当たらない（またはすでに見つけた球より遠い）ノードは、中を調べずに飛ばす
+bool HitSphereCluster(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, out uint SphereIndex)
+{
+	SphereIndex = 0;
+	FToonRay LocalRay = Ray;
+	LocalRay.Origin -= BvhOrigin.xyz;
+
+	uint Stack[TOON_BVH_STACK_SIZE];
+	int StackSize = 0;
+	Stack[StackSize++] = 0;
+	bool bHit = false;
+	float Closest = TMax;
+
+	[loop]
+	for (uint Iteration = 0; Iteration < NumBvhNodes && StackSize > 0; ++Iteration)
+	{
+		uint NodeIndex = Stack[--StackSize];
+		float4 NodeMin = BvhNodes[NodeIndex * 2];
+		float4 NodeMax = BvhNodes[NodeIndex * 2 + 1];
+
+		float TNear, TFar;
+		float3 Normal;
+		if (!IntersectAxisAlignedBox(NodeMin.xyz, NodeMax.xyz, LocalRay, TNear, TFar, Normal) || TFar < TMin || TNear > Closest)
+		{
+			continue;
+		}
+
+		uint ChildOrFirst = asuint(NodeMin.w);
+		uint Count = asuint(NodeMax.w);
+		if (Count > 0)
+		{
+			// 葉：中の球を調べる
+			[loop]
+			for (uint Index = 0; Index < Count; ++Index)
+			{
+				float4 Sphere = BvhSpheres[ChildOrFirst + Index];
+				FToonHitRecord TempRec = (FToonHitRecord)0;
+				if (HitSphere(Sphere.xyz, Sphere.w, LocalRay, TMin, Closest, TempRec))
+				{
+					bHit = true;
+					Closest = TempRec.T;
+					Rec = TempRec;
+					SphereIndex = ChildOrFirst + Index;
+				}
+			}
+		}
+		else if (StackSize + 2 <= TOON_BVH_STACK_SIZE)
+		{
+			// 内部ノード：右の子と左の子を積む（左の子を先に調べる）
+			Stack[StackSize++] = ChildOrFirst;
+			Stack[StackSize++] = NodeIndex + 1;
+		}
+	}
+
+	if (bHit)
+	{
+		// 球の判定は相対位置で行ったので、位置を Translated World 空間に戻す
+		Rec.Position = Ray.At(Rec.T);
+	}
+	return bHit;
+}
+
+// bIncludeVolumes が false なら煙を無視する（シャドウレイなど）
+bool HitWorld(FToonRay Ray, float TMin, float TMax, inout FToonHitRecord Rec, bool bIncludeVolumes = true)
+{
+	bool bHitAnything = false;
+	float ClosestSoFar = TMax;
+
+	[loop]
+	for (uint Index = 0; Index < NumSpheres; ++Index)
+	{
+		// 『The Next Week』第10章：球の形の煙
+		uint SphereType = (uint)round(SphereMaterialParams[Index].x);
+		bool bVolume = SphereType == TOON_MATERIAL_VOLUME;
+		if (bVolume && !bIncludeVolumes)
+		{
+			continue;
+		}
+
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		bool bHitSphere;
+		if (bVolume)
+		{
+			bHitSphere = HitSphereVolume(GetSphereCenter(Index), Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec);
+		}
+		else
+		{
+			bHitSphere = HitSphere(GetSphereCenter(Index), Spheres[Index].w, Ray, TMin, ClosestSoFar, TempRec);
+		}
+		if (bHitSphere)
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = SphereType;
+			Rec.Material.Density = SphereTextureParams[Index].w;
+			Rec.Material.Albedo = SampleSphereTexture(Index, Rec.UV, Rec.Position - GetSphereCenter(Index));
+			Rec.Material.Fuzz = SphereMaterialParams[Index].y;
+			Rec.Material.RefractionIndex = SphereMaterialParams[Index].z;
+			// w：トゥーンのハイライトとリムライトの強さ（地面は 0）
+			Rec.Material.HighlightStrength = SphereMaterialParams[Index].w;
+			Rec.Material.RimStrength = SphereMaterialParams[Index].w;
+			Rec.Material.OutlineWidth = bVolume ? 0.0f : ToonOutlineWidth;
+			Rec.ObjectId = Index;
+		}
+	}
+
+	// 四角形の識別番号は球の後ろに続ける（アウトラインで別の物体として扱うため）
+	[loop]
+	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
+	{
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		if (HitQuad(QuadQ[QuadIndex].xyz, QuadU[QuadIndex].xyz, QuadV[QuadIndex].xyz, Ray, TMin, ClosestSoFar, TempRec))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = (uint)round(QuadMaterialParams[QuadIndex].x);
+			Rec.Material.Albedo = QuadAlbedo[QuadIndex].rgb;
+			Rec.Material.Fuzz = QuadMaterialParams[QuadIndex].y;
+			Rec.Material.RefractionIndex = QuadMaterialParams[QuadIndex].z;
+			Rec.Material.HighlightStrength = QuadMaterialParams[QuadIndex].w;
+			Rec.Material.RimStrength = QuadMaterialParams[QuadIndex].w;
+			Rec.Material.OutlineWidth = ToonOutlineWidth;
+			Rec.ObjectId = NumSpheres + QuadIndex;
+		}
+	}
+
+	// 箱の識別番号は四角形の後ろに続ける
+	[loop]
+	for (uint BoxIndex = 0; BoxIndex < NumBoxes; ++BoxIndex)
+	{
+		uint Type = (uint)round(BoxMaterialParams[BoxIndex].x);
+		if (!bIncludeVolumes && Type == TOON_MATERIAL_VOLUME)
+		{
+			continue;
+		}
+
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		if (HitBox(BoxIndex, Ray, TMin, ClosestSoFar, TempRec))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = Type;
+			Rec.Material.Albedo = BoxAlbedo[BoxIndex].rgb;
+			Rec.Material.RefractionIndex = 1.0f;
+			Rec.Material.Density = BoxMaterialParams[BoxIndex].y;
+			Rec.Material.HighlightStrength = BoxMaterialParams[BoxIndex].w;
+			Rec.Material.RimStrength = BoxMaterialParams[BoxIndex].w;
+			// 煙は輪郭を持たないため線を引かない
+			Rec.Material.OutlineWidth = Type == TOON_MATERIAL_VOLUME ? 0.0f : ToonOutlineWidth;
+			Rec.ObjectId = NumSpheres + NumQuads + BoxIndex;
+		}
+	}
+
+	// 地面の箱の格子。識別番号は箱の後ろに、マスごとに続ける（隣り合う箱の段差にも線が引かれる）
+	if (bGroundGrid != 0)
+	{
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		uint CellIndex;
+		if (HitGroundGrid(Ray, TMin, ClosestSoFar, TempRec, CellIndex))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = TOON_MATERIAL_LAMBERTIAN;
+			Rec.Material.Albedo = GroundGridAlbedo.rgb;
+			Rec.Material.RefractionIndex = 1.0f;
+			Rec.Material.OutlineWidth = ToonOutlineWidth;
+			Rec.ObjectId = NumSpheres + NumQuads + NumBoxes + CellIndex;
+		}
+	}
+
+	// 『The Next Week』第3章：BVH で探す小さな球の塊
+	if (NumBvhNodes > 0)
+	{
+		FToonHitRecord TempRec = (FToonHitRecord)0;
+		uint SphereIndex;
+		if (HitSphereCluster(Ray, TMin, ClosestSoFar, TempRec, SphereIndex))
+		{
+			bHitAnything = true;
+			ClosestSoFar = TempRec.T;
+			Rec = TempRec;
+			Rec.Material.Type = TOON_MATERIAL_LAMBERTIAN;
+			Rec.Material.Albedo = BvhAlbedo.rgb;
+			Rec.Material.RefractionIndex = 1.0f;
+			Rec.Material.OutlineWidth = ToonOutlineWidth;
+			Rec.ObjectId = TOON_BVH_OBJECT_ID_BASE + SphereIndex;
+		}
+	}
+
+	return bHitAnything;
+}
