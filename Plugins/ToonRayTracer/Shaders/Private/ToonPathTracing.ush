@@ -1,0 +1,521 @@
+#pragma once
+
+// 確認用の表示モード：法線の可視化、本の第 9〜11 章のパストレーシング（散乱・PDF・ライトを狙うサンプリング）、N・L の陰影
+// 空のグラデーション（SkyColor）、正規直交基底（FToonOnb）、SafeNormalize はトゥーンの塗りからも使う
+
+// 空のグラデーション（本の第4章）
+float3 SkyColor(FToonRay Ray)
+{
+	// 『The Next Week』第7章：光る物体だけで照らすシーンでは、背景を黒にする（本の camera::background）
+	if (bBlackBackground != 0)
+	{
+		return 0.0f;
+	}
+
+	// UEは Z-up のため、本の y 成分の代わりに z 成分を使う
+	float A = 0.5f * (Ray.Direction.z + 1.0f);
+	return lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), A);
+}
+
+// 単位球の表面上のランダムな点（本の random_unit_vector に相当）
+// 本の棄却法ではなく、一様分布を直接作る方法を使う（ループ回数が一定になる）
+float3 RandomUnitVector(inout uint RandomState)
+{
+	float Z = ToonRandomFloat(RandomState) * 2.0f - 1.0f;
+	float Phi = ToonRandomFloat(RandomState) * 2.0f * PI;
+	float R = sqrt(max(0.0f, 1.0f - Z * Z));
+	return float3(R * cos(Phi), R * sin(Phi), Z);
+}
+
+// フェーズ3〜4：当たった面の法線を色として可視化する
+float3 RayColorNormal(float2 UV, FToonRay Ray)
+{
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (HitAnything(Ray, 0.0f, Rec))
+	{
+		ApplyGBufferSurface(UV, Ray, Rec);
+		// 法線（-1 ～ 1）を色（0 ～ 1）に変換
+		return 0.5f * (Rec.Normal + 1.0f);
+	}
+	return SkyColor(Ray);
+}
+
+// 長さがほぼ 0 のベクトルを normalize すると NaN になるため、その場合は Fallback を返す
+// （NaN が1回でも出ると、フレーム間の蓄積でそのピクセルが黒いまま残ってしまう）
+float3 SafeNormalize(float3 Vector, float3 Fallback)
+{
+	float LengthSquared = dot(Vector, Vector);
+	return LengthSquared > 1.0e-12f ? Vector * rsqrt(LengthSquared) : Fallback;
+}
+
+// 見る角度による反射率の変化（シュリックの近似、本の dielectric::reflectance）
+float Reflectance(float Cosine, float RefractionIndexRatio)
+{
+	float R0 = (1.0f - RefractionIndexRatio) / (1.0f + RefractionIndexRatio);
+	R0 = R0 * R0;
+	return R0 + (1.0f - R0) * pow(1.0f - Cosine, 5.0f);
+}
+
+// フェーズ8〜9：マテリアルごとの散乱（本の第10〜11章の material::scatter に相当）
+// 散乱したレイと減衰率を返す。光が吸収された場合は false を返す
+// 『The Rest of Your Life』第6章以降：bSkipPdf が false（ランバート）なら、散乱の方向は呼び出し側が PDF に従って選ぶ
+// （本の scatter_record。金属・ガラス・光る物体は鏡面などで方向が決まるため、PDF を使わない）
+bool Scatter(FToonMaterial Material, FToonRay InRay, FToonHitRecord Rec, inout uint RandomState, out float3 Attenuation, out FToonRay Scattered, out bool bSkipPdf)
+{
+	Scattered.Origin = Rec.Position;
+	Attenuation = Material.Albedo;
+	bSkipPdf = true;
+
+	// 『The Next Week』第7章：光る素材は光を放つだけで、反射しない（本の diffuse_light は scatter で false を返す）
+	if (Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+	{
+		Scattered.Direction = 0.0f;
+		Attenuation = 0.0f;
+		return false;
+	}
+
+	if (Material.Type == TOON_MATERIAL_DIELECTRIC)
+	{
+		// ガラスは光を吸収しない
+		Attenuation = 1.0f;
+
+		// 外から入るときは 空気→物体、中から出るときは 物体→空気 の屈折率の比になる
+		float Ri = Rec.bFrontFace ? (1.0f / Material.RefractionIndex) : Material.RefractionIndex;
+
+		float CosTheta = min(dot(-InRay.Direction, Rec.Normal), 1.0f);
+		float SinTheta = sqrt(max(0.0f, 1.0f - CosTheta * CosTheta));
+
+		// 全反射（スネルの法則で解が存在しない）か、フレネル反射の確率に当たったら反射、それ以外は屈折
+		bool bCannotRefract = Ri * SinTheta > 1.0f;
+		float3 Direction;
+		if (bCannotRefract || Reflectance(CosTheta, Ri) > ToonRandomFloat(RandomState))
+		{
+			Direction = reflect(InRay.Direction, Rec.Normal);
+		}
+		else
+		{
+			Direction = refract(InRay.Direction, Rec.Normal, Ri);
+		}
+
+		// 全反射の境目では refract が 0 ベクトルを返すことがあるため、その場合は反射方向にする
+		Scattered.Direction = SafeNormalize(Direction, reflect(InRay.Direction, Rec.Normal));
+		return true;
+	}
+
+	if (Material.Type == TOON_MATERIAL_METAL)
+	{
+		// 鏡面反射の方向に、ぼけ具合に応じたランダムなずれを加える
+		float3 Reflected = normalize(reflect(InRay.Direction, Rec.Normal)) + Material.Fuzz * RandomUnitVector(RandomState);
+		// ずれが反射方向をちょうど打ち消すと長さが 0 になるため、その場合は法線方向にする
+		Scattered.Direction = SafeNormalize(Reflected, Rec.Normal);
+		// ずらした結果、面の内側へ向かってしまったレイは吸収されたとみなす
+		return dot(Scattered.Direction, Rec.Normal) > 0.0f;
+	}
+
+	// ランバート反射（未設定のマテリアルも含む）：方向は呼び出し側で PDF に従って選ぶ
+	Scattered.Direction = Rec.Normal;
+	bSkipPdf = false;
+	return true;
+}
+
+// 『The Rest of Your Life』第6章：ランバートの散乱の PDF（本の lambertian::scattering_pdf）
+// 拡散反射面は、法線に近い方向ほど多くの光を返す（cosθ / π。半球全体で積分すると 1）
+float LambertScatteringPdf(float3 Normal, float3 Direction)
+{
+	return max(dot(Normal, Direction), 0.0f) / PI;
+}
+
+// 『The Rest of Your Life』第7章：z 軸のまわりで、cosθ に比例した確率でランダムな方向を作る（本の random_cosine_direction）
+// 2 つの一様乱数から直接作る。z（= cosθ）が大きい、真上に近い方向ほど選ばれやすい
+float3 RandomCosineDirection(inout uint RandomState)
+{
+	float R1 = ToonRandomFloat(RandomState);
+	float R2 = ToonRandomFloat(RandomState);
+	float Phi = 2.0f * PI * R1;
+	float SqrtR2 = sqrt(R2);
+	return float3(cos(Phi) * SqrtR2, sin(Phi) * SqrtR2, sqrt(max(1.0f - R2, 0.0f)));
+}
+
+// 『The Rest of Your Life』第8章：正規直交基底（本の onb）
+// W を法線にした互いに直交する 3 軸。z 軸のまわりで作った方向を、法線のまわりの方向に変換するために使う
+struct FToonOnb
+{
+	float3 U;
+	float3 V;
+	float3 W;
+};
+
+FToonOnb MakeOnb(float3 Normal)
+{
+	FToonOnb Onb;
+	Onb.W = Normal;
+	// 法線とほぼ平行な軸を使うと外積が 0 に近づくため、法線の x 成分が大きいときは y 軸を使う
+	float3 A = abs(Normal.x) > 0.9f ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+	Onb.V = normalize(cross(Onb.W, A));
+	Onb.U = cross(Onb.W, Onb.V);
+	return Onb;
+}
+
+// 基底の座標（u, v, w）で表した方向を、ワールドの方向にする（本の onb::transform）
+float3 OnbTransform(FToonOnb Onb, float3 Local)
+{
+	return Local.x * Onb.U + Local.y * Onb.V + Local.z * Onb.W;
+}
+
+// 『The Rest of Your Life』第9〜12章：狙う物体（本の lights）
+// 解析的な物体のシーンの、光る四角形と光る球。第12章にならい、ガラスの球も狙う（ガラスを通ってライトに届く光（集光）を拾いやすくする）
+// 番号は、狙う四角形を先に、狙う球をその後ろに数える
+bool IsLightTargetQuad(uint QuadIndex)
+{
+	return (uint)round(QuadMaterialParams[QuadIndex].x) == TOON_MATERIAL_DIFFUSE_LIGHT;
+}
+
+bool IsLightTargetSphere(uint SphereIndex)
+{
+	uint Type = (uint)round(SphereMaterialParams[SphereIndex].x);
+	return Type == TOON_MATERIAL_DIFFUSE_LIGHT || Type == TOON_MATERIAL_DIELECTRIC;
+}
+
+uint CountLightTargets()
+{
+	if (TraceMode != 0)
+	{
+		return 0;
+	}
+	uint Count = 0;
+	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
+	{
+		Count += IsLightTargetQuad(QuadIndex) ? 1u : 0u;
+	}
+	for (uint SphereIndex = 0; SphereIndex < NumSpheres; ++SphereIndex)
+	{
+		Count += IsLightTargetSphere(SphereIndex) ? 1u : 0u;
+	}
+	return Count;
+}
+
+// 『The Rest of Your Life』第9章：光る四角形の上のランダムな点へ向かう方向と、その方向を選ぶ PDF（本の quad::random と quad::pdf_value）
+// 四角形の上で一様に点を選ぶと、面積あたりの確率は 1 / 面積。これを方向あたりの確率にすると「距離² ÷ (ライトの面の cos × 面積)」になる
+// （遠いほど、斜めから見るほど、同じ方向の幅に入るライトの面積が広くなるため）
+float3 SampleLightQuadDirection(uint LightIndex, float3 Position, inout uint RandomState, out float SamplingPdf)
+{
+	float3 Q = QuadQ[LightIndex].xyz;
+	float3 U = QuadU[LightIndex].xyz;
+	float3 V = QuadV[LightIndex].xyz;
+	float3 OnLight = Q + ToonRandomFloat(RandomState) * U + ToonRandomFloat(RandomState) * V;
+	float3 ToLight = OnLight - Position;
+	float DistanceSquared = dot(ToLight, ToLight);
+	float3 Direction = ToLight * rsqrt(max(DistanceSquared, 1.0e-12f));
+
+	float3 Cross = cross(U, V);
+	float Area = length(Cross);
+	float LightCosine = abs(dot(Direction, Cross / Area));
+	SamplingPdf = LightCosine > 1.0e-6f ? DistanceSquared / (LightCosine * Area) : 0.0f;
+	return Direction;
+}
+
+// 『The Rest of Your Life』第10章：任意の方向について、ライトを狙ったときにその方向が選ばれる PDF（本の quad::pdf_value）
+// その方向へのレイが光る四角形に当たらなければ、ライトを狙ってその方向が選ばれることはないので 0
+float LightQuadPdf(uint LightIndex, float3 Position, float3 Direction)
+{
+	float3 U = QuadU[LightIndex].xyz;
+	float3 V = QuadV[LightIndex].xyz;
+	FToonRay Ray;
+	Ray.Origin = Position;
+	Ray.Direction = Direction;
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (!HitQuad(QuadQ[LightIndex].xyz, U, V, Ray, TOON_RAY_TMIN, 1.0e8f, Rec))
+	{
+		return 0.0f;
+	}
+	float3 Cross = cross(U, V);
+	float Area = length(Cross);
+	float LightCosine = abs(dot(Direction, Cross / Area));
+	return LightCosine > 1.0e-6f ? Rec.T * Rec.T / (LightCosine * Area) : 0.0f;
+}
+
+// 『The Rest of Your Life』第12章：球を狙う方向と、その方向を選ぶ PDF（本の sphere::random と sphere::pdf_value）
+// 位置から見た球は、中心方向を軸とした円錐に収まる。その円錐の中で一様に方向を選ぶと、PDF は 1 ÷ 円錐の立体角 = 1 ÷ 2π(1 - cosθmax)
+// 位置が球の中にある場合は、狙えないので PDF 0（呼び出し側でその方向を使わない）
+float3 SampleSphereDirection(uint SphereIndex, float3 Position, inout uint RandomState, out float SamplingPdf)
+{
+	float3 ToCenter = GetSphereCenter(SphereIndex) - Position;
+	float DistanceSquared = dot(ToCenter, ToCenter);
+	float RadiusSquared = Spheres[SphereIndex].w * Spheres[SphereIndex].w;
+	if (DistanceSquared <= RadiusSquared)
+	{
+		SamplingPdf = 0.0f;
+		return normalize(ToCenter);
+	}
+
+	// 本の random_to_sphere：円錐の軸を z 軸として方向を作る
+	float CosThetaMax = sqrt(1.0f - RadiusSquared / DistanceSquared);
+	float R1 = ToonRandomFloat(RandomState);
+	float R2 = ToonRandomFloat(RandomState);
+	float Z = 1.0f + R2 * (CosThetaMax - 1.0f);
+	float Phi = 2.0f * PI * R1;
+	float SinTheta = sqrt(max(1.0f - Z * Z, 0.0f));
+	float3 Local = float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, Z);
+
+	SamplingPdf = 1.0f / (2.0f * PI * (1.0f - CosThetaMax));
+	return normalize(OnbTransform(MakeOnb(ToCenter * rsqrt(DistanceSquared)), Local));
+}
+
+float SpherePdf(uint SphereIndex, float3 Position, float3 Direction)
+{
+	FToonRay Ray;
+	Ray.Origin = Position;
+	Ray.Direction = Direction;
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	float3 Center = GetSphereCenter(SphereIndex);
+	float Radius = Spheres[SphereIndex].w;
+	float DistanceSquared = dot(Center - Position, Center - Position);
+	if (DistanceSquared <= Radius * Radius || !HitSphere(Center, Radius, Ray, TOON_RAY_TMIN, 1.0e8f, Rec))
+	{
+		return 0.0f;
+	}
+	float CosThetaMax = sqrt(1.0f - Radius * Radius / DistanceSquared);
+	return 1.0f / (2.0f * PI * (1.0f - CosThetaMax));
+}
+
+// 『The Rest of Your Life』第12章：狙う物体の一覧から 1 つを等しい確率で選び、その物体を狙う方向を返す（本の hittable_list::random）
+float3 SampleLightTargets(uint NumTargets, float3 Position, inout uint RandomState)
+{
+	uint Target = min((uint)(ToonRandomFloat(RandomState) * (float)NumTargets), NumTargets - 1);
+	float Unused;
+	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
+	{
+		if (IsLightTargetQuad(QuadIndex))
+		{
+			if (Target == 0)
+			{
+				return SampleLightQuadDirection(QuadIndex, Position, RandomState, Unused);
+			}
+			--Target;
+		}
+	}
+	for (uint SphereIndex = 0; SphereIndex < NumSpheres; ++SphereIndex)
+	{
+		if (IsLightTargetSphere(SphereIndex))
+		{
+			if (Target == 0)
+			{
+				return SampleSphereDirection(SphereIndex, Position, RandomState, Unused);
+			}
+			--Target;
+		}
+	}
+	return float3(0.0f, 0.0f, 1.0f);
+}
+
+// 狙う物体の一覧を使ったときに、ある方向が選ばれる PDF。各物体の PDF の平均（本の hittable_list::pdf_value）
+float LightTargetsPdf(uint NumTargets, float3 Position, float3 Direction)
+{
+	float Sum = 0.0f;
+	for (uint QuadIndex = 0; QuadIndex < NumQuads; ++QuadIndex)
+	{
+		if (IsLightTargetQuad(QuadIndex))
+		{
+			Sum += LightQuadPdf(QuadIndex, Position, Direction);
+		}
+	}
+	for (uint SphereIndex = 0; SphereIndex < NumSpheres; ++SphereIndex)
+	{
+		if (IsLightTargetSphere(SphereIndex))
+		{
+			Sum += SpherePdf(SphereIndex, Position, Direction);
+		}
+	}
+	return Sum / (float)NumTargets;
+}
+
+// 『The Rest of Your Life』第6〜12章：拡散反射で、反射したレイの方向を選び、その方向を選ぶ確率密度（PDF）を返す
+// 色は「素材の色 × 散乱の PDF ÷ 選んだ方向の PDF」で重み付けする（本の ray_color）
+// 選び方を変えても平均（最終的な明るさ）は同じで、変わるのはノイズの量だけ
+float3 SampleScatterDirection(float3 Position, float3 Normal, inout uint RandomState, out float SamplingPdf)
+{
+	float3 Direction;
+	if (ScatterSampling == TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE)
+	{
+		// 第6章：半球上で一様に選ぶ（本の random_on_hemisphere）。どの方向も PDF は 1 / 2π
+		Direction = RandomUnitVector(RandomState);
+		if (dot(Direction, Normal) < 0.0f)
+		{
+			Direction = -Direction;
+		}
+		SamplingPdf = 1.0f / (2.0f * PI);
+		return Direction;
+	}
+
+	if (ScatterSampling == TOON_SCATTER_SAMPLING_MIXTURE)
+	{
+		// 第10〜11章：混合 PDF（本の mixture_pdf）。半々の確率でライトを狙う方向かコサイン分布の方向を選ぶ
+		// どちらの選び方でも同じ方向が選ばれうるので、その方向の PDF は 2 つの PDF の平均になる
+		// ライトを狙う分でノイズを減らし、コサイン分布の分で天井や壁の照り返し（間接光）も拾う
+		// 第12章：狙う物体が複数（光る四角形・光る球・ガラスの球）なら、その中から等しい確率で選ぶ
+		uint NumTargets = CountLightTargets();
+		if (NumTargets > 0)
+		{
+			if (ToonRandomFloat(RandomState) < 0.5f)
+			{
+				Direction = SampleLightTargets(NumTargets, Position, RandomState);
+			}
+			else
+			{
+				Direction = SafeNormalize(OnbTransform(MakeOnb(Normal), RandomCosineDirection(RandomState)), Normal);
+			}
+			SamplingPdf = 0.5f * LightTargetsPdf(NumTargets, Position, Direction) + 0.5f * LambertScatteringPdf(Normal, Direction);
+			return Direction;
+		}
+	}
+
+	if (ScatterSampling == TOON_SCATTER_SAMPLING_LIGHT)
+	{
+		// 第9章：ライトを直接狙う。狙う物体がないシーンでは、コサイン分布にする
+		uint NumTargets = CountLightTargets();
+		if (NumTargets > 0)
+		{
+			Direction = SampleLightTargets(NumTargets, Position, RandomState);
+			SamplingPdf = LightTargetsPdf(NumTargets, Position, Direction);
+			return Direction;
+		}
+	}
+
+	if (ScatterSampling >= TOON_SCATTER_SAMPLING_COSINE)
+	{
+		// 第7〜8章：z 軸のまわりのコサイン分布の方向を、法線を基準にした正規直交基底で変換する（本の cosine_pdf）
+		// PDF は散乱の PDF と同じ cosθ / π。重みは「素材の色」そのものになる
+		Direction = SafeNormalize(OnbTransform(MakeOnb(Normal), RandomCosineDirection(RandomState)), Normal);
+		SamplingPdf = LambertScatteringPdf(Normal, Direction);
+		return Direction;
+	}
+
+	// 法線＋単位球上のランダムな点の方向（『One Weekend』の方法）。結果的に PDF は散乱の PDF と同じ cosθ / π になる
+	Direction = Normal + RandomUnitVector(RandomState);
+	// 法線とほぼ逆向きの乱数が出ると長さが 0 に近づくため、その場合は法線方向にする（本の near_zero）
+	Direction = SafeNormalize(Direction, Normal);
+	SamplingPdf = LambertScatteringPdf(Normal, Direction);
+	return Direction;
+}
+
+// フェーズ6〜8：マテリアルに応じてレイを反射させ、届いた光を求める（本の第9〜10章）
+// 本の ray_color は再帰だが、シェーダーでは再帰できないため、減衰率を掛け合わせるループで書く
+float3 RayColorMaterial(float2 UV, FToonRay Ray, inout uint RandomState)
+{
+	float3 Attenuation = 1.0f;
+	// 『The Next Week』第7章：途中で当たった光る物体からの光を足していく（本の color_from_emission）
+	float3 Radiance = 0.0f;
+
+	[loop]
+	for (uint Depth = 0; Depth < MaxDepth; ++Depth)
+	{
+		FToonHitRecord Rec = (FToonHitRecord)0;
+		if (!HitAnything(Ray, TOON_RAY_TMIN, Rec))
+		{
+			// どこにも当たらなければ背景の色が、ここまでの減衰を受けて届く
+			return Radiance + Attenuation * SkyColor(Ray);
+		}
+
+		// カメラから最初に当たった面は GBuffer の値を使う。反射した先も、カメラから見えている点なら GBuffer の値を使う
+		if (Depth == 0)
+		{
+			ApplyGBufferSurface(UV, Ray, Rec);
+		}
+		else
+		{
+			ApplyGBufferSurfaceFromScreen(Rec);
+		}
+
+		// 『The Rest of Your Life』第9章：ライトを狙うときは、光る物体は表側（四角形なら法線の向き）にだけ光を放つ（本の diffuse_light::emitted）
+		// 両面から光ると、ライトの裏側（コーネルボックスでは天井）が照らされ、狙ったレイと合わずにノイズになるため
+		bool bEmits = ScatterSampling < TOON_SCATTER_SAMPLING_LIGHT || Rec.bFrontFace;
+		if (Rec.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT && bEmits)
+		{
+			Radiance += Attenuation * Rec.Material.Albedo;
+		}
+
+		// 『The Next Week』第9章：煙（本の constant_medium）
+		// 煙の中を進む距離ごとに一定の確率で散乱する。散乱するまでの距離は指数分布になる（-ln(乱数) / 濃さ）
+		// 箱を出るまでに散乱しなければ、そのまま通り抜ける。散乱したら、その点からランダムな方向へ進む（本の isotropic）
+		// 煙の中に普通の物体（床など）があれば、煙はその手前で終わる（本でも、散乱する点と物体の近いほうが当たりになる）
+		if (Rec.Material.Type == TOON_MATERIAL_VOLUME)
+		{
+			FToonHitRecord Solid;
+			bool bSolidInside = FindSolidInsideVolume(Ray, Rec, Solid);
+			float InsideDistance = (bSolidInside ? Solid.T : Rec.VolumeExitT) - Rec.T;
+			float HitDistance = -log(max(1.0f - ToonRandomFloat(RandomState), 1.0e-6f)) / max(Rec.Material.Density, 1.0e-6f);
+			if (HitDistance < InsideDistance)
+			{
+				Attenuation *= Rec.Material.Albedo;
+				Ray.Origin = Ray.At(Rec.T + HitDistance);
+				Ray.Direction = RandomUnitVector(RandomState);
+				continue;
+			}
+			if (!bSolidInside)
+			{
+				Ray.Origin = Ray.At(Rec.VolumeExitT);
+				continue;
+			}
+			// 散乱せずに中の物体まで届いた。以降はその物体に当たったものとして続ける
+			Rec = Solid;
+			if (Rec.Material.Type == TOON_MATERIAL_DIFFUSE_LIGHT)
+			{
+				Radiance += Attenuation * Rec.Material.Albedo;
+			}
+		}
+
+		float3 ScatterAttenuation;
+		FToonRay Scattered;
+		bool bSkipPdf;
+		if (!Scatter(Rec.Material, Ray, Rec, RandomState, ScatterAttenuation, Scattered, bSkipPdf))
+		{
+			// 吸収された、または光る物体に当たった
+			return Radiance;
+		}
+
+		if (!bSkipPdf)
+		{
+			// 『The Rest of Your Life』第6章：拡散反射は、方向を PDF に従って選び、散乱の PDF ÷ 選んだ方向の PDF で重み付けする
+			float SamplingPdf;
+			Scattered.Direction = SampleScatterDirection(Rec.Position, Rec.Normal, RandomState, SamplingPdf);
+			float ScatteringPdf = LambertScatteringPdf(Rec.Normal, Scattered.Direction);
+			if (SamplingPdf <= 0.0f || ScatteringPdf <= 0.0f)
+			{
+				// 面の内側へ向かう方向や、選ばれるはずのない方向は光を運ばない
+				return Radiance;
+			}
+			ScatterAttenuation *= ScatteringPdf / SamplingPdf;
+		}
+
+		Attenuation *= ScatterAttenuation;
+		Ray = Scattered;
+	}
+
+	// 反射回数の上限に達したら、それ以上の光は届かなかったものとみなす
+	return Radiance;
+}
+
+// 影の部分にも少し色が残るようにする環境光の強さ（空の色に掛ける）
+#define TOON_AMBIENT_STRENGTH 0.2f
+
+// トゥーン T1：Directional Light の向きと色が正しく渡っているかを確認するための、なめらかな陰影
+// 光源に向いている面ほど明るく（N・L）、ライトの色で照らされる。影や段階化は T2 以降で追加する
+float3 RayColorDirectLight(float2 UV, FToonRay Ray)
+{
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (!HitAnything(Ray, 0.0f, Rec))
+	{
+		return SkyColor(Ray);
+	}
+	ApplyGBufferSurface(UV, Ray, Rec);
+
+	float3 Albedo = Rec.Material.Albedo;
+	float3 Ambient = TOON_AMBIENT_STRENGTH * SkyColor(Ray);
+	if (bHasDirectionalLight == 0)
+	{
+		return Albedo * Ambient;
+	}
+
+	float NdotL = saturate(dot(Rec.Normal, ToLightDirection));
+	return Albedo * (LightColor * NdotL + Ambient);
+}

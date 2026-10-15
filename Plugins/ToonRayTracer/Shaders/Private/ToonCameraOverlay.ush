@@ -1,0 +1,187 @@
+#pragma once
+
+// カメラから直接見えている面にだけ重ねる表現（アウトライン、キャラクターの線の色とリムライト、眉毛の透け）と、確認用の表示
+// RayColorToon から使う
+
+// 鳴潮モードの仕上げのぼかし（ToonPostEffects.usf）に渡す、このサンプルの値
+// rgb：光の側のリムの色（Bloom の元）、a：カメラから見えている面が鳴潮モードのキャラクターなら 1、その目なら 2
+static float4 ToonGlowSample = 0.0f;
+
+// 確認用：ジオメトリ番号ごとの色（0 赤、1 緑、2 青、3 黄、4 マゼンタ、5 シアン、6 白、7 オレンジ、8 以上は灰色）
+float3 GetDebugGeometryColor(uint GeometryIndex)
+{
+	const float3 Colors[8] = {
+		float3(1.0f, 0.0f, 0.0f), float3(0.0f, 1.0f, 0.0f), float3(0.0f, 0.0f, 1.0f), float3(1.0f, 1.0f, 0.0f),
+		float3(1.0f, 0.0f, 1.0f), float3(0.0f, 1.0f, 1.0f), float3(1.0f, 1.0f, 1.0f), float3(1.0f, 0.5f, 0.0f) };
+	return GeometryIndex < 8 ? Colors[GeometryIndex] : 0.3f;
+}
+
+// カメラから見えている面に重ねる表現の値
+struct FToonCameraOverlay
+{
+	// トゥーン T6：アウトライン（1 なら線）と線の色
+	float Outline;
+	// 鳴潮風ルック フェーズ2：キャラクターでは、線の色を素材の色を暗くした色にし、リムライトを加える
+	float3 OutlineColor;
+	float3 CharacterRim;
+	// 鳴潮モード：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）
+	float3 CharacterReflectionRim;
+	// 眉毛の透け：髪の奥に眉毛などがあれば 1
+	float SeeThrough;
+	float SeeThroughOpacity;
+	float SeeThroughBrightness;
+	float3 SeeThroughColor;
+	float SeeThroughColorBlend;
+	// 眉毛を塗るときに、髪の明るさ（光の当たり具合）を合わせるための、髪の素材の色
+	float3 SeeThroughHairAlbedo;
+	// 眉毛を塗るときの、キャラクターの物体の番号（パーツの色を探す）
+	uint SeeThroughObjectId;
+};
+
+FToonCameraOverlay GetDefaultCameraOverlay()
+{
+	FToonCameraOverlay Overlay;
+	Overlay.Outline = 0.0f;
+	Overlay.OutlineColor = ToonOutlineColor;
+	Overlay.CharacterRim = 0.0f;
+	Overlay.CharacterReflectionRim = 0.0f;
+	Overlay.SeeThrough = 0.0f;
+	Overlay.SeeThroughOpacity = ToonSeeThroughOpacity;
+	Overlay.SeeThroughBrightness = ToonSeeThroughBrightness;
+	Overlay.SeeThroughColor = ToonSeeThroughColor;
+	Overlay.SeeThroughColorBlend = ToonSeeThroughColorBlend;
+	Overlay.SeeThroughHairAlbedo = 1.0f;
+	Overlay.SeeThroughObjectId = 0;
+	return Overlay;
+}
+
+// 確認用：カメラのレイが当たった面のジオメトリ番号（bToonDebugGeometry 1）と、目として扱う三角形（3）
+// 表示する場合は true を返し、色を DebugColor に入れる
+bool GetToonDebugGeometryColor(FToonRay CameraRay, out float3 DebugColor)
+{
+	DebugColor = 0.0f;
+	if (bToonDebugGeometry == 1 && TraceMode != 0)
+	{
+		FDefaultPayload DebugPayload;
+		DebugColor = TraceScene(CameraRay, 0.0f, DebugPayload) ? GetDebugGeometryColor(GetPayloadGeometryIndex(DebugPayload)) : 0.0f;
+		return true;
+	}
+	if (bToonDebugGeometry == 3 && TraceMode != 0)
+	{
+		FDefaultPayload DebugPayload;
+		if (!TraceScene(CameraRay, 0.0f, DebugPayload))
+		{
+			return true;
+		}
+		bool bCharacter = GetSceneMaterial(DebugPayload.InstanceID).bCharacter != 0;
+		FToonCharacterParts DebugParts = GetToonCharacterParts(CameraRay.At(DebugPayload.HitT), DebugPayload.InstanceID);
+		if (!IsEyeSlotHit(DebugPayload, bCharacter, DebugParts))
+		{
+			DebugColor = 0.1f;
+			return true;
+		}
+		DebugColor = IsEyeHit(DebugPayload, bCharacter, DebugParts) ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+		return true;
+	}
+	return false;
+}
+
+// カメラから見えている面（GBuffer の値を当てはめた後）で、重ねる表現を求める
+// 確認用の眉毛の透けの表示（bToonDebugGeometry 2）では true を返し、色を DebugColor に入れる
+bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout FToonCameraOverlay Overlay, out float3 DebugColor)
+{
+	DebugColor = 0.0f;
+
+	// トゥーン T6：アウトライン（最後に、陰影や映り込みの上に描く）
+	if (bToonOutline != 0)
+	{
+		// 煙に当たった場合は、煙を無視したその奥の物体で線を判定する（シーン全体を包む霧の中でも線を引くため）
+		FToonHitRecord OutlineRec = Rec;
+		bool bOutlineHit = true;
+		if (Rec.Material.Type == TOON_MATERIAL_VOLUME)
+		{
+			OutlineRec = (FToonHitRecord)0;
+			bOutlineHit = HitWorld(Ray, 0.0f, 1.0e8f, OutlineRec, false);
+		}
+		Overlay.Outline = bOutlineHit ? ToonOutline(UV, Ray, OutlineRec) : 0.0f;
+	}
+
+	// 鳴潮風ルック フェーズ2：キャラクターの線の色とリムライト（どちらも素材の色に合わせる）
+	if (Rec.Material.bCharacter != 0)
+	{
+		FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
+		if (Look.OutlineColorScale > 0.0f)
+		{
+			Overlay.OutlineColor = Rec.Material.Albedo * Look.OutlineColorScale;
+		}
+		Overlay.CharacterRim = Rec.Material.Albedo * ToonLightColor * (Look.RimStrength * ToonCharacterRim(UV, Rec, ToLightDirection));
+		// 鳴潮モード：光と反対の側の輪郭にも、空の色（青み）の縁を入れる（照り返しのリム）。光の当たり方によるマスクは、陰影を計算した後で掛ける
+		if (Rec.Material.bWuthering != 0 && ToonWutheringReflectionRimStrength > 0.0f)
+		{
+			Overlay.CharacterReflectionRim = Rec.Material.Albedo * GetToonSkyHue()
+				* (Look.RimStrength * ToonWutheringReflectionRimStrength * ToonCharacterRim(UV, Rec, -ToLightDirection));
+		}
+		uint SeeThroughReason;
+		Overlay.SeeThrough = ComputeToonSeeThrough(Ray, Rec, SeeThroughReason);
+		Overlay.SeeThroughOpacity = Look.SeeThroughOpacity;
+		Overlay.SeeThroughBrightness = Look.SeeThroughBrightness;
+		Overlay.SeeThroughColor = Look.SeeThroughColor;
+		Overlay.SeeThroughColorBlend = Look.SeeThroughColorBlend;
+		Overlay.SeeThroughHairAlbedo = Rec.Material.Albedo;
+		Overlay.SeeThroughObjectId = Rec.ObjectId;
+		if (bToonDebugGeometry == 2)
+		{
+			DebugColor = GetDebugSeeThroughColor(SeeThroughReason);
+			return true;
+		}
+	}
+	return false;
+}
+
+// カメラから見えている普通の素材を塗った後に、光の当たり具合（LightLevel）に合わせて重ねる表現を調整する
+void ApplyToonCameraLighting(FToonHitRecord Rec, float LightLevel, inout FToonCameraOverlay Overlay)
+{
+	// 鳴潮モード：光の側のリムは光の当たる部分だけ、照り返しのリムは影の部分だけに入れる
+	// どちらも、光の方向を向いている度合い（N・L）でなだらかに弱める（Falloff）
+	if (Rec.Material.bWuthering != 0)
+	{
+		float HalfNdotL = dot(Rec.Normal, ToLightDirection) * 0.5f + 0.5f;
+		Overlay.CharacterRim *= LightLevel * HalfNdotL;
+		Overlay.CharacterReflectionRim *= (1.0f - LightLevel) * (1.0f - HalfNdotL);
+	}
+	// 鳴潮モードの仕上げのぼかしは、キャラクター全体（顔や肌など、ゲームのテクスチャを使っていない素材も含む）に掛ける
+	// 目は 2 にして、Soft Focus でぼかさないようにする（瞳の模様やハイライトをくっきり残す）
+	if (bToonWutheringMode != 0 && Rec.Material.bCharacter != 0)
+	{
+		ToonGlowSample.a = Rec.Material.bEye != 0 ? 2.0f : 1.0f;
+	}
+}
+
+// 塗った色（Color）に、カメラから見えている面の表現を重ねる（キャラクターのリムライト、眉毛の透け、アウトライン）
+float3 ComposeToonCameraOverlay(float3 Color, FToonCameraOverlay Overlay)
+{
+	// 眉毛の透け：髪の色を暗くして眉毛の形を浮かび上がらせる（隠れた眉毛そのものの色は分からないため、髪の色の濃淡で表す）
+	float3 Base = Color + Overlay.CharacterRim + Overlay.CharacterReflectionRim;
+	float3 Shaded = Base;
+	if (Overlay.SeeThrough > 0.0f)
+	{
+		float3 Darkened = Base * Overlay.SeeThroughBrightness;
+		// 眉毛の色で塗る場合：光の色を掛け、髪が影なら同じ割合で暗くする（髪の明るさ ÷ 光が当たったときの髪の明るさ）
+		const float3 LuminanceWeights = float3(0.2126f, 0.7152f, 0.0722f);
+		float LitHair = dot(Overlay.SeeThroughHairAlbedo * ToonLightColor, LuminanceWeights);
+		float HairBrightness = LitHair > 1.0e-4f ? saturate(dot(Color, LuminanceWeights) / LitHair) : 1.0f;
+		// 色は、前髪から出て直接見えている部分で記録した眉毛そのものの色（UE のマテリアルの色）を使う
+		// まだ一度も見えていなければ、設定の色を使う
+		float3 SeeThroughColor = Overlay.SeeThroughColor;
+		float3 PartColor;
+		if (bUseGBufferBaseColor != 0 && FindObjectColorByKey(ToonSeeThroughPartColorKey(Overlay.SeeThroughObjectId), PartColor))
+		{
+			SeeThroughColor = PartColor;
+		}
+		float3 Painted = SeeThroughColor * ToonLightColor * HairBrightness;
+		Shaded = lerp(Base, lerp(Darkened, Painted, Overlay.SeeThroughColorBlend), Overlay.SeeThrough * Overlay.SeeThroughOpacity);
+	}
+	// 線の上は光らせない
+	ToonGlowSample.rgb = ToonGlowSample.a > 0.0f ? Overlay.CharacterRim * (1.0f - Overlay.Outline) : 0.0f;
+	return lerp(Shaded, Overlay.OutlineColor, Overlay.Outline);
+}
