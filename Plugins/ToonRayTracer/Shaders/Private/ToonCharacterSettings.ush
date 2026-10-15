@@ -1,0 +1,206 @@
+#pragma once
+
+// キャラクターごとの設定の読み取り（パーツのスロット、幅や距離、見た目の上書き）
+
+// キャラクターごとの設定（パーツのスロット、幅や距離）
+// ゲームスレッドで顔（頭と両目のボーンを持つスケルタルメッシュ）ごとに求めた値を、ToonCharacterSlots などで受け取る
+// 点の近くの顔（ToonFaceForward の w の半径以内で一番近いもの）の値を使い、近くに顔がなければ全体の設定を使う
+// 目・顔・髪・眉毛はどれも頭の周りにあるので、点の位置で十分にキャラクターを見分けられる
+// スロットは 0 ～ 63 番まで使える（x が 0 ～ 31 番、y が 32 ～ 63 番のビット）
+struct FToonCharacterParts
+{
+	uint2 FaceSlotMask;
+	uint2 EyeSlotMask;
+	uint EyeTriangleStart;
+	uint EyeTriangleEnd;
+	uint2 HairSlotMask;
+	uint2 SeeThroughSlotMask;
+	// 目のスロットの中で、上まぶたの影をかけないスロット（瞳など）
+	uint2 EyeShadowExcludeSlotMask;
+	// 眉毛の線の形を Custom Depth に描いているか
+	bool bSeeThroughCustomDepth;
+	// 顔の境目のぼかし（顔の半分の幅に対する割合）
+	float FaceShadowSoftness;
+	// キャラクターの大きさに合わせた幅や距離（cm）
+	float HairShadowWidth;
+	float EyeShadowDistance;
+	float SeeThroughDistance;
+	float EyeHighlightSearchRadius;
+	float HairShadowDistance;
+	// キャラクターの添え字（見つからなければ -1）
+	int Character;
+};
+
+// スロットのビット（0 ～ 63 番）に、ジオメトリの番号が含まれるか
+bool IsSlotInMask(uint2 Mask, uint GeometryIndex)
+{
+	return GeometryIndex < 32u ? ((Mask.x >> GeometryIndex) & 1u) != 0
+		: GeometryIndex < 64u ? ((Mask.y >> (GeometryIndex - 32u)) & 1u) != 0
+		: false;
+}
+
+// 点の近くの顔の番号（なければ -1）
+int FindToonFace(float3 Position)
+{
+	int BestFace = -1;
+	float BestDistance = 1.0e30f;
+	for (uint FaceIndex = 0; FaceIndex < NumToonFaces; ++FaceIndex)
+	{
+		float Distance = length(Position - ToonFaceCenter[FaceIndex].xyz);
+		if (Distance < ToonFaceForward[FaceIndex].w && Distance < BestDistance)
+		{
+			BestFace = (int)FaceIndex;
+			BestDistance = Distance;
+		}
+	}
+	return BestFace;
+}
+
+// Toon Character コンポーネントがメッシュの Custom Primitive Data の [14] に書いた番号から、キャラクターの添え字を探す（なければ -1）
+// 番号は ToonFaceRight の w に入っている。体や服など、顔から離れた点でもキャラクターを見つけられる
+int FindToonCharacterById(FPrimitiveSceneData PrimitiveData)
+{
+	float Id = GetCustomPrimitiveDataFloat(PrimitiveData, 14);
+	if (Id > 0.0f)
+	{
+		for (uint FaceIndex = 0; FaceIndex < NumToonFaces; ++FaceIndex)
+		{
+			if (abs(ToonFaceRight[FaceIndex].w - Id) < 0.5f)
+			{
+				return (int)FaceIndex;
+			}
+		}
+	}
+	return -1;
+}
+
+int FindToonCharacter(float3 Position, uint GPUSceneInstanceId)
+{
+	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	int Character = FindToonCharacterById(GetPrimitiveData(InstanceData.PrimitiveId));
+	return Character >= 0 ? Character : FindToonFace(Position);
+}
+
+// キャラクターごとの見た目（キャラクターが見つからなければ全体の設定）
+struct FToonCharacterLook
+{
+	float3 ShadowColor;
+	float ShadowSaturation;
+	float3 SkinShadowColor;
+	float OutlineWidth;
+	float OutlineColorScale;
+	float RimStrength;
+	float RimWidth;
+	float FaceShadowCurve;
+	float FaceShadowFrontBias;
+	float EyeShadowBrightness;
+	float EyeHighlightStrength;
+	float EyeHighlightThreshold;
+	float HairShadowStrength;
+	float HairShadowLightShift;
+	float SeeThroughOpacity;
+	float SeeThroughBrightness;
+	float3 SeeThroughColor;
+	float SeeThroughColorBlend;
+};
+
+FToonCharacterLook GetToonCharacterLook(int Character)
+{
+	FToonCharacterLook Look;
+	if (Character >= 0)
+	{
+		float4 Look0 = ToonCharacterLook0[Character];
+		float4 Look1 = ToonCharacterLook1[Character];
+		float4 Look2 = ToonCharacterLook2[Character];
+		float4 Look3 = ToonCharacterLook3[Character];
+		float4 Look4 = ToonCharacterLook4[Character];
+		float4 Look5 = ToonCharacterLook5[Character];
+		Look.ShadowColor = Look0.rgb;
+		Look.ShadowSaturation = Look0.a;
+		Look.SkinShadowColor = Look1.rgb;
+		Look.OutlineWidth = Look1.a;
+		Look.OutlineColorScale = Look2.x;
+		Look.RimStrength = Look2.y;
+		Look.RimWidth = Look2.z;
+		Look.FaceShadowCurve = Look2.w;
+		Look.FaceShadowFrontBias = Look3.x;
+		Look.EyeShadowBrightness = Look3.y;
+		Look.EyeHighlightStrength = Look3.z;
+		Look.EyeHighlightThreshold = Look3.w;
+		Look.HairShadowStrength = Look4.x;
+		Look.HairShadowLightShift = Look4.y;
+		Look.SeeThroughOpacity = Look4.z;
+		Look.SeeThroughBrightness = Look4.w;
+		Look.SeeThroughColor = Look5.rgb;
+		Look.SeeThroughColorBlend = Look5.a;
+		return Look;
+	}
+	Look.ShadowColor = ToonShadowColor;
+	Look.ShadowSaturation = ToonShadowSaturation;
+	Look.SkinShadowColor = ToonSkinShadowColor;
+	Look.OutlineWidth = ToonOutlineWidthSkinned;
+	Look.OutlineColorScale = ToonCharacterOutlineColorScale;
+	Look.RimStrength = ToonCharacterRimStrength;
+	Look.RimWidth = ToonCharacterRimWidth;
+	Look.FaceShadowCurve = ToonFaceShadowCurve;
+	Look.FaceShadowFrontBias = ToonFaceShadowFrontBias;
+	Look.EyeShadowBrightness = ToonEyeShadowBrightness;
+	Look.EyeHighlightStrength = ToonEyeHighlightStrength;
+	Look.EyeHighlightThreshold = ToonEyeHighlightThreshold;
+	Look.HairShadowStrength = ToonHairShadowStrength;
+	Look.HairShadowLightShift = ToonHairShadowLightShift;
+	Look.SeeThroughOpacity = ToonSeeThroughOpacity;
+	Look.SeeThroughBrightness = ToonSeeThroughBrightness;
+	Look.SeeThroughColor = ToonSeeThroughColor;
+	Look.SeeThroughColorBlend = ToonSeeThroughColorBlend;
+	return Look;
+}
+
+FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstanceId)
+{
+	FToonCharacterParts Parts;
+	int Face = FindToonCharacter(Position, GPUSceneInstanceId);
+	Parts.Character = Face;
+	if (Face >= 0)
+	{
+		uint4 Slots = ToonCharacterSlots[Face];
+		uint4 Slots2 = ToonCharacterSlots2[Face];
+		float4 Params = ToonCharacterParams[Face];
+		float4 Params2 = ToonCharacterParams2[Face];
+		Parts.FaceSlotMask = Slots.xy;
+		Parts.EyeSlotMask = Slots.zw;
+		Parts.HairSlotMask = Slots2.xy;
+		Parts.SeeThroughSlotMask = Slots2.zw;
+		Parts.EyeShadowExcludeSlotMask = ToonCharacterSlots3[Face].xy;
+		Parts.bSeeThroughCustomDepth = ToonCharacterSlots3[Face].z != 0u;
+		Parts.EyeTriangleStart = (uint)round(Params.x);
+		Parts.EyeTriangleEnd = (uint)round(Params.y);
+		Parts.FaceShadowSoftness = Params.z;
+		Parts.HairShadowWidth = Params.w;
+		Parts.EyeShadowDistance = Params2.x;
+		Parts.SeeThroughDistance = Params2.y;
+		Parts.EyeHighlightSearchRadius = Params2.z;
+		Parts.HairShadowDistance = Params2.w;
+		return Parts;
+	}
+
+	// 顔が見つからない（頭と両目のボーンがない）キャラクターは全体の設定（0 ～ 31 番のスロット）
+	Parts.FaceSlotMask = uint2(ToonFaceSlotMask, 0u);
+	Parts.EyeSlotMask = uint2(ToonEyeSlotMask, 0u);
+	Parts.HairSlotMask = uint2(ToonHairSlotMask, 0u);
+	Parts.EyeShadowExcludeSlotMask = 0u;
+	Parts.bSeeThroughCustomDepth = false;
+	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+	float SeeThroughOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 13);
+	Parts.SeeThroughSlotMask = uint2(SeeThroughOverride > 0.0f ? (uint)round(SeeThroughOverride) : ToonSeeThroughSlotMask, 0u);
+	Parts.EyeTriangleStart = ToonEyeTriangleStart;
+	Parts.EyeTriangleEnd = ToonEyeTriangleEnd;
+	Parts.FaceShadowSoftness = ToonFaceShadowSoftness;
+	Parts.HairShadowWidth = ToonHairShadowWidth;
+	Parts.EyeShadowDistance = ToonEyeShadowDistance;
+	Parts.SeeThroughDistance = ToonSeeThroughDistance;
+	Parts.EyeHighlightSearchRadius = ToonEyeHighlightSearchRadius;
+	Parts.HairShadowDistance = ToonHairShadowDistance;
+	return Parts;
+}

@@ -1,0 +1,173 @@
+#pragma once
+
+// 素材（本の material）と、レイが当たった点の情報（本の hit_record）。シーンのメッシュの素材は Custom Primitive Data から読む
+
+// マテリアルの種類（C++ 側の EToonMaterialType と一致させる）
+#define TOON_MATERIAL_DEFAULT		0	// 未設定（灰色のランバート反射）
+#define TOON_MATERIAL_LAMBERTIAN	1	// 拡散反射（本の lambertian）
+#define TOON_MATERIAL_METAL			2	// 金属（本の metal）
+#define TOON_MATERIAL_DIELECTRIC	3	// ガラスなどの誘電体（本の dielectric）
+#define TOON_MATERIAL_DIFFUSE_LIGHT	4	// 『The Next Week』第7章の光る素材（本の diffuse_light）。Albedo が放つ光の色と強さ
+#define TOON_MATERIAL_VOLUME		5	// 『The Next Week』第9章の煙や霧（本の constant_medium と isotropic）。Albedo が煙の色
+
+// 本の material クラスに相当
+struct FToonMaterial
+{
+	uint Type;
+	float3 Albedo;
+	float Fuzz;
+	float RefractionIndex;
+	// トゥーン T4：メッシュごとの影色（bHasShadowColor が 0 なら全体の影色を使う）
+	float3 ShadowColor;
+	uint bHasShadowColor;
+	// トゥーン T5：メッシュごとのハイライトとリムライトの強さ（0 なら出さない）
+	float HighlightStrength;
+	float RimStrength;
+	// トゥーン T6：このメッシュの線の太さ（ピクセル、0 なら線を引かない）
+	float OutlineWidth;
+	// 『The Next Week』第9章：煙の濃さ（1cm あたりに散乱する確率）
+	float Density;
+	// 鳴潮風ルック：キャラクター（スケルタルメッシュか、Custom Primitive Data の [12] が正の値）なら 1
+	uint bCharacter;
+	// 鳴潮風ルック：肌（UE のマテリアルのシェーディングモデルで判定）なら 1
+	uint bSkin;
+	// 目の表現：キャラクターの目のパーツ（ToonEyeSlotMask で指定したマテリアルスロット）なら 1
+	uint bEye;
+	// 上まぶたの影をかけない目のパーツ（瞳など）か
+	uint bNoEyelidShadow;
+	// 顔の影：キャラクターの顔のパーツ（ToonFaceSlotMask で指定したマテリアルスロット）なら 1
+	uint bFace;
+	// マテリアルの発光（カメラから見えている面だけ。影や光の向きに関係なく足す）
+	float3 Emissive;
+	// キャラクターごとの設定の番号（ToonCharacterLook0 などの添え字）。なければ -1
+	int Character;
+	// 鳴潮モード：ゲームのテクスチャの値（Two Sided Foliage のマテリアルの GBuffer から読む）
+	uint bWuthering;
+	float3 WutheringShadowColor;
+	float WutheringHighlight;
+	float WutheringSparkle;
+	float WutheringShadowBias;
+};
+
+// 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
+FToonMaterial GetDefaultMaterial()
+{
+	FToonMaterial Material;
+	Material.Type = TOON_MATERIAL_DEFAULT;
+	Material.Albedo = 0.5f;
+	Material.Fuzz = 0.0f;
+	Material.RefractionIndex = 1.0f;
+	Material.ShadowColor = 0.0f;
+	Material.bHasShadowColor = 0;
+	Material.HighlightStrength = 0.0f;
+	Material.RimStrength = 0.0f;
+	Material.OutlineWidth = ToonOutlineWidth;
+	Material.Density = 0.0f;
+	Material.bCharacter = 0;
+	Material.Character = -1;
+	Material.Emissive = 0.0f;
+	Material.bSkin = 0;
+	Material.bEye = 0;
+	Material.bNoEyelidShadow = 0;
+	Material.bFace = 0;
+	Material.bWuthering = 0;
+	Material.WutheringShadowColor = 0.0f;
+	Material.WutheringHighlight = 0.0f;
+	Material.WutheringSparkle = 0.0f;
+	Material.WutheringShadowBias = 0.5f;
+	return Material;
+}
+
+// シーンのメッシュのマテリアルを、メッシュに設定された Custom Primitive Data から読む
+//   [0]: 種類（0: 未設定, 1: ランバート, 2: 金属, 3: 誘電体）
+//   [1][2][3]: 反射率 RGB（誘電体では使わない）
+//   [4]: 金属のぼけ具合（0 ～ 1）
+//   [5]: 誘電体の屈折率（未設定や 0 以下ならガラスの 1.5）
+//   [6][7][8]: トゥーンの影色 RGB（すべて 0 なら全体の影色 r.ToonRayTracer.Toon.ShadowColor を使う）
+//   [9]: トゥーンのハイライトの強さ（0 ～ 1。未設定なら出さない）
+//   [10]: トゥーンのリムライトの強さ（未設定なら出さない）
+//   [11]: トゥーンの線の太さ（ピクセル。未設定ならメッシュの種類ごとの太さ、負の値なら線を引かない）
+//   [12]: キャラクターとして扱うか（正の値：扱う、負の値：扱わない。未設定ならスケルタルメッシュをキャラクターとする）
+//         キャラだけトゥーンにするときにトゥーンで塗るか、キャラクター用の影の設定を使うかに影響する
+FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
+{
+	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+
+	FToonMaterial Material = GetDefaultMaterial();
+
+	uint Type = (uint)round(GetCustomPrimitiveDataFloat(PrimitiveData, 0));
+	if (Type == TOON_MATERIAL_LAMBERTIAN || Type == TOON_MATERIAL_METAL || Type == TOON_MATERIAL_DIELECTRIC)
+	{
+		float RefractionIndex = GetCustomPrimitiveDataFloat(PrimitiveData, 5);
+
+		Material.Type = Type;
+		Material.Albedo = float3(
+			GetCustomPrimitiveDataFloat(PrimitiveData, 1),
+			GetCustomPrimitiveDataFloat(PrimitiveData, 2),
+			GetCustomPrimitiveDataFloat(PrimitiveData, 3));
+		Material.Fuzz = saturate(GetCustomPrimitiveDataFloat(PrimitiveData, 4));
+		Material.RefractionIndex = RefractionIndex > 0.0f ? RefractionIndex : 1.5f;
+	}
+
+	// 影色はマテリアルの種類を設定していないメッシュでも指定できる
+	float3 ShadowColor = float3(
+		GetCustomPrimitiveDataFloat(PrimitiveData, 6),
+		GetCustomPrimitiveDataFloat(PrimitiveData, 7),
+		GetCustomPrimitiveDataFloat(PrimitiveData, 8));
+	if (any(ShadowColor > 0.0f))
+	{
+		Material.ShadowColor = ShadowColor;
+		Material.bHasShadowColor = 1;
+	}
+
+	// ハイライトとリムライトは、平らな床や壁に出ると不自然なため、設定したメッシュにだけ出す
+	Material.HighlightStrength = saturate(GetCustomPrimitiveDataFloat(PrimitiveData, 9));
+	Material.RimStrength = max(GetCustomPrimitiveDataFloat(PrimitiveData, 10), 0.0f);
+
+	// 線の太さは、スケルタルメッシュ（キャラクターなど）とそれ以外（背景など）で分ける
+	// GPUScene のフラグで判定するため、メッシュごとの設定は不要。Custom Primitive Data で個別に上書きできる
+	Material.OutlineWidth = (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0 ? ToonOutlineWidthSkinned : ToonOutlineWidth;
+	// キャラクターごとの線の太さ（スケルタルメッシュのみ）。メッシュごとの Custom Primitive Data の [11] のほうを優先する
+	Material.Character = FindToonCharacterById(PrimitiveData);
+	if (Material.Character >= 0 && (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0)
+	{
+		Material.OutlineWidth = ToonCharacterLook1[Material.Character].a;
+	}
+	float OutlineWidthOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 11);
+	if (OutlineWidthOverride != 0.0f)
+	{
+		Material.OutlineWidth = max(OutlineWidthOverride, 0.0f);
+	}
+
+	// 鳴潮風ルック：キャラクターかどうか。スケルタルメッシュをキャラクターとし、Custom Primitive Data の [12] で上書きできる
+	// （キャラの小物がスタティックメッシュの場合は正の値、キャラとして扱いたくないスケルタルメッシュは負の値）
+	float CharacterOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 12);
+	Material.bCharacter = CharacterOverride != 0.0f
+		? (CharacterOverride > 0.0f ? 1u : 0u)
+		: ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_SKINNED_MESH) != 0 ? 1u : 0u);
+
+	return Material;
+}
+
+// 『Ray Tracing in One Weekend』の hit_record に相当
+struct FToonHitRecord
+{
+	float3 Position;
+	float3 Normal;		// 常にレイと逆向きになるように調整した法線
+	float T;
+	bool bFrontFace;	// レイが表面の外側から当たったか
+	FToonMaterial Material;
+	// 『The Next Week』第4章：テクスチャ座標（本の u, v）。解析的な球でだけ求める
+	float2 UV;
+	// 『The Next Week』第9章：煙の箱から出る位置までの距離（煙では T が箱に入る位置）
+	float VolumeExitT;
+	// 当たった物体の識別番号（シーンでは GPUScene のインスタンス番号、解析的な球では球の番号）。アウトラインの判定に使う
+	uint ObjectId;
+
+	void SetFaceNormal(FToonRay Ray, float3 OutwardNormal)
+	{
+		bFrontFace = dot(Ray.Direction, OutwardNormal) < 0.0f;
+		Normal = bFrontFace ? OutwardNormal : -OutwardNormal;
+	}
+};

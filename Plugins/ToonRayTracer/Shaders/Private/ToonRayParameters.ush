@@ -1,0 +1,412 @@
+#pragma once
+
+// ToonRayGen.usf のパラメータ（C++ の FToonRayGenShader::FParameters からバインドされる値）と、全体で使う定数
+
+// C++からバインドされる書き込み用テクスチャ
+RWTexture2D<float4> OutputTexture;
+// 通常描画（トーンマップ後）の画面。キャラだけトゥーンにするとき、それ以外のピクセルにそのまま使う
+Texture2D SceneColorTexture;
+// 鳴潮風ルック フェーズ1：1 なら、トゥーンで塗るのはキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
+uint bToonCharacterOnly;
+// 鳴潮風ルック フェーズ3：1 なら、TSR の前（描画解像度、トーンマップ前の HDR）に描く
+// ピクセル中心に 1 本だけレイを飛ばし（TAA のジッターはカメラの行列に含まれる）、アンチエイリアスとフレームをまたいだ平均は TSR に任せる
+// 出力は線形の色のまま書き込み、トーンマップは UE に任せる
+uint bBeforeTSR;
+// 1 なら、TSR の前に描くとき、トーンマップを打ち消した色を書き込む（トーンマップの後に描いた場合と同じ色味にする）
+uint bToonInverseTonemap;
+// トーンマップで掛かる露出（前のフレームの自動露出の値。0 なら不明として露出の補正をしない）
+float ToonEyeAdaptationExposure;
+
+// フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
+RWTexture2D<float4> AccumulationTexture;
+// 鳴潮モードの仕上げのぼかしの元（ToonGlowSample のフレームをまたいだ平均。ViewRect 内のローカル座標）
+RWTexture2D<float4> ToonGlowTexture;
+
+// AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）
+uint AccumulatedFrames;
+
+// 蓄積するフレーム数の上限（達したら蓄積済みの結果を表示し続ける）
+uint MaxAccumulatedFrames;
+
+// 乱数の種に混ぜる値（蓄積中は毎フレーム変わり、上限で止まらない）
+uint RandomSeed;
+
+// 動く物体への対応：GBuffer の速度、前のフレームの深度（ピクセルごと）、シーン内で動いている物体があるかのフラグ
+Texture2D GBufferVelocityTexture;
+RWTexture2D<float> AccumulationDepthTexture;
+// ピクセルの中心で「何が見えているか」の要約（ComputePixelSignature）。変わったピクセルは蓄積をやり直す
+RWTexture2D<uint> AccumulationSignatureTexture;
+StructuredBuffer<uint> PreviousSceneMotion;
+RWStructuredBuffer<uint> SceneMotion;
+// 1 なら動く物体を検出して、そのピクセルの蓄積をやり直す
+uint bDetectMotion;
+// 動いている物体があるフレームでの蓄積数の上限（影や映り込みの残像を短くする）
+uint MotionMaxAccumulatedFrames;
+
+// 1 なら、蓄積をやり直した理由を色で表示する（確認用）
+uint DebugMotion;
+
+// 蓄積をやり直した理由（DebugMotion の表示に使う）
+#define TOON_RESET_ALL			1u	// カメラや設定が変わった
+#define TOON_RESET_VELOCITY		2u	// 動いている物体が見えている
+#define TOON_RESET_DEPTH		4u	// 見えている物体の深度が変わった
+#define TOON_RESET_SIGNATURE	8u	// 見えている物体・影・反射の先が変わった
+
+// 動いているとみなす速度（ピクセル / フレーム）
+#define TOON_MOTION_MIN_PIXELS 0.05f
+// シーン内で物体が動いているとみなす、深度が変わったピクセルの割合（画面全体に対して）
+// 髪の毛先などの 1 ピクセルより細い部分は、TAA のジッターで描かれたり描かれなかったりして深度の変化と誤検出されるため、
+// 数ピクセルだけの変化では「動いている」としない（速度による検出は誤検出しないので 1 ピクセルでも動いているとする）
+#define TOON_MOTION_DEPTH_PIXEL_RATIO 0.0005f
+
+// 見えている物体が変わったとみなす深度の差（割合）
+#define TOON_MOTION_DEPTH_TOLERANCE 0.01f
+
+// シーンの TLAS（Translated World 空間で構築されている）
+RaytracingAccelerationStructure TLAS;
+
+// 0: 解析的な物体（本のシーン）、1: シーンの TLAS に TraceRay
+// シェーダーのパーミュテーション（TOON_ANALYTIC_SCENE）で決まる定数にして、使わない側のコードをコンパイル時に取り除く
+// （レイトレーシングのシェーダーは TraceRay を呼ぶ箇所が多いほど、ドライバーの組み立てと実行が急激に重くなるため）
+#if TOON_ANALYTIC_SCENE
+static const uint TraceMode = 0;
+#else
+static const uint TraceMode = 1;
+#endif
+
+// 1ピクセルあたりのサンプル数（アンチエイリアス）
+uint SamplesPerPixel;
+
+// 蓄積をやり直したピクセルと、物体が動いている間の、1 ピクセルあたりのサンプル数
+// 動いている間は負荷を下げ、止まったらフレームをまたいだ蓄積でアンチエイリアスを補う
+uint MotionSamplesPerPixel;
+
+// 『The Rest of Your Life』第2〜3章：1 なら、ピクセル内のサンプル位置を層化する（格子状のマスに 1 本ずつ散らす）
+uint bStratifiedSampling;
+
+// 『The Rest of Your Life』：拡散反射（ランバート）で、反射したレイの方向をどう選ぶか（r.ToonRayTracer.ScatterSampling）
+//   0：法線＋単位球上のランダムな点（『One Weekend』の方法。結果的にコサイン分布になる）
+//   1：半球上で一様（第6章の比較用。平均は同じだが、ノイズが増える）
+//   2：コサイン分布（第7〜8章。法線を基準にした正規直交基底で、cosθ に比例した方向を直接作る）
+//   3：ライトを直接狙う（第9章。光る四角形の上のランダムな点へ向けて飛ばす。直接光だけになる）
+//   4：混合（第10〜12章。ライトを狙う方向とコサイン分布の方向を半々の確率で選ぶ）
+#define TOON_SCATTER_SAMPLING_UNIT_VECTOR		0
+#define TOON_SCATTER_SAMPLING_UNIFORM_HEMISPHERE	1
+#define TOON_SCATTER_SAMPLING_COSINE			2
+#define TOON_SCATTER_SAMPLING_LIGHT			3
+#define TOON_SCATTER_SAMPLING_MIXTURE			4
+uint ScatterSampling;
+
+// 0: 法線の可視化、1: 本の第9〜11章のマテリアル、2: N・L、3: トゥーン
+// トゥーンはパーミュテーション（TOON_SHADING）で分け、確認用の表示モードのコードを含めない
+#if TOON_SHADING
+static const uint ShadingMode = 3;
+#else
+uint ShadingMode;
+#endif
+
+// レイが反射する最大回数（本の max_depth）
+uint MaxDepth;
+
+// クリップ空間 → Translated World 空間への変換行列
+float4x4 ClipToTranslatedWorld;
+
+// Translated World 空間 → クリップ空間への変換行列（反射した先の点を画面に投影する）
+float4x4 TranslatedWorldToClip;
+
+// 1 なら、反射・屈折した先の点もカメラから見えていれば GBuffer の値を使う
+uint bUseGBufferForReflections;
+
+// 反射・屈折した先の法線をなめらかにするための補助レイの間隔（cm）。0 なら面ごとの法線
+float ReflectionNormalSmoothing;
+
+// 出力テクスチャ内の描画範囲（ViewRect）
+int2 ViewRectMin;
+int2 ViewRectSize;
+
+// カメラから最初に当たった面の法線とベースカラーを、通常描画の GBuffer から読むためのテクスチャ
+Texture2D GBufferATexture;
+Texture2D GBufferBTexture;
+Texture2D GBufferCTexture;
+// マテリアルの発光：ベースパスの直後のシーンの色（露出を先に掛けた値）と、足す強さ（0 なら足さない）
+Texture2D ToonEmissiveTexture;
+float ToonEmissiveStrength;
+Texture2D SceneDepthTexture;
+// 眉毛の透け：眉毛の線の形だけを描いた深度（Toon Character コンポーネントが作るメッシュの複製が描く。何もなければ 0）
+Texture2D CustomDepthTexture;
+// GBuffer 内の描画範囲（描画解像度）
+int2 GBufferViewRectMin;
+int2 GBufferViewRectSize;
+// 1 なら GBuffer の法線を使う
+uint bUseGBufferNormal;
+// 1 なら、マテリアル未指定のメッシュの色に GBuffer のベースカラーを使う
+uint bUseGBufferBaseColor;
+// 1 なら、マテリアル未指定のメッシュを GBuffer のメタリックとラフネスから金属と判定する
+uint bUseGBufferMetal;
+// 金属として鏡面反射させるラフネスの上限（これより粗い金属は普通の塗りにする）
+float MetalRoughnessThreshold;
+// 1 なら、カメラのレイが GBuffer に描かれていない面（マテリアルの透過で抜けた部分など）に当たったとき、通り抜ける
+uint bSkipMaskedSurfaces;
+
+// 汎用化 G4：物体ごとの代表色（前のフレームまでに見えた UE のマテリアルの色の平均）と、このフレームに見えた色の合計
+StructuredBuffer<uint> ObjectColorTable;
+RWStructuredBuffer<uint> ObjectColorFrameSums;
+
+// メタリックがこれ以上なら金属とみなす
+#define TOON_GBUFFER_METALLIC_THRESHOLD 0.5f
+
+// Directional Light（光源へ向かう方向、色）。bHasDirectionalLight が 0 ならライトなし
+float3 ToLightDirection;
+float3 LightColor;
+uint bHasDirectionalLight;
+
+// トゥーン：段階数（2 or 3）、NdotL のしきい値、境目のぼかし幅、影色、明るい面のライト色
+uint ToonBands;
+float ToonShadowThreshold;
+float ToonLitThreshold;
+float ToonEdgeSoftness;
+float3 ToonShadowColor;
+float3 ToonLightColor;
+// トゥーン T3：シャドウレイによる影を付けるか、シャドウレイの始点を面から浮かせる距離（cm）
+uint bToonCastShadows;
+float ToonShadowBias;
+// トゥーンの面光源のやわらかい影（『The Rest of Your Life』の応用）
+// ・ToonSoftShadowCosAngle：光源の広がり（円錐の半角）の cos。1 ならくっきりした影（シャドウレイ 1 本）
+// ・ToonSoftShadowSamples：円錐の中に飛ばすシャドウレイの本数
+// ・ToonSoftShadowSteps：光が届く割合を何段階に区切るか（0 か 1 なら区切らず、なめらかなグラデーション）
+float ToonSoftShadowCosAngle;
+uint ToonSoftShadowSamples;
+uint ToonSoftShadowSteps;
+// トゥーンの照り返し（間接光、『The Rest of Your Life』の応用）
+// ・ToonIndirectStrength：周りの面の色を足す強さ（0 なら照り返しなし）
+// ・ToonIndirectSamples：周りを調べるレイの本数
+float ToonIndirectStrength;
+uint ToonIndirectSamples;
+// Perlin ノイズの応用：影の境目を手描き風に揺らす強さ（0 なら揺らさない）と、揺れの大きさ（cm）
+float ToonShadowNoiseStrength;
+float ToonShadowNoiseSize;
+// 鳴潮風ルック フェーズ2：0 なら、キャラクターは自分自身の影を受けない（ほかの物体の影だけ受ける）
+// 服のシワや重なりのまだらな影、前髪や頭が顔に落とす影が消える
+uint bToonCharacterSelfShadow;
+// 鳴潮風ルック フェーズ2：肌（顔）の塗り
+// UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面を肌とし、
+// 影との境目の N・L と影色を肌用の値にする（顔に細かい影が入りにくく、影は赤みのある色にする）
+uint bToonSkin;
+// 鳴潮モード：ゲームのテクスチャ（影色の LD、ハイライトの HM、影の出やすさの VC）で影とハイライトを決める
+// マテリアルのシェーディングモデルを Two Sided Foliage にし、空いている GBuffer の欄に書き込んで渡す
+//   Subsurface Color（GBufferD の rgb）：影の部分の色（LD）
+//   Metallic（GBufferB の r）：髪のハイライトの形（HM の G）
+//   Specular（GBufferB の g）：キラッと光る小さなハイライト（HM の R）
+//   Roughness（GBufferB の b）：影の出やすさ（VC の G。0.5 で変化なし、小さいほど影になりやすい）
+// ・bToonWutheringMode：1 なら有効
+// ・ToonWutheringHighlightStrength：髪のハイライトの強さ
+// ・ToonWutheringSparkleStrength：キラッと光る小さなハイライトの強さ
+// ・ToonWutheringShadowBias：影の出やすさを N・L に足すときの倍率
+uint bToonWutheringMode;
+float ToonWutheringHighlightStrength;
+float ToonWutheringSparkleStrength;
+float ToonWutheringShadowBias;
+// ・ToonWutheringReflectionRimStrength：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）の強さ（キャラクターのリムライトの強さに掛ける）
+float ToonWutheringReflectionRimStrength;
+Texture2D GBufferDTexture;
+float ToonSkinShadowThreshold;
+float3 ToonSkinShadowColor;
+// 鳴潮風ルック フェーズ2：キャラクターのリムライトと線の色
+// ・リムライト：光源の側の輪郭に、一定の幅（ピクセル）で明るい縁を入れる強さ
+// ・線の色：キャラクターの線を、黒ではなく素材の色を暗くした色にする倍率（0 なら全体の線の色）
+float ToonCharacterRimStrength;
+float ToonCharacterRimWidth;
+float ToonCharacterOutlineColorScale;
+// 眉毛の透け：キャラクターの髪の奥（ToonSeeThroughDistance cm 以内）に、Custom Primitive Data の [13] で指定したパーツ（眉毛など）があれば、
+// そのピクセルの色を ToonSeeThroughBrightness 倍に暗くした色を、ToonSeeThroughOpacity の割合で重ねる（0 なら透かさない）
+float ToonSeeThroughOpacity;
+float ToonSeeThroughBrightness;
+// 眉毛の透けで塗る色と、色で塗る割合（0 なら髪の色を暗くするだけ、1 ならこの色で塗る）
+float3 ToonSeeThroughColor;
+float ToonSeeThroughColorBlend;
+float ToonSeeThroughDistance;
+// 見せるパーツのマテリアルスロット（スロット番号 n なら 2^n のビット）。Custom Primitive Data の [13] を設定していないキャラクターに使う
+uint ToonSeeThroughSlotMask;
+// 目の表現：目のマテリアルスロット（スロット番号 n なら 2^n のビット）。キャラクターのこのパーツを目として扱う
+uint ToonEyeSlotMask;
+// 目の表現：目のスロットの中で、目として扱う三角形の番号の範囲 [Start, End)。End が 0 なら最後まで
+// 眉毛やまつ毛が目と同じスロットにある場合に、目の部分だけを選ぶ（番号は r.ToonRayTracer.Debug.Geometry 3 で調べる）
+uint ToonEyeTriangleStart;
+uint ToonEyeTriangleEnd;
+// 目の表現：1 なら、目には陰影を付けず、いつも明るい面の色で塗る
+uint bToonEyeUnlit;
+// 目の表現：上まぶたの影。目の点からキャラクターの上方向へ ToonEyeShadowDistance cm 以内にまぶたなどがあれば、
+// 色を ToonEyeShadowBrightness 倍にする（1 なら影なし）
+float ToonEyeShadowDistance;
+float ToonEyeShadowBrightness;
+// 目の表現：光に合わせた瞳のハイライト。目を球とみなした仮の向きと光の向きから、くっきりした光の点を加える
+// ・ToonEyeHighlightStrength：強さ（0 ならなし）
+// ・ToonEyeHighlightThreshold：N・H のしきい値（1 に近いほど点が小さい）
+// ・ToonEyeHighlightSearchRadius：目の範囲の端を探す最大の距離（cm）。目の半径より大きくする
+float ToonEyeHighlightStrength;
+float ToonEyeHighlightThreshold;
+float ToonEyeHighlightSearchRadius;
+// 顔の影：顔の明暗を、面の向きではなく、頭の向きと光の向きから計算した境目で決める（SDF の顔影と同じ動き方）
+// ・bToonFaceShadow：1 なら有効
+// ・ToonFaceSlotMask：顔のマテリアルスロット（スロット番号 n なら 2^n のビット）
+// ・ToonFaceCenter：両目の中点（Translated World）、w は顔の半分の幅（cm）
+// ・ToonFaceRight / ToonFaceForward：顔の右と前の向き（水平）。Forward の w は、この顔として扱う範囲の半径（cm）
+uint bToonFaceShadow;
+uint ToonFaceSlotMask;
+uint NumToonFaces;
+// 顔の影：境目の曲がり具合。目の高さから上下に離れるほど、境目を光の側へ戻す（頬や顎に沿ったカーブ。0 ならまっすぐ）
+float ToonFaceShadowCurve;
+// 顔の影：境目のぼかし幅（顔の半分の幅を 1 としたときの、境目の片側の幅）。大きいほど柔らかい影になる
+float ToonFaceShadowSoftness;
+// 顔の影：前からの光の補正。光の前後の成分（-1 ～ 1）からこの値を引いて使う
+// 横寄りの光で、顔の中心線（鼻・口・顎の輪郭）だけが細く明るくなるのを防ぐ（0 なら補正なし）
+float ToonFaceShadowFrontBias;
+float4 ToonFaceCenter[TOON_MAX_FACES];
+float4 ToonFaceRight[TOON_MAX_FACES];
+float4 ToonFaceForward[TOON_MAX_FACES];
+// キャラクターごとの設定（顔ごと）。GetToonCharacterParts を参照
+uint4 ToonCharacterSlots[TOON_MAX_FACES];
+uint4 ToonCharacterSlots2[TOON_MAX_FACES];
+// xy：上まぶたの影をかけないスロット
+uint4 ToonCharacterSlots3[TOON_MAX_FACES];
+float4 ToonCharacterParams[TOON_MAX_FACES];
+float4 ToonCharacterParams2[TOON_MAX_FACES];
+// キャラクターごとの見た目（全体の設定と組み合わせ済み）。GetToonCharacterLook を参照
+float4 ToonCharacterLook0[TOON_MAX_FACES];
+float4 ToonCharacterLook1[TOON_MAX_FACES];
+float4 ToonCharacterLook2[TOON_MAX_FACES];
+float4 ToonCharacterLook3[TOON_MAX_FACES];
+float4 ToonCharacterLook4[TOON_MAX_FACES];
+float4 ToonCharacterLook5[TOON_MAX_FACES];
+// 前髪の影：顔のピクセルから光へシャドウレイを飛ばし、同じキャラクターの髪のパーツに当たったときだけ影にする
+// ・bToonHairShadow：0 なら無効、1 なら見え方で決める（前髪の縁の下に帯状の影）、2 なら光の方向へシャドウレイを飛ばす
+// ・ToonHairSlotMask：髪のマテリアルスロット（スロット番号 n なら 2^n のビット）
+// ・ToonHairShadowDistance：2 のとき、髪を探す距離（cm）
+// ・ToonHairShadowStrength：影の濃さ（0 ～ 1）
+// ・ToonHairShadowWidth：1 のとき、前髪の縁の下の影の幅（cm）
+// ・ToonHairShadowLightShift：1 のとき、影の幅に対して、光の側へずらす割合
+uint bToonHairShadow;
+uint ToonHairSlotMask;
+float ToonHairShadowDistance;
+float ToonHairShadowStrength;
+float ToonHairShadowWidth;
+float ToonHairShadowLightShift;
+// 確認用：1 なら、カメラのレイが当たった面のジオメトリ番号（マテリアルスロット）を色で表示する
+// 2 なら、眉毛の透けの判定結果を色で表示する（GetDebugSeeThroughColor を参照）
+// 3 なら、目のスロットで、目として扱う三角形を緑、範囲外の三角形を赤で表示する
+// 4 なら、目の上まぶたの影の判定結果を色で表示する（GetDebugEyelidColor を参照）
+// 6 なら、顔の影の結果を表示する（黄：明るい面、青：影、マゼンタ：近くに顔が見つからない）
+// 5 なら、目の N・H（面の向きと、光と視線の中間の向きの近さ）を明るさで表示し、ハイライトになる部分を赤で示す
+uint bToonDebugGeometry;
+// 鳴潮風ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
+float ToonSkyTint;
+// 影の色の鮮やかさ：影の色（素材の色 × 影色）の明るさは保ったまま、彩度をどれだけ上げるか（0 なら変えない）
+float ToonShadowSaturation;
+// シャドウレイの始点をずらす量の倍率（強さ × 揺れの大きさ × この値 cm だけずらす）
+// 大きすぎるとずれの変化がノイズの模様より急になり、境目が折り返して点々になる
+#define TOON_SHADOW_NOISE_OFFSET_SCALE 2.0f
+// メッシュのローカル座標を求めるための、Translated World 空間の原点のワールド座標（double を High と Low に分けたもの）
+float3 PreViewTranslationHigh;
+float3 PreViewTranslationLow;
+// トゥーン T5：ハイライト（NdotH のしきい値、強さ）とリムライト（1 - NdotV のしきい値、強さ、光が当たる側だけか）
+float ToonHighlightThreshold;
+float ToonHighlightStrength;
+float ToonRimThreshold;
+float ToonRimStrength;
+uint bToonRimLitSideOnly;
+
+// ハイライトの境目のぼかし幅（NdotH は 1 付近で変化が小さいため、陰影の境目より狭くする）
+#define TOON_HIGHLIGHT_SOFTNESS 0.005f
+
+// トゥーン T6：アウトラインを引くか、線の太さ（ピクセル）、線を引く距離の差のしきい値（補助レイをずらした量の何倍か）、線の色
+uint bToonOutline;
+float ToonOutlineWidth;
+// スケルタルメッシュ（キャラクターなど）の線の太さ（ピクセル）
+float ToonOutlineWidthSkinned;
+float ToonOutlineThreshold;
+// 顔の中の線：顔のパーツどうしの間では、面の折れ目の線を引かず、段差の許容量をこの倍率で広げる（唇などの小さな凹凸に線を出さない）
+float ToonFaceOutlineTolerance;
+float3 ToonOutlineColor;
+
+// 別の物体が「遠く手前にある（遮っている）」とみなす距離の差（補助レイをずらした量の何倍か）
+#define TOON_OUTLINE_OCCLUDER_GAP 4.0f
+
+// 面の折れ目とみなす法線の角度差（cos 35°）。球の隣り合うポリゴン（10° 前後）では線を引かない
+#define TOON_OUTLINE_CREASE_COS 0.82f
+
+// トゥーン T7：金属・ガラスで反射・屈折を追いかける回数の上限
+uint ToonReflectionDepth;
+
+// 同じ物体どうしの段差の判定で、許容量を何倍に広げるか
+#define TOON_OUTLINE_SAME_OBJECT_SCALE 3.0f
+
+// 球のリスト（xyz: Translated World 空間の中心、w: 半径）
+float4 Spheres[TOON_MAX_SPHERES];
+// 球のマテリアル（x: 種類, y: 金属のぼけ具合, z: 屈折率, w: トゥーンのハイライトとリムライトの強さ）と反射率（rgb）
+float4 SphereMaterialParams[TOON_MAX_SPHERES];
+float4 SphereAlbedo[TOON_MAX_SPHERES];
+// 『The Next Week』第4章：球のテクスチャ（x: 種類, y: 大きさ）と、チェッカーのもう一方の色（rgb）
+float4 SphereTextureParams[TOON_MAX_SPHERES];
+float4 SphereAlbedo2[TOON_MAX_SPHERES];
+// 『The Next Week』第2章：シャッターが開いている間（時刻 0 ～ 1）に球が動く量（xyz、cm）
+float4 SphereMotion[TOON_MAX_SPHERES];
+uint NumSpheres;
+
+// 『The Next Week』第2章：このサンプルのレイの時刻（0 ～ 1、本の ray::time）
+// 本はレイごとに時刻を持たせ、反射・屈折したレイにも引き継ぐ。1 サンプルの間はすべてのレイが同じ時刻になるため、
+// ここではサンプルごとの変数に入れ、シャドウレイなどの関数に時刻を渡さずに済むようにしている
+static float SampleTime = 0.0f;
+
+// 『The Next Week』第6章：四角形（Q：角の位置、U と V：角から伸びる 2 辺。xyz を使う）とマテリアル
+float4 QuadQ[TOON_MAX_QUADS];
+float4 QuadU[TOON_MAX_QUADS];
+float4 QuadV[TOON_MAX_QUADS];
+// x: 種類, y: 金属のぼけ具合, z: 屈折率, w: トゥーンのハイライトとリムライトの強さ
+float4 QuadMaterialParams[TOON_MAX_QUADS];
+float4 QuadAlbedo[TOON_MAX_QUADS];
+uint NumQuads;
+
+// 『The Next Week』第8〜9章：箱（xyz: Translated World 空間の中心, w: 上下軸まわりの回転（ラジアン））、半分の大きさ（xyz）とマテリアル
+float4 BoxCenter[TOON_MAX_BOXES];
+float4 BoxHalfExtent[TOON_MAX_BOXES];
+// x: 種類, y: 煙の濃さ（1cm あたりに散乱する確率）, w: トゥーンのハイライトとリムライトの強さ
+float4 BoxMaterialParams[TOON_MAX_BOXES];
+float4 BoxAlbedo[TOON_MAX_BOXES];
+uint NumBoxes;
+
+// 『The Next Week』第10章：地面に敷き詰めた箱の格子（本の final_scene の boxes1）
+// 格子の左下の角（xyz: Translated World 空間）と 1 マスの大きさ（w）、マスの数（xy）と箱の高さの範囲（zw）、色
+float4 GroundGridOrigin;
+float4 GroundGridParams;
+float4 GroundGridAlbedo;
+uint bGroundGrid;
+
+// 『The Next Week』第3章：BVH（入れ子の箱）で探す、たくさんの小さな球（本の final_scene の boxes2）
+// ノード 1 つは float4 2 つ：[0] = (箱の最小値 xyz, 子または最初の球の番号), [1] = (箱の最大値 xyz, 葉の球の数（0 なら内部ノード）)
+// 内部ノードの左の子は次の番号、右の子は [0].w の番号（深さ優先の順に並べている）
+// 座標は BvhOrigin（Translated World 空間）からの相対位置
+StructuredBuffer<float4> BvhNodes;
+StructuredBuffer<float4> BvhSpheres;	// xyz: 中心, w: 半径
+float4 BvhOrigin;
+float4 BvhAlbedo;
+uint NumBvhNodes;
+
+// BVH の球の識別番号の始まり（他の物体と重ならないよう大きくしている）
+#define TOON_BVH_OBJECT_ID_BASE 0x100000u
+// BVH をたどるときのスタックの大きさ（木の深さより大きくする）
+#define TOON_BVH_STACK_SIZE 32
+
+// 『The Next Week』第7章：1 なら背景を空ではなく黒にする（光る物体だけで照らすシーン）
+uint bBlackBackground;
+
+// テクスチャの種類（C++ 側の EToonTextureType と一致させる）
+#define TOON_TEXTURE_SOLID				0	// 単色（本の solid_color）
+#define TOON_TEXTURE_CHECKER			1	// 空間のチェッカー（本の checker_texture）。大きさは 1 マスの辺の長さ（cm）
+#define TOON_TEXTURE_SPHERE_UV_CHECKER	2	// 球のテクスチャ座標（UV）上のチェッカー。大きさは経度方向のマスの数
+#define TOON_TEXTURE_MARBLE				3	// 『The Next Week』第5章の大理石模様（本の noise_texture）。大きさは 1m あたりの縞の細かさ（本の scale）
+#define TOON_TEXTURE_IMAGE				4	// 『The Next Week』第4章の画像テクスチャ（本の image_texture）。画像がなければ UV のチェッカーで代用する
+
+// 『The Next Week』第4章：球に貼る画像（本の earthmap.jpg）。bImageTexture が 0 なら画像がない
+Texture2D ImageTexture;
+SamplerState ImageTextureSampler;
+uint bImageTexture;
