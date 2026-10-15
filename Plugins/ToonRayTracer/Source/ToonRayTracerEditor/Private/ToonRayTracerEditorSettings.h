@@ -184,6 +184,14 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：明るさ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float SeeThroughBrightness;
 
+	/** 眉毛が透けている部分を、髪の色を暗くする代わりに、この色（眉毛の色）で塗る割合（0 なら髪を暗くするだけ、1 ならこの色で塗る） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：色で塗る割合", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float SeeThroughColorBlend;
+
+	/** 眉毛の透けで塗る色。光の色と、髪の明るさ（影なら暗く）を掛ける */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：色", HideAlphaChannel))
+	FLinearColor SeeThroughColor;
+
 	/** 髪の奥を何 cm まで探すか。大きすぎると、頭の反対側のパーツまで透ける */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "眉毛の透け：探す距離（cm）", ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
 	float SeeThroughDistance;
@@ -332,6 +340,62 @@ public:
 	/** マテリアルの発光の強さ。UE のマテリアルの発光（エミッシブ）の色を、トゥーンの塗りに足す。カメラから見えている面だけ。0 なら足さない */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "発光の強さ", ClampMin = "0.0", UIMax = "4.0"))
 	float EmissiveStrength;
+
+	/** 鳴潮モード。シェーディングモデルが Two Sided Foliage のマテリアルは、空いている GBuffer の欄に入れたゲームのテクスチャ（Subsurface Color：影色 LD、Metallic：髪のハイライト HM の G、Specular：キラッとしたハイライト HM の R、Roughness：影の出やすさ VC の G）で、影とハイライトを決める */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "鳴潮モード"))
+	bool bWuthering;
+
+	/** 鳴潮モード：髪のハイライト（HM の G）の強さ */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "髪のハイライトの強さ", ClampMin = "0.0", UIMax = "2.0"))
+	float WutheringHighlightStrength;
+
+	/** 鳴潮モード：キラッと光る小さなハイライト（HM の R）の強さ */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "キラッとしたハイライトの強さ", ClampMin = "0.0", ClampMax = "1.0"))
+	float WutheringSparkleStrength;
+
+	/** 鳴潮モード：影の出やすさ（VC の G）で影の境目をずらす量。大きいほど毛束の奥などが影になりやすい */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "影の出やすさの効き", UIMin = "0.0", UIMax = "2.0"))
+	float WutheringShadowBias;
+
+	/** 鳴潮モード：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）の強さ。キャラクターのリムライトの強さに掛ける。0 なら入れない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "照り返しのリムの強さ", ClampMin = "0.0", UIMax = "2.0"))
+	float WutheringReflectionRimStrength;
+
+	/** 鳴潮モード：Diffusion Filter の強さ（0 ～ 1）。キャラクターの色どうしを乗算した色に、ぼかした「乗算した色 × 光の色」をスクリーンで重ね、元の色と比べて明るい方を残す。明るい部分が光の色でふんわりにじむ。0 なら掛けない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "Diffusion Filter の強さ", ClampMin = "0.0", ClampMax = "1.0"))
+	float WutheringDiffusionStrength;
+
+	/** 鳴潮モード：Diffusion Filter のぼかしの半径（ピクセル） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "Diffusion Filter のぼかしの半径（ピクセル）", ClampMin = "0.0", UIMax = "64.0"))
+	float WutheringDiffusionRadius;
+
+	/** 鳴潮モード：Soft Focus の強さ（0 ～ 1）。キャラクターをぼかした画像を重ねる割合。輪郭や細い線が柔らかくなる。0 なら掛けない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "Soft Focus の強さ", ClampMin = "0.0", ClampMax = "1.0"))
+	float WutheringSoftFocusStrength;
+
+	/** 鳴潮モード：Soft Focus のぼかしの半径（ピクセル） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "Soft Focus のぼかしの半径（ピクセル）", ClampMin = "0.0", UIMax = "32.0"))
+	float WutheringSoftFocusRadius;
+
+	/** 鳴潮モード：光の側のリムをぼかして加える強さ（キャラクターの外側にもにじむ）。0 なら加えない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "リムの Bloom の強さ", ClampMin = "0.0", UIMax = "4.0"))
+	float WutheringBloomStrength;
+
+	/** 鳴潮モード：リムの Bloom のぼかしの半径（ピクセル） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "リムの Bloom のぼかしの半径（ピクセル）", ClampMin = "0.0", UIMax = "64.0"))
+	float WutheringBloomRadius;
+
+	/** 鳴潮モード：画面全体（背景も含む）に掛ける、上から下へのグラデーションの強さ。0 なら掛けない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "グラデーションの強さ", ClampMin = "0.0", UIMax = "2.0"))
+	float WutheringGradationStrength;
+
+	/** 鳴潮モード：グラデーションで画面の上端に掛ける色 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "グラデーションの上の色", HideAlphaChannel))
+	FLinearColor WutheringGradationTopColor;
+
+	/** 鳴潮モード：グラデーションで画面の下端に掛ける色 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|鳴潮モード", meta = (DisplayName = "グラデーションの下の色", HideAlphaChannel))
+	FLinearColor WutheringGradationBottomColor;
 
 	// ---- トゥーン：影 ----
 

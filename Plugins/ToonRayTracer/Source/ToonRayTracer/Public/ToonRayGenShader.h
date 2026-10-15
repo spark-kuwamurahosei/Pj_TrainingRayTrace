@@ -60,6 +60,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		// フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, AccumulationTexture)
+		// 鳴潮モードの仕上げのぼかしの元（rgb：光の側のリムの色、a：鳴潮モードのキャラクターの割合）のフレームをまたいだ平均
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, ToonGlowTexture)
 		// AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）
 		SHADER_PARAMETER(uint32, AccumulatedFrames)
 		// 蓄積するフレーム数の上限
@@ -148,6 +150,13 @@ class FToonRayGenShader : public FGlobalShader
 		// マテリアルの発光：ベースパスの直後のシーンの色と、足す強さ（0 なら足さない）
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonEmissiveTexture)
 		SHADER_PARAMETER(float, ToonEmissiveStrength)
+		// 鳴潮モード：ゲームのテクスチャで影とハイライトを決める（GBufferD に影色が入る）
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferDTexture)
+		SHADER_PARAMETER(uint32, bToonWutheringMode)
+		SHADER_PARAMETER(float, ToonWutheringHighlightStrength)
+		SHADER_PARAMETER(float, ToonWutheringSparkleStrength)
+		SHADER_PARAMETER(float, ToonWutheringShadowBias)
+		SHADER_PARAMETER(float, ToonWutheringReflectionRimStrength)
 		// GBuffer 内の描画範囲（描画解像度。アップスケール後の ViewRect とは異なることがある）
 		SHADER_PARAMETER(FIntPoint, GBufferViewRectMin)
 		SHADER_PARAMETER(FIntPoint, GBufferViewRectSize)
@@ -204,6 +213,8 @@ class FToonRayGenShader : public FGlobalShader
 		// 眉毛の透け：重ねる割合、髪の色を暗くする倍率、髪の奥を探す距離（cm）
 		SHADER_PARAMETER(float, ToonSeeThroughOpacity)
 		SHADER_PARAMETER(float, ToonSeeThroughBrightness)
+		SHADER_PARAMETER(FVector3f, ToonSeeThroughColor)
+		SHADER_PARAMETER(float, ToonSeeThroughColorBlend)
 		SHADER_PARAMETER(float, ToonSeeThroughDistance)
 		SHADER_PARAMETER(uint32, ToonSeeThroughSlotMask)
 		// 目の表現：目のマテリアルスロットのビットと、目に陰影を付けないか
@@ -231,6 +242,7 @@ class FToonRayGenShader : public FGlobalShader
 		// キャラクターごとの設定（顔ごと）：パーツのスロットのビットと、幅や距離
 		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots2, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots3, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams2, [MaxFaces])
 		// キャラクターごとの見た目（全体の設定と組み合わせ済み）
@@ -239,6 +251,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook2, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook3, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook4, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook5, [MaxFaces])
 		// 前髪の影：有効か、髪のマテリアルスロットのビット、髪を探す距離（cm）、影の濃さ
 		SHADER_PARAMETER(uint32, bToonHairShadow)
 		SHADER_PARAMETER(uint32, ToonHairSlotMask)
@@ -360,4 +373,90 @@ class FToonObjectColorResolveCS : public FGlobalShader
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		ToonObjectColorTable::ModifyCompilationEnvironment(OutEnvironment);
 	}
+};
+
+// 鳴潮モード：レイトレーシングの後に、画面全体へ掛ける仕上げの処理（ToonPostEffects.usf）
+// Diffusion Filter・Soft Focus・Bloom（キャラクターをぼかして重ねる）と、上から下へのグラデーション
+class FToonPostEffectsShaderBase : public FGlobalShader
+{
+public:
+	static constexpr int32 ThreadGroupSize = 8;
+
+	FToonPostEffectsShaderBase() = default;
+	FToonPostEffectsShaderBase(const ShaderMetaType::CompiledShaderInitializerType& Initializer) : FGlobalShader(Initializer) {}
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return ShouldCompileRayTracingShadersForProject(Parameters.Platform);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
+	}
+};
+
+// 1. 半分の解像度で、ぼかす元の画像（Diffusion・Soft Focus・Bloom）を作る
+class FToonPostEffectsPrepareCS : public FToonPostEffectsShaderBase
+{
+	DECLARE_GLOBAL_SHADER(FToonPostEffectsPrepareCS);
+	SHADER_USE_PARAMETER_STRUCT(FToonPostEffectsPrepareCS, FToonPostEffectsShaderBase);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER(FIntPoint, ViewRectSize)
+		SHADER_PARAMETER(FIntPoint, HalfSize)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, AccumulationTexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonGlowTexture)
+		SHADER_PARAMETER(FVector3f, DiffusionLightColor)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, DiffusionSourceTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, SoftFocusSourceTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, BloomSourceTexture)
+	END_SHADER_PARAMETER_STRUCT()
+};
+
+// 2. 横または縦にぼかす（ガウスぼかし）
+class FToonPostEffectsBlurCS : public FToonPostEffectsShaderBase
+{
+	DECLARE_GLOBAL_SHADER(FToonPostEffectsBlurCS);
+	SHADER_USE_PARAMETER_STRUCT(FToonPostEffectsBlurCS, FToonPostEffectsShaderBase);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER(FIntPoint, HalfSize)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, BlurInputTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, BlurOutputTexture)
+		SHADER_PARAMETER(FIntPoint, BlurDirection)
+		SHADER_PARAMETER(float, BlurRadius)
+	END_SHADER_PARAMETER_STRUCT()
+};
+
+// 3. 元の画面に重ね、最後にグラデーションを掛ける
+class FToonPostEffectsCS : public FToonPostEffectsShaderBase
+{
+	DECLARE_GLOBAL_SHADER(FToonPostEffectsCS);
+	SHADER_USE_PARAMETER_STRUCT(FToonPostEffectsCS, FToonPostEffectsShaderBase);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
+		SHADER_PARAMETER(FIntPoint, ViewRectMin)
+		SHADER_PARAMETER(FIntPoint, ViewRectSize)
+		SHADER_PARAMETER(FIntPoint, HalfSize)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, AccumulationTexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonGlowTexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, DiffusionBlurTexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SoftFocusBlurTexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, BloomBlurTexture)
+		SHADER_PARAMETER_SAMPLER(SamplerState, BlurSampler)
+		SHADER_PARAMETER(float, DiffusionStrength)
+		SHADER_PARAMETER(float, SoftFocusStrength)
+		SHADER_PARAMETER(float, BloomStrength)
+		// 出力の色の形式（0：表示の値、1：トーンマップの逆をかけた値、2：線形の色）と、トーンマップで掛かる露出
+		SHADER_PARAMETER(uint32, OutputEncoding)
+		SHADER_PARAMETER(float, ToonEyeAdaptationExposure)
+		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
+		// グラデーションの強さと、画面の上端・下端で掛ける色
+		SHADER_PARAMETER(float, GradationStrength)
+		SHADER_PARAMETER(FVector3f, GradationTopColor)
+		SHADER_PARAMETER(FVector3f, GradationBottomColor)
+	END_SHADER_PARAMETER_STRUCT()
 };

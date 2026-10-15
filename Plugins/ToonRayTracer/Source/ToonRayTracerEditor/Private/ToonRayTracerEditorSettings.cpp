@@ -171,6 +171,8 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	CharacterOutlineColorScale = 0.25f;
 	SeeThroughOpacity = 0.25f;
 	SeeThroughBrightness = 0.5f;
+	SeeThroughColorBlend = 0.0f;
+	SeeThroughColor = FLinearColor(0.3f, 0.08f, 0.09f);
 	SeeThroughDistance = 20.0f;
 	// 確認に使っているキャラクター（Kanau）では、眉毛・目・まつ毛がエレメント 4 にある
 	SeeThroughSlots = { 4 };
@@ -211,6 +213,20 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	SkyTint = 0.3f;
 	ShadowSaturation = 0.6f;
 	EmissiveStrength = 1.0f;
+	bWuthering = true;
+	WutheringHighlightStrength = 0.5f;
+	WutheringSparkleStrength = 1.0f;
+	WutheringShadowBias = 0.6f;
+	WutheringReflectionRimStrength = 0.5f;
+	WutheringDiffusionStrength = 0.8f;
+	WutheringDiffusionRadius = 24.0f;
+	WutheringSoftFocusStrength = 0.2f;
+	WutheringSoftFocusRadius = 6.0f;
+	WutheringBloomStrength = 2.0f;
+	WutheringBloomRadius = 16.0f;
+	WutheringGradationStrength = 1.0f;
+	WutheringGradationTopColor = FLinearColor(1.06f, 1.03f, 0.96f);
+	WutheringGradationBottomColor = FLinearColor(0.9f, 0.92f, 1.0f);
 
 	bCastShadows = true;
 	ShadowBias = 2.0f;
@@ -270,6 +286,8 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"), CharacterOutlineColorScale);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughOpacity"), SeeThroughOpacity);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"), SeeThroughBrightness);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughColorBlend"), SeeThroughColorBlend);
+	SetColor(TEXT("r.ToonRayTracer.Toon.SeeThroughColor"), SeeThroughColor);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughDistance"), SeeThroughDistance);
 	{
 		// スロット番号の一覧を、シェーダーで使うビットの集まりにする（0 ～ 30 番まで）
@@ -317,6 +335,20 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SkyTint"), SkyTint);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowSaturation"), ShadowSaturation);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.EmissiveStrength"), EmissiveStrength);
+	SetBool(TEXT("r.ToonRayTracer.Toon.Wuthering"), bWuthering);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringHighlightStrength"), WutheringHighlightStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringSparkleStrength"), WutheringSparkleStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringShadowBias"), WutheringShadowBias);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringReflectionRimStrength"), WutheringReflectionRimStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringDiffusionStrength"), WutheringDiffusionStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringDiffusionRadius"), WutheringDiffusionRadius);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringSoftFocusStrength"), WutheringSoftFocusStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringSoftFocusRadius"), WutheringSoftFocusRadius);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringBloomStrength"), WutheringBloomStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringBloomRadius"), WutheringBloomRadius);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.WutheringGradationStrength"), WutheringGradationStrength);
+	SetColor(TEXT("r.ToonRayTracer.Toon.WutheringGradationTopColor"), WutheringGradationTopColor);
+	SetColor(TEXT("r.ToonRayTracer.Toon.WutheringGradationBottomColor"), WutheringGradationBottomColor);
 
 	SetBool(TEXT("r.ToonRayTracer.Toon.CastShadows"), bCastShadows);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowBias"), ShadowBias);
@@ -376,6 +408,8 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"), CharacterOutlineColorScale);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughOpacity"), SeeThroughOpacity);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"), SeeThroughBrightness);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughColorBlend"), SeeThroughColorBlend);
+	GetColor(TEXT("r.ToonRayTracer.Toon.SeeThroughColor"), SeeThroughColor);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughDistance"), SeeThroughDistance);
 	{
 		int32 SlotMask = 0;
@@ -441,6 +475,20 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SkyTint"), SkyTint);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowSaturation"), ShadowSaturation);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.EmissiveStrength"), EmissiveStrength);
+	GetBool(TEXT("r.ToonRayTracer.Toon.Wuthering"), bWuthering);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringHighlightStrength"), WutheringHighlightStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringSparkleStrength"), WutheringSparkleStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringShadowBias"), WutheringShadowBias);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringReflectionRimStrength"), WutheringReflectionRimStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringDiffusionStrength"), WutheringDiffusionStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringDiffusionRadius"), WutheringDiffusionRadius);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringSoftFocusStrength"), WutheringSoftFocusStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringSoftFocusRadius"), WutheringSoftFocusRadius);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringBloomStrength"), WutheringBloomStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringBloomRadius"), WutheringBloomRadius);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.WutheringGradationStrength"), WutheringGradationStrength);
+	GetColor(TEXT("r.ToonRayTracer.Toon.WutheringGradationTopColor"), WutheringGradationTopColor);
+	GetColor(TEXT("r.ToonRayTracer.Toon.WutheringGradationBottomColor"), WutheringGradationBottomColor);
 
 	GetBool(TEXT("r.ToonRayTracer.Toon.CastShadows"), bCastShadows);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowBias"), ShadowBias);
