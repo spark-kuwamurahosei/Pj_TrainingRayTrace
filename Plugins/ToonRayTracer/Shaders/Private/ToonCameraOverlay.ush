@@ -3,8 +3,8 @@
 // カメラから直接見えている面にだけ重ねる表現（アウトライン、キャラクターの線の色とリムライト、眉毛の透け）と、確認用の表示
 // RayColorToon から使う
 
-// 鳴潮モードの仕上げのぼかし（ToonPostEffects.usf）に渡す、このサンプルの値
-// rgb：光の側のリムの色（Bloom の元）、a：カメラから見えている面が鳴潮モードのキャラクターなら 1、その目なら 2
+// Original モードの仕上げのぼかし（ToonPostEffects.usf）に渡す、このサンプルの値
+// rgb：光の側のリムの色（Bloom の元）、a：カメラから見えている面がOriginal モードのキャラクターなら 1、その目なら 2
 static float4 ToonGlowSample = 0.0f;
 
 // 確認用：ジオメトリ番号ごとの色（0 赤、1 緑、2 青、3 黄、4 マゼンタ、5 シアン、6 白、7 オレンジ、8 以上は灰色）
@@ -21,10 +21,10 @@ struct FToonCameraOverlay
 {
 	// トゥーン T6：アウトライン（1 なら線）と線の色
 	float Outline;
-	// 鳴潮風ルック フェーズ2：キャラクターでは、線の色を素材の色を暗くした色にし、リムライトを加える
+	// Original ルック フェーズ2：キャラクターでは、線の色を素材の色を暗くした色にし、リムライトを加える
 	float3 OutlineColor;
 	float3 CharacterRim;
-	// 鳴潮モード：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）
+	// Original モード：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）
 	float3 CharacterReflectionRim;
 	// 眉毛の透け：髪の奥に眉毛などがあれば 1
 	float SeeThrough;
@@ -106,7 +106,7 @@ bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout
 		Overlay.Outline = bOutlineHit ? ToonOutline(UV, Ray, OutlineRec) : 0.0f;
 	}
 
-	// 鳴潮風ルック フェーズ2：キャラクターの線の色とリムライト（どちらも素材の色に合わせる）
+	// Original ルック フェーズ2：キャラクターの線の色とリムライト（どちらも素材の色に合わせる）
 	if (Rec.Material.bCharacter != 0)
 	{
 		FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
@@ -115,11 +115,11 @@ bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout
 			Overlay.OutlineColor = Rec.Material.Albedo * Look.OutlineColorScale;
 		}
 		Overlay.CharacterRim = Rec.Material.Albedo * ToonLightColor * (Look.RimStrength * ToonCharacterRim(UV, Rec, ToLightDirection));
-		// 鳴潮モード：光と反対の側の輪郭にも、空の色（青み）の縁を入れる（照り返しのリム）。光の当たり方によるマスクは、陰影を計算した後で掛ける
-		if (Rec.Material.bWuthering != 0 && ToonWutheringReflectionRimStrength > 0.0f)
+		// Original モード：光と反対の側の輪郭にも、空の色（青み）の縁を入れる（照り返しのリム）。光の当たり方によるマスクは、陰影を計算した後で掛ける
+		if (Rec.Material.bOriginal != 0 && ToonOriginalReflectionRimStrength > 0.0f)
 		{
 			Overlay.CharacterReflectionRim = Rec.Material.Albedo * GetToonSkyHue()
-				* (Look.RimStrength * ToonWutheringReflectionRimStrength * ToonCharacterRim(UV, Rec, -ToLightDirection));
+				* (Look.RimStrength * ToonOriginalReflectionRimStrength * ToonCharacterRim(UV, Rec, -ToLightDirection));
 		}
 		uint SeeThroughReason;
 		Overlay.SeeThrough = ComputeToonSeeThrough(Ray, Rec, SeeThroughReason);
@@ -141,17 +141,17 @@ bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout
 // カメラから見えている普通の素材を塗った後に、光の当たり具合（LightLevel）に合わせて重ねる表現を調整する
 void ApplyToonCameraLighting(FToonHitRecord Rec, float LightLevel, inout FToonCameraOverlay Overlay)
 {
-	// 鳴潮モード：光の側のリムは光の当たる部分だけ、照り返しのリムは影の部分だけに入れる
+	// Original モード：光の側のリムは光の当たる部分だけ、照り返しのリムは影の部分だけに入れる
 	// どちらも、光の方向を向いている度合い（N・L）でなだらかに弱める（Falloff）
-	if (Rec.Material.bWuthering != 0)
+	if (Rec.Material.bOriginal != 0)
 	{
 		float HalfNdotL = dot(Rec.Normal, ToLightDirection) * 0.5f + 0.5f;
 		Overlay.CharacterRim *= LightLevel * HalfNdotL;
 		Overlay.CharacterReflectionRim *= (1.0f - LightLevel) * (1.0f - HalfNdotL);
 	}
-	// 鳴潮モードの仕上げのぼかしは、キャラクター全体（顔や肌など、ゲームのテクスチャを使っていない素材も含む）に掛ける
+	// Original モードの仕上げのぼかしは、キャラクター全体（顔や肌など、ゲームのテクスチャを使っていない素材も含む）に掛ける
 	// 目は 2 にして、Soft Focus でぼかさないようにする（瞳の模様やハイライトをくっきり残す）
-	if (bToonWutheringMode != 0 && Rec.Material.bCharacter != 0)
+	if (bToonOriginalMode != 0 && Rec.Material.bCharacter != 0)
 	{
 		ToonGlowSample.a = Rec.Material.bEye != 0 ? 2.0f : 1.0f;
 	}

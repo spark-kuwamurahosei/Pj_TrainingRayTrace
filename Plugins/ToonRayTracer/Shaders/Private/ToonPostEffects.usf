@@ -1,7 +1,7 @@
 #include "/Engine/Private/Common.ush"
 #include "/Engine/Private/TonemapCommon.ush"
 
-// 鳴潮モードの仕上げ（レイトレーシングの後に、画面全体へ掛ける）
+// Original モードの仕上げ（レイトレーシングの後に、画面全体へ掛ける）
 // 参考にした手順（合成ソフトでのレイヤーの重ね方）を、次の 3 つのパスで行う
 // 1. ToonPostEffectsPrepareCS：半分の解像度で、ぼかす元の画像を 3 枚作る
 // 2. ToonPostEffectsBlurCS：それぞれを横と縦にぼかす（ガウスぼかし）
@@ -18,7 +18,7 @@ int2 ViewRectSize;
 int2 HalfSize;
 
 // RayGen の結果（ViewRect 内のローカル座標）
-// AccumulationTexture：線形の色、ToonGlowTexture：rgb は光の側のリムの色、a は鳴潮モードのキャラクターなら 1、その目なら 2
+// AccumulationTexture：線形の色、ToonGlowTexture：rgb は光の側のリムの色、a はOriginal モードのキャラクターなら 1、その目なら 2
 // （サンプルやフレームの平均なので途中の値もとる。キャラクターの割合は a を 1 で切った値、目の割合は a - 1）
 Texture2D<float4> AccumulationTexture;
 Texture2D<float4> ToonGlowTexture;
@@ -123,7 +123,7 @@ uint OutputEncoding;
 // トーンマップで掛かる露出（0 なら不明として露出の補正をしない）
 float ToonEyeAdaptationExposure;
 
-// 鳴潮モード：上から下へのグラデーション
+// Original モード：上から下へのグラデーション
 // 画面の上端では GradationTopColor、下端では GradationBottomColor を掛ける（間はなめらかにつなぐ）
 // GradationStrength が 1 ならそのまま、0 なら掛けない
 float GradationStrength;

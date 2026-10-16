@@ -83,8 +83,8 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	const FLinearColor OutlineColor = ParseLinearColor(CVarToonRayTracerToonOutlineColor.GetValueOnGameThread(), DefaultToonOutlineColor);
 	const FLinearColor SkinShadowColor = ParseLinearColor(CVarToonRayTracerToonSkinShadowColor.GetValueOnGameThread(), DefaultToonSkinShadowColor);
 	const FLinearColor SeeThroughColor = ParseLinearColor(CVarToonRayTracerToonSeeThroughColor.GetValueOnGameThread(), DefaultToonSeeThroughColor);
-	const FLinearColor GradationTopColor = ParseLinearColor(CVarToonRayTracerToonWutheringGradationTopColor.GetValueOnGameThread(), DefaultToonGradationTopColor);
-	const FLinearColor GradationBottomColor = ParseLinearColor(CVarToonRayTracerToonWutheringGradationBottomColor.GetValueOnGameThread(), DefaultToonGradationBottomColor);
+	const FLinearColor GradationTopColor = ParseLinearColor(CVarToonRayTracerToonOriginalGradationTopColor.GetValueOnGameThread(), DefaultToonGradationTopColor);
+	const FLinearColor GradationBottomColor = ParseLinearColor(CVarToonRayTracerToonOriginalGradationBottomColor.GetValueOnGameThread(), DefaultToonGradationBottomColor);
 
 	// 『The Next Week』第4章：球に貼る画像のアセットは、パスが変わったときだけ読み込む（見つからなければ何度も試さない）
 	const FString Path = CVarToonRayTracerImageTexture.GetValueOnGameThread();
@@ -132,7 +132,7 @@ bool ToonRayTracerViewExtension::ShouldDrawBeforeTSR()
 // パスの登録
 void ToonRayTracerViewExtension::SubscribeToPostProcessingPass(EPostProcessingPass Pass, const FSceneView& InView, FAfterPassCallbackDelegateArray& InOutPassCallbacks, bool bIsPassEnabled)
 {
-	// 鳴潮風ルック フェーズ3：キャラクターだけトゥーンにするとき（トゥーン表示・シーンのレイ）は、TSR の前に描く
+	// Original ルック フェーズ3：キャラクターだけトゥーンにするとき（トゥーン表示・シーンのレイ）は、TSR の前に描く
 	// TSR がジッターを使ってアンチエイリアスとアップスケールを行い、動いている間の輪郭のギザつきが抑えられる
 	// トーンマップや DOF、ブルームも、背景と同じようにキャラクターにかかる
 	// UE5.5 では、TSR の前に描く場合は PrePostProcessPass_RenderThread で描くので、ここではトーンマップの後にも登録しない
@@ -376,9 +376,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(HashCombine(HashCombine(GetTypeHash(TraceMode), GetTypeHash(AnalyticSceneIndex)), HashCombine(GetTypeHash(SamplesPerPixel), GetTypeHash(bStratifiedSampling))), HashCombine(HashCombine(GetTypeHash(ShadingMode), GetTypeHash(MaxDepth)), GetTypeHash(ScatterSampling))),
 		HashCombine(HashCombine(GetTypeHash(bUseGBufferNormal), GetTypeHash(bUseGBufferBaseColor)), HashCombine(HashCombine(GetTypeHash(bUseGBufferMetal), GetTypeHash(MetalRoughnessThreshold)), HashCombine(HashCombine(GetTypeHash(bUseGBufferForReflections), GetTypeHash(ReflectionNormalSmoothing)), GetTypeHash(bSkipMaskedSurfaces))))), LightHash), HashCombine(HashCombine(ToonHash, ToonHighlightHash), HashCombine(ToonOutlineHash, GetTypeHash(bToonCharacterOnly))))
 		^ GetTypeHash(CVarToonRayTracerResetAccumulation.GetValueOnRenderThread()) ^ CharacterHash
-		^ HashCombine(HashCombine(GetTypeHash(CVarToonRayTracerToonWuthering.GetValueOnRenderThread()), GetTypeHash(CVarToonRayTracerToonWutheringHighlightStrength.GetValueOnRenderThread())),
-			HashCombine(HashCombine(GetTypeHash(CVarToonRayTracerToonWutheringSparkleStrength.GetValueOnRenderThread()), GetTypeHash(CVarToonRayTracerToonWutheringShadowBias.GetValueOnRenderThread())),
-				HashCombine(GetTypeHash(CVarToonRayTracerToonWutheringReflectionRimStrength.GetValueOnRenderThread()),
+		^ HashCombine(HashCombine(GetTypeHash(CVarToonRayTracerToonOriginal.GetValueOnRenderThread()), GetTypeHash(CVarToonRayTracerToonOriginalHighlightStrength.GetValueOnRenderThread())),
+			HashCombine(HashCombine(GetTypeHash(CVarToonRayTracerToonOriginalSparkleStrength.GetValueOnRenderThread()), GetTypeHash(CVarToonRayTracerToonOriginalShadowBias.GetValueOnRenderThread())),
+				HashCombine(GetTypeHash(CVarToonRayTracerToonOriginalReflectionRimStrength.GetValueOnRenderThread()),
 					HashCombine(GetTypeHash(ToonSeeThroughColor_RenderThread), GetTypeHash(CVarToonRayTracerToonSeeThroughColorBlend.GetValueOnRenderThread())))));
 	FAccumulationState* AccumulationState = nullptr;
 	if (bAccumulate && View.State)
@@ -484,7 +484,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		AccumulationTexture = GraphBuilder.CreateTexture(AccumulationDesc, TEXT("ToonRayTracerAccumulation"));
 	}
 
-	// 鳴潮モードの仕上げのぼかしの元（蓄積用テクスチャと同じく、フレームをまたいで平均する）
+	// Original モードの仕上げのぼかしの元（蓄積用テクスチャと同じく、フレームをまたいで平均する）
 	FRDGTextureRef GlowTexture = nullptr;
 	if (AccumulationState && AccumulationState->GlowTexture.IsValid() && AccumulationState->AccumulatedFrames > 0)
 	{
@@ -615,12 +615,12 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		PassParameters->ToonEmissiveTexture = bHasEmissive ? *Emissive : GSystemTextures.GetBlackDummy(GraphBuilder);
 		PassParameters->ToonEmissiveStrength = bHasEmissive ? FMath::Max(CVarToonRayTracerToonEmissiveStrength.GetValueOnRenderThread(), 0.0f) : 0.0f;
 	}
-	// 鳴潮モード
-	PassParameters->bToonWutheringMode = CVarToonRayTracerToonWuthering.GetValueOnRenderThread() != 0 ? 1u : 0u;
-	PassParameters->ToonWutheringHighlightStrength = FMath::Max(CVarToonRayTracerToonWutheringHighlightStrength.GetValueOnRenderThread(), 0.0f);
-	PassParameters->ToonWutheringSparkleStrength = FMath::Max(CVarToonRayTracerToonWutheringSparkleStrength.GetValueOnRenderThread(), 0.0f);
-	PassParameters->ToonWutheringShadowBias = CVarToonRayTracerToonWutheringShadowBias.GetValueOnRenderThread();
-	PassParameters->ToonWutheringReflectionRimStrength = FMath::Max(CVarToonRayTracerToonWutheringReflectionRimStrength.GetValueOnRenderThread(), 0.0f);
+	// Original モード
+	PassParameters->bToonOriginalMode = CVarToonRayTracerToonOriginal.GetValueOnRenderThread() != 0 ? 1u : 0u;
+	PassParameters->ToonOriginalHighlightStrength = FMath::Max(CVarToonRayTracerToonOriginalHighlightStrength.GetValueOnRenderThread(), 0.0f);
+	PassParameters->ToonOriginalSparkleStrength = FMath::Max(CVarToonRayTracerToonOriginalSparkleStrength.GetValueOnRenderThread(), 0.0f);
+	PassParameters->ToonOriginalShadowBias = CVarToonRayTracerToonOriginalShadowBias.GetValueOnRenderThread();
+	PassParameters->ToonOriginalReflectionRimStrength = FMath::Max(CVarToonRayTracerToonOriginalReflectionRimStrength.GetValueOnRenderThread(), 0.0f);
 	PassParameters->bToonCastShadows = bToonCastShadows ? 1u : 0u;
 	PassParameters->ToonShadowBias = ToonShadowBias;
 	// 円錐の全体の角度（度）から、半角の cos にする
@@ -920,7 +920,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	}
 	GraphBuilder.QueueBufferExtraction(ObjectColorTableBuffer, &ObjectColorTableState.Buffer);
 
-	// 鳴潮モード：仕上げに、キャラクターをぼかして重ね（Diffusion Filter・Soft Focus・Bloom）、画面全体へ上から下へのグラデーションを掛ける
+	// Original モード：仕上げに、キャラクターをぼかして重ね（Diffusion Filter・Soft Focus・Bloom）、画面全体へ上から下へのグラデーションを掛ける
 	// 背景も含めた画面に掛ける。蓄積の結果には含めない
 	if (ShadingMode == 3)
 	{

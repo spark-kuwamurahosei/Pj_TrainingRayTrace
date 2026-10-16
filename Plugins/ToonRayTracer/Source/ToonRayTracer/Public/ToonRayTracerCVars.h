@@ -31,10 +31,10 @@ namespace ToonRayTracerCVars
 	// 本の第9章の max_depth に相当
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerMaxDepth;
 
-	// 鳴潮風ルック フェーズ1：トゥーンで塗るのをキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
+	// Original ルック フェーズ1：トゥーンで塗るのをキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterOnly;
 
-	// 鳴潮風ルック フェーズ3：キャラクターだけトゥーンにするとき、TSR の前（描画解像度、トーンマップ前）に描く
+	// Original ルック フェーズ3：キャラクターだけトゥーンにするとき、TSR の前（描画解像度、トーンマップ前）に描く
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonBeforeTSR;
 
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonInverseTonemap;
@@ -54,7 +54,7 @@ namespace ToonRayTracerCVars
 
 	inline const FLinearColor DefaultToonShadowColor(0.35f, 0.4f, 0.6f);
 
-	// 鳴潮風ルック フェーズ2：肌（UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面）の塗り
+	// Original ルック フェーズ2：肌（UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面）の塗り
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonSkin;
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonSkinShadowThreshold;
@@ -63,49 +63,49 @@ namespace ToonRayTracerCVars
 
 	inline const FLinearColor DefaultToonSkinShadowColor(0.62f, 0.42f, 0.45f);
 
-	// 鳴潮風ルック フェーズ2：キャラクターのリムライトと線の色
+	// Original ルック フェーズ2：キャラクターのリムライトと線の色
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimStrength;
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimWidth;
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterOutlineColorScale;
 
-	// 鳴潮風ルック フェーズ3：影の面を Skylight（空と周りの光）の色にどれだけ染めるか
+	// Original ルック フェーズ3：影の面を Skylight（空と周りの光）の色にどれだけ染めるか
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonSkyTint;
 
 	// 影の色の鮮やかさ：影の色の明るさは保ったまま、彩度を上げる
 	// マテリアルの発光：UE のマテリアルの発光（エミッシブ）を、トゥーンの塗りに足す強さ
-	// 鳴潮モード：ゲームのテクスチャ（影色 LD、ハイライト HM、影の出やすさ VC）を、Two Sided Foliage のマテリアルの GBuffer から読む
-	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonWuthering;
+	// Original モード：ゲームのテクスチャ（影色 LD、ハイライト HM、影の出やすさ VC）を、Two Sided Foliage のマテリアルの GBuffer から読む
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonOriginal;
 
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringHighlightStrength;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalHighlightStrength;
 
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringSparkleStrength;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalSparkleStrength;
 
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringShadowBias;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalShadowBias;
 
-	// 鳴潮モード：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringReflectionRimStrength;
+	// Original モード：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalReflectionRimStrength;
 
-	// 鳴潮モード：仕上げに、キャラクターをぼかして重ねる（Diffusion Filter・Soft Focus・Bloom）
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringDiffusionStrength;
+	// Original モード：仕上げに、キャラクターをぼかして重ねる（Diffusion Filter・Soft Focus・Bloom）
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalDiffusionStrength;
 
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringDiffusionRadius;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalDiffusionRadius;
 
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringSoftFocusStrength;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalSoftFocusStrength;
 
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringSoftFocusRadius;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalSoftFocusRadius;
 
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringBloomStrength;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalBloomStrength;
 
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringBloomRadius;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalBloomRadius;
 
-	// 鳴潮モード：画面全体に、上から下へのグラデーションを掛ける（仕上げの色味）
-	extern TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringGradationStrength;
+	// Original モード：画面全体に、上から下へのグラデーションを掛ける（仕上げの色味）
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalGradationStrength;
 
-	extern TAutoConsoleVariable<FString> CVarToonRayTracerToonWutheringGradationTopColor;
+	extern TAutoConsoleVariable<FString> CVarToonRayTracerToonOriginalGradationTopColor;
 
-	extern TAutoConsoleVariable<FString> CVarToonRayTracerToonWutheringGradationBottomColor;
+	extern TAutoConsoleVariable<FString> CVarToonRayTracerToonOriginalGradationBottomColor;
 
 	inline const FLinearColor DefaultToonGradationTopColor(1.06f, 1.03f, 0.96f);
 
@@ -216,7 +216,7 @@ namespace ToonRayTracerCVars
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonShadowNoiseSize;
 
-	// 鳴潮風ルック フェーズ2：キャラクターが自分自身の影を受けるか（0 なら、服のまだらな影や顔に落ちる前髪の影が消える）
+	// Original ルック フェーズ2：キャラクターが自分自身の影を受けるか（0 なら、服のまだらな影や顔に落ちる前髪の影が消える）
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterSelfShadow;
 
 	// トゥーン T5：ハイライトとリムライト

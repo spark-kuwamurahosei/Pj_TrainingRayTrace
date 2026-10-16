@@ -238,11 +238,11 @@ float ComputeEyeHighlight(FToonHitRecord Rec, FToonRay Ray, out float NdotH)
 		* Look.EyeHighlightStrength;
 }
 
-// 鳴潮風ルック フェーズ2：キャラクターのリムライト（0 ～ 1）
+// Original ルック フェーズ2：キャラクターのリムライト（0 ～ 1）
 // 画面上で光源の方向へ ToonCharacterRimWidth ピクセルずらした位置の深度を GBuffer から読み、
 // 自分より十分奥（背景や空）なら、そこは光源の側の輪郭とみなして明るい縁を入れる
 // 面の向き（N・V）ではなく画面上の深度の差で判定するため、縁の幅が一定になり、法線のばらつきでまだらにならない
-// ProbeDirection は、ずらす向き（光源の方向。鳴潮モードの影の側のリムでは、その逆向き）
+// ProbeDirection は、ずらす向き（光源の方向。Original モードの影の側のリムでは、その逆向き）
 #define TOON_CHARACTER_RIM_DEPTH_GAP 10.0f		// 奥とみなす深度の差（cm）
 #define TOON_CHARACTER_RIM_PROBE_LENGTH 10.0f	// 光源の方向を画面に投影するための長さ（cm）
 float ToonCharacterRim(float2 UV, FToonHitRecord Rec, float3 ProbeDirection)

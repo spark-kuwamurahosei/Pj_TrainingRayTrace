@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 
-/** 鳴潮風ルックの確認用：時間帯ごとの環境（Directional Light と Skylight の設定） */
+/** Original ルックの確認用：時間帯ごとの環境（Directional Light と Skylight の設定） */
 enum class EToonEnvironmentPreset : uint8
 {
 	Morning,	// 朝
