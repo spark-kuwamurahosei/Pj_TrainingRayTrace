@@ -60,7 +60,10 @@ def camera(label, location, rotation, fov=60.0):
     actor = eas.spawn_actor_from_class(unreal.CameraActor, unreal.Vector(*location), rotation)
     actor.set_actor_label(label)
     actor.set_folder_path("Cameras")
-    actor.camera_component.set_editor_property("field_of_view", fov)
+    # set_editor_property だけでは保存したレベルに画角が残らず 90 度に戻るため、関数で設定する
+    component = actor.get_component_by_class(unreal.CameraComponent)
+    component.modify()
+    component.set_field_of_view(fov)
     return actor
 
 

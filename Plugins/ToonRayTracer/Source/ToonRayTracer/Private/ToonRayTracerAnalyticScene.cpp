@@ -119,10 +119,10 @@ namespace ToonRayTracerAnalytic
 			MakeBookBox(FVector(165.0, 165.0, 165.0), -18.0, FVector(130.0, 0.0, 65.0), EToonMaterialType::Volume, FLinearColor(1.0f, 1.0f, 1.0f), 0.01f),
 		};
 
-		// 『The Next Week』第10章の final_scene（簡易版）
+		// 『The Next Week』第10章の final_scene
 		// 本の単位をそのまま cm にし、座標は（本の x, y, z）→（UE の Y, Z, X）に置き換えている
 		// 本のカメラは (478, 278, -600) から (278, 278, 0) を見ている。UE では (-600, 478, 278) から Yaw -18.4 度の方向を見る位置
-		// 省いたもの：動く球の移動ブラー（第2章、止めた状態で置く）、地球の画像（UV のチェッカーで代用）、1000 個の小さな球
+		// 1000 個の小さな球の塊は、第3章の BVH（下の BuildBvhNode で組み立てる入れ子の箱）で別に持つ
 		const FToonSphere GFinalSceneSpheres[] =
 		{
 			// 移動ブラーで動く、オレンジのランバートの球（本の center2 = center1 + vec3(30, 0, 0)。本の x は UE の Y）
@@ -139,7 +139,7 @@ namespace ToonRayTracerAnalytic
 			// シーン全体を包む薄い霧
 			{ FVector(0.0, 0.0, 0.0), 5000.0, EToonMaterialType::Volume, FLinearColor::White, 0.0f, 1.0f,
 				EToonTextureType::Solid, 1.0f, FLinearColor::Black, 100.0f, 0.0001f },
-			// 地球の画像の代わりに、UV のチェッカーの球
+			// 地球の球（第4章の画像テクスチャ。r.ToonRayTracer.ImageTexture のテクスチャが見つからなければ UV のチェッカーで代用）
 			{ FVector(400.0, 400.0, 200.0), 100.0, EToonMaterialType::Lambertian, FLinearColor(0.1f, 0.3f, 0.7f), 0.0f, 1.0f,
 				EToonTextureType::Image, 16.0f, FLinearColor(0.2f, 0.6f, 0.2f) },
 			// 大理石の球（本の noise_texture(0.2)。本の 1 単位 = 1cm）
