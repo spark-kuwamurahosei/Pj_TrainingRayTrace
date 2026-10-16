@@ -5,6 +5,7 @@
 #include "ShaderCore.h"
 #include "ToonRayTracerViewExtension.h"
 #include "Misc/CoreDelegates.h"
+#include "ToonRayTracerCompat.h"
 
 #define LOCTEXT_NAMESPACE "FToonRayTracerModule"
 
@@ -17,7 +18,7 @@ void FToonRayTracerModule::StartupModule()
 	AddShaderSourceDirectoryMapping(TEXT("/Plugin/ToonRayTracer"), PluginShaderDir);
 
 	// SVEの登録はエンジン本体の初期化が完全に終わるまで待機する
-	FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &FToonRayTracerModule::OnPostEngineInit);
+	ToonRayTracerCompat::OnPostEngineInit().AddRaw(this, &FToonRayTracerModule::OnPostEngineInit);
 }
 
 void FToonRayTracerModule::OnPostEngineInit()

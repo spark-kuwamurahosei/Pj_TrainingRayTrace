@@ -5,9 +5,11 @@
 #include "DataDrivenShaderPlatformInfo.h"
 #include "GlobalShader.h"
 #include "RayTracingPayloadType.h"
+#include "RenderUtils.h"
 #include "ShaderParameterStruct.h"
 #include "SceneUniformBuffer.h"
 #include "SceneView.h"
+#include "ToonRayTracerCompat.h"
 
 // 汎用化 G4：物体ごとの代表色のハッシュ表（ToonObjectColorTable.ush と一致させる）
 namespace ToonObjectColorTable
@@ -81,7 +83,11 @@ class FToonRayGenShader : public FGlobalShader
 		// 1 なら蓄積をやり直した理由を色で表示する（確認用）
 		SHADER_PARAMETER(uint32, DebugMotion)
 		// シーンの TLAS（Translated World 空間で構築されている）
+#if TOON_RAY_TRACER_RDG_TLAS
 		SHADER_PARAMETER_RDG_BUFFER_SRV(RaytracingAccelerationStructure, TLAS)
+#else
+		SHADER_PARAMETER_SRV(RaytracingAccelerationStructure, TLAS)
+#endif
 		// 0: 解析的な球、1: シーンの TLAS に TraceRay
 		SHADER_PARAMETER(uint32, TraceMode)
 		// 1ピクセルあたりのサンプル数（アンチエイリアス）
@@ -306,6 +312,8 @@ class FToonRayGenShader : public FGlobalShader
 		// GetPrimitiveData() を Primitive ユニフォームバッファではなく GPUScene のバッファから読むようにする
 		// （未定義だとメッシュ描画用の Primitive ユニフォームバッファを参照してしまい、グローバルシェーダーではバインドできない）
 		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
+		// シェーダー側で版ごとの違いを吸収するため、エンジンの版（例：5.8 なら 508）を渡す
+		OutEnvironment.SetDefine(TEXT("TOON_ENGINE_VERSION"), ENGINE_MAJOR_VERSION * 100 + ENGINE_MINOR_VERSION);
 		ToonObjectColorTable::ModifyCompilationEnvironment(OutEnvironment);
 	}
 

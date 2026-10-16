@@ -48,7 +48,7 @@ float3 GetStableNoisePosition(FToonHitRecord Rec)
 		return Rec.Position - GroundGridOrigin.xyz;
 	}
 
-	FInstanceSceneData InstanceData = GetInstanceSceneData(Rec.ObjectId);
+	FInstanceSceneData InstanceData = ToonGetInstanceSceneData(Rec.ObjectId);
 	float4x4 TranslatedWorldToLocal = DFFastToTranslatedWorld(InstanceData.WorldToLocal, MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow));
 	return mul(float4(Rec.Position, 1.0f), TranslatedWorldToLocal).xyz * abs(InstanceData.NonUniformScale.xyz);
 }

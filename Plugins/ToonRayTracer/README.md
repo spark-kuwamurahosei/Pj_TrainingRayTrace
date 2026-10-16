@@ -1,6 +1,6 @@
 # ToonRayTracer
 
-UE5.8 のハードウェアレイトレーシング（DXR）を使ったトゥーンシェーダーのプラグイン。
+UE5.5 ～ 5.8 のハードウェアレイトレーシング（DXR）を使ったトゥーンシェーダーのプラグイン。
 『Ray Tracing in One Weekend』の第11章までをシーンの TLAS 上で実装し、その仕組みの上にトゥーンシェーディングを構築している。
 
 - SceneViewExtension の `SubscribeToPostProcessingPass`（Tonemap）でパスを追加する（トーンマップの後に実行される）
@@ -8,9 +8,21 @@ UE5.8 のハードウェアレイトレーシング（DXR）を使ったトゥ�
 
 ## 動作条件
 
-- プロジェクト設定でハードウェアレイトレーシングが有効（`r.RayTracing=True`）
+- 対応するエンジン：UE5.5 ～ 5.8（版ごとの API の違いは `Source/ToonRayTracer/Public/ToonRayTracerCompat.h` とシェーダーの `TOON_ENGINE_VERSION` で吸収している。5.5・5.7・5.8 でビルド・シェーダーのコンパイル・トゥーン表示を確認、5.6 は未確認）
+  - UE5.5 には、ポストプロセスの DOF の前にパスを追加する口がないため、`r.ToonRayTracer.Toon.BeforeTSR` のときは、ポストプロセスの直前（`PrePostProcessPass_RenderThread`）に描いてシーンの色に書き戻す（DOF・TSR・トーンマップはこの後にかかるので、5.6 以降と同じ順番になる。Renderer の公開されていないヘッダーを使うため、5.5 のときだけ Build.cs で Renderer の `Private` と `Internal` をインクルードパスに足す）
+  - プラグインの Content のアセット（眉毛の線の形のマテリアル、検証用のレベル、地球の画像）は UE5.8 で保存しているため、それより前の版では読み込めない。
+    古い版のプロジェクトの `Plugins` にプラグインをコピーしたら、エディタを閉じた状態で `Scripts/RebuildContent.bat` をダブルクリックすると、その版で 3 つとも作り直せる。
+    プロジェクトはプラグインの 2 つ上のフォルダの `.uproject`、エンジンは `.uproject` の `EngineAssociation` の版を Epic Games Launcher のインストール一覧から探す
+    （見つからなければエンジンのフォルダを入力する。引数で渡すこともできる：`RebuildContent.bat "D:\UnrealEngine\UE_5.5" "D:\MyProject\MyProject.uproject"`）。
+    コピーしたプラグインの Content のアセットを消して作り直すので、リポジトリ（UE5.8）のプラグインのフォルダでは実行しない。
+    画面を出さずにエディタを起動し、`Scripts/rebuild_content.py` から `import_earth_map.py`（`SourceArt/earthmap.jpg` を取り込む）、
+    `create_see_through_mask_material.py`、`create_sample_levels.py` を順に実行して、終わったら閉じる。ログはプロジェクトの `Saved/Logs/ToonRebuildContent.log`。
+    作り直さなくてもプラグインは動く（地球の画像がなければ UV のチェッカーで代用する）
+- プロジェクト設定でハードウェアレイトレーシングが有効（`r.RayTracing=True`）で、DirectX 12 の SM6（`PCD3D_SM6`）で動かしていること。SM5 ではレイトレーシングが無効になる
 - Substrate が無効（`r.Substrate=False`）。滑らかな法線を GBufferA から読むため
 - シーンにレイトレーシング用の TLAS が構築されていること。構築されていないフレームでは何もせず元の画像を返す
+  - UE は、レイトレーシングを使う機能が 1 つも有効でないと TLAS を作らない。Lumen（`r.DynamicGlobalIlluminationMethod=1`、`r.ReflectionMethod=1`）を有効にしておく（新しく作ったプロジェクトは初めから有効）。
+    無効だと、エラーは出ずにトゥーンの表示だけが出ない。`r.ToonRayTracer.Debug.LogPasses 1` でパスのログが出なければ、これを疑う
 
 ## 設定パネル
 
@@ -199,7 +211,7 @@ ToonRayTracer パネルの「キャラクター」欄でも、同じことがで
 | `HairShadowStrength` | 1.0 | 前髪の影の濃さ（0 ～ 1） |
 | `FaceWidthScale` | 1.0 | 顔の半分の幅（両目の間の距離の何倍か） |
 | `ReferenceEyeDistance` | 39.6 | 大きさの基準。全体の設定の幅や距離（cm）を合わせたキャラクター（初期値は Kanau）の、両目の間の距離（cm）。ほかのキャラクターでは両目の間の距離に比例して拡大縮小する。0 なら拡大縮小しない |
-| `FaceHeadBone` / `FaceLeftEyeBone` / `FaceRightEyeBone` | `jnt_head` / `jnt_eyeL` / `jnt_eyeR` | 顔の向きと幅を求めるための、頭と両目のボーンの名前。この 3 つのボーンを持つスケルタルメッシュを顔とみなす（最大 4 体） |
+| `FaceHeadBone` / `FaceLeftEyeBone` / `FaceRightEyeBone` | `jnt_head` / `jnt_eyeL` / `jnt_eyeR` | 顔の向きと幅を求めるための、頭と両目のボーンの名前。この 3 つのボーンを持つスケルタルメッシュを顔とみなす（最大 8 体） |
 | `EyeHighlightStrength` | 1.0 | 光に合わせた瞳のハイライトの強さ。目の面の向きはモデルによって平らだったり縁だけ曲がっていたりするため使わず、目の点から画面の左右上下へカメラから見て目が続いている距離を探し、見えている目の範囲の中での位置から、目を球とみなした仮の向きを作る。その向きと、光と視線の中間の向き（ハーフベクトル）がほぼ一致する点に、くっきりした光の点を加える。光の向きが変わると点が目の中で動く。0 ならなし |
 | `EyeHighlightThreshold` | 0.99 | 瞳のハイライトのしきい値（N・H）。1 に近いほど点が小さい |
 | `EyeHighlightSearchRadius` | 10.0 | 目を球とみなすために、見えている目の範囲の端を探す最大の距離（cm）。目の半径より大きくする |

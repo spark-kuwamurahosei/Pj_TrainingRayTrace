@@ -3,6 +3,7 @@
 #include "ScreenPass.h"
 #include "ToonRayGenShader.h"
 #include "ToonRayTracerCVars.h"
+#include "ToonRayTracerCompat.h"
 #include "ToonRayTracerAnalyticScene.h"
 #include "ToonPostEffectsPass.h"
 #include "PipelineStateCache.h"
@@ -120,31 +121,39 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 		});
 }
 
+bool ToonRayTracerViewExtension::ShouldDrawBeforeTSR()
+{
+	return CVarToonRayTracerToonBeforeTSR.GetValueOnRenderThread() != 0
+		&& CVarToonRayTracerToonCharacterOnly.GetValueOnRenderThread() != 0
+		&& CVarToonRayTracerShadingMode.GetValueOnRenderThread() == 3
+		&& CVarToonRayTracerTraceMode.GetValueOnRenderThread() == 1;
+}
+
 // パスの登録
-void ToonRayTracerViewExtension::SubscribeToPostProcessingPass(EPostProcessingPass Pass, const FSceneView& InView, FPostProcessingPassDelegateArray& InOutPassCallbacks, bool bIsPassEnabled)
+void ToonRayTracerViewExtension::SubscribeToPostProcessingPass(EPostProcessingPass Pass, const FSceneView& InView, FAfterPassCallbackDelegateArray& InOutPassCallbacks, bool bIsPassEnabled)
 {
 	// 鳴潮風ルック フェーズ3：キャラクターだけトゥーンにするとき（トゥーン表示・シーンのレイ）は、TSR の前に描く
 	// TSR がジッターを使ってアンチエイリアスとアップスケールを行い、動いている間の輪郭のギザつきが抑えられる
 	// トーンマップや DOF、ブルームも、背景と同じようにキャラクターにかかる
-	const bool bBeforeTSR = CVarToonRayTracerToonBeforeTSR.GetValueOnRenderThread() != 0
-		&& CVarToonRayTracerToonCharacterOnly.GetValueOnRenderThread() != 0
-		&& CVarToonRayTracerShadingMode.GetValueOnRenderThread() == 3
-		&& CVarToonRayTracerTraceMode.GetValueOnRenderThread() == 1;
+	// UE5.5 では、TSR の前に描く場合は PrePostProcessPass_RenderThread で描くので、ここではトーンマップの後にも登録しない
+	const bool bBeforeTSR = ShouldDrawBeforeTSR();
 
 	if (bBeforeTSR)
 	{
+#if TOON_RAY_TRACER_BEFORE_DOF_PASS
 		// DOF の前（TSR より前）のタイミングで登録
 		if (Pass == EPostProcessingPass::BeforeDOF)
 		{
 			InOutPassCallbacks.Add(
-				FPostProcessingPassDelegate::CreateRaw(this, &ToonRayTracerViewExtension::RenderToonRayTracingPassBeforeTSR));
+				FAfterPassCallbackDelegate::CreateRaw(this, &ToonRayTracerViewExtension::RenderToonRayTracingPassBeforeTSR));
 		}
+#endif
 	}
 	// Tonemapのタイミングで、かつパスが有効な場合に登録
 	else if (Pass == EPostProcessingPass::Tonemap && bIsPassEnabled)
 	{
 		InOutPassCallbacks.Add(
-			FPostProcessingPassDelegate::CreateRaw(this, &ToonRayTracerViewExtension::RenderToonRayTracingPass));
+			FAfterPassCallbackDelegate::CreateRaw(this, &ToonRayTracerViewExtension::RenderToonRayTracingPass));
 	}
 }
 
@@ -185,11 +194,22 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 
 	// シーンの TLAS（レイトレーシング用の加速構造）を Public API 経由で取得する
 	// まだ構築されていないフレームでは何もせず元の画像を返す
+	// 版によって受け取り方が違う（5.8 は RDG のバッファ、5.7 はビューごとの RHI のビュー、5.6 以前はシーンごとの RHI のビュー）
+#if TOON_RAY_TRACER_SCENE_REFERENCE_API
 	if (!UE::FXRenderingUtils::RayTracing::HasRayTracingScene(*View.Family->Scene))
+#else
+	if (!UE::FXRenderingUtils::RayTracing::HasRayTracingScene(View.Family->Scene))
+#endif
 	{
 		return Inputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 	}
+#if TOON_RAY_TRACER_RDG_TLAS
 	FRDGBufferSRVRef TLAS = UE::FXRenderingUtils::RayTracing::GetRayTracingSceneViewRDG(*View.Family->Scene, View);
+#elif TOON_RAY_TRACER_SCENE_REFERENCE_API
+	FRHIShaderResourceView* TLAS = UE::FXRenderingUtils::RayTracing::GetRayTracingSceneView(GraphBuilder.RHICmdList, *View.Family->Scene, View);
+#else
+	FRHIShaderResourceView* TLAS = UE::FXRenderingUtils::RayTracing::GetRayTracingSceneView(GraphBuilder.RHICmdList, View.Family->Scene);
+#endif
 	if (!TLAS)
 	{
 		return Inputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
@@ -247,10 +267,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 
 	// TAA 用のジッターを含まない行列でレイを作る
 	// （ジッターは毎フレーム変わるため、含めると蓄積が毎フレームリセットされてしまう。AA は自前のサンプリングで行う）
-	const FMatrix& WorldToView = View.ViewMatrices.GetWorldToView();
-	const FMatrix& ViewToClipNoAA = View.ViewMatrices.GetViewToClipNoAA();
+	const FMatrix& WorldToView = ToonRayTracerCompat::GetWorldToView(View.ViewMatrices);
+	const FMatrix& ViewToClipNoAA = ToonRayTracerCompat::GetViewToClipNoAA(View.ViewMatrices);
 	// TSR の前に描く場合は、GBuffer と同じジッターを含む行列でレイを作る（TSR はジッターしたピクセル中心の値を前提にしている）
-	const FMatrix& ViewToClipForRays = bBeforeTSR ? View.ViewMatrices.GetProjectionMatrix() : ViewToClipNoAA;
+	const FMatrix& ViewToClipForRays = bBeforeTSR ? ToonRayTracerCompat::GetViewToClip(View.ViewMatrices) : ViewToClipNoAA;
 	const FMatrix TranslatedWorldToClipForRays = View.ViewMatrices.GetTranslatedViewMatrix() * ViewToClipForRays;
 
 	// フレームをまたいだ蓄積（カメラか設定が変わったらリセット）
@@ -845,7 +865,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	// HitGroupIndexingMode::Disallow にすることで、シーンのジオメトリ数に関係なく
 	// デフォルトのヒットグループ用レコードが1つだけ確保される
 	FRayTracingShaderBindingTableInitializer SBTInitializer;
+#if TOON_RAY_TRACER_SBT_LIFETIME
 	SBTInitializer.Lifetime = ERayTracingShaderBindingTableLifetime::Transient;
+#endif
 	SBTInitializer.ShaderBindingMode = ERayTracingShaderBindingMode::RTPSO;
 	SBTInitializer.HitGroupIndexingMode = ERayTracingHitGroupIndexingMode::Disallow;
 	SBTInitializer.LocalBindingDataSize = Initializer.GetMaxLocalBindingDataSize();

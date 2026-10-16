@@ -76,7 +76,7 @@ int FindToonCharacterById(FPrimitiveSceneData PrimitiveData)
 
 int FindToonCharacter(float3 Position, uint GPUSceneInstanceId)
 {
-	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	FInstanceSceneData InstanceData = ToonGetInstanceSceneData(GPUSceneInstanceId);
 	int Character = FindToonCharacterById(GetPrimitiveData(InstanceData.PrimitiveId));
 	return Character >= 0 ? Character : FindToonFace(Position);
 }
@@ -190,7 +190,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 	Parts.HairSlotMask = uint2(ToonHairSlotMask, 0u);
 	Parts.EyeShadowExcludeSlotMask = 0u;
 	Parts.bSeeThroughCustomDepth = false;
-	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	FInstanceSceneData InstanceData = ToonGetInstanceSceneData(GPUSceneInstanceId);
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
 	float SeeThroughOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 13);
 	Parts.SeeThroughSlotMask = uint2(SeeThroughOverride > 0.0f ? (uint)round(SeeThroughOverride) : ToonSeeThroughSlotMask, 0u);

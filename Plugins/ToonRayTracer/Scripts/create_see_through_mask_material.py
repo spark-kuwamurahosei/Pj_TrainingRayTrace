@@ -49,3 +49,5 @@ mel.connect_material_property(mask, "", unreal.MaterialProperty.MP_OPACITY_MASK)
 mel.recompile_material(mat)
 ok = eal.save_asset(full_path, only_if_is_dirty=False)
 unreal.log("TOON_SEE_THROUGH_MASK created: %s" % ok)
+if not ok:
+    raise RuntimeError("failed to save " + full_path)
