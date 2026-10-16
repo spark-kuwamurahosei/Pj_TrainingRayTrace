@@ -116,13 +116,21 @@ def create_materials_level():
         ("03_Lambert_Red_Highlight_Rim", SPHERE, (1.0, 1.0, 1.0), [1, 0.8, 0.15, 0.15, 0, 0, 0, 0, 0, 1, 1]),
         ("04_Metal_Silver", SPHERE, (1.0, 1.0, 1.0), [2, 0.8, 0.8, 0.8, 0, 0, 0, 0, 0, 1, 0]),
         ("05_Metal_Gold", SPHERE, (1.0, 1.0, 1.0), [2, 0.9, 0.7, 0.3, 0, 0, 0, 0, 0, 1, 0]),
-        ("06_Glass", SPHERE, (1.0, 1.0, 1.0), [3, 1, 1, 1, 0, 1.5]),
+        ("06_Glass", SPHERE, (1.0, 1.0, 1.0), [3, 1, 1, 1, 0, 1.5, 0, 0, 0, 1]),
         ("07_Lambert_CustomShadowColor", CYLINDER, (1.0, 1.0, 1.0), [1, 0.9, 0.85, 0.6, 0, 0, 0.3, 0.35, 0.7]),
         ("08_Lambert_NoOutline", CUBE, (0.8, 0.8, 0.8), [1, 0.3, 0.6, 0.9, 0, 0, 0, 0, 0, 0, 0, -1]),
     ]
+    glass_y = None
     for label, static_mesh, scale, data in samples:
         mesh(label, static_mesh, (200.0, y, 50.0 * scale[2]), scale, data=data, folder="Samples")
+        if label == "06_Glass":
+            glass_y = y
         y += 170.0
+
+    # ガラスの後ろに色の縞の板を置き、屈折して歪んで透けて見えることを確かめられるようにする（後ろが白い壁だけだと、透けた先も白くなる）
+    for index, color in enumerate([(0.8, 0.15, 0.15), (0.95, 0.8, 0.2), (0.2, 0.6, 0.25), (0.2, 0.35, 0.85)]):
+        bar_y = glass_y - 10.0 + 30.0 * index
+        mesh("06_Glass_BackStripe%d" % index, CUBE, (330.0, bar_y, 70.0), (0.1, 0.3, 1.4), data=[1, color[0], color[1], color[2]], folder="Samples")
 
     camera("Cam_Front", (-700.0, 0.0, 250.0), look_at(unreal.Vector(-700.0, 0.0, 250.0), unreal.Vector(200.0, 0.0, 50.0)))
     camera("Cam_Side", (-200.0, -1200.0, 350.0), look_at(unreal.Vector(-200.0, -1200.0, 350.0), unreal.Vector(200.0, 0.0, 50.0)))

@@ -505,6 +505,13 @@ namespace ToonRayTracerCVars
 		TEXT("Quantize the soft shadow visibility into this many steps (0 or 1: smooth gradient, 2 or more: toon steps)"),
 		ECVF_RenderThreadSafe);
 
+	// ガラスの影の濃さ
+	TAutoConsoleVariable<float> CVarToonRayTracerToonGlassShadowOpacity(
+		TEXT("r.ToonRayTracer.Toon.GlassShadowOpacity"),
+		0.5f,
+		TEXT("How much light glass blocks in the toon shadows (0: no shadow, 1: as dark as opaque objects). Each glass object the shadow ray passes through multiplies the light by (1 - this value)"),
+		ECVF_RenderThreadSafe);
+
 	// Perlin ノイズの応用：影の境目を手描き風に揺らす
 	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowNoiseStrength(
 		TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"),
@@ -610,6 +617,25 @@ namespace ToonRayTracerCVars
 		4,
 		TEXT("Maximum number of reflections / refractions followed on metal and glass in toon shading (0 shades them as plain materials)"),
 		ECVF_RenderThreadSafe);
+
+	// トゥーンのガラスの縁：輪郭に近い部分に色の帯を乗せて、背景が単色でもガラスに見えるようにする
+	TAutoConsoleVariable<float> CVarToonRayTracerToonGlassEdgeStrength(
+		TEXT("r.ToonRayTracer.Toon.GlassEdgeStrength"),
+		0.6f,
+		TEXT("Strength of the colored band painted near the silhouette of glass in toon shading (0: off, 1: the band is fully the edge color)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonGlassEdgeWidth(
+		TEXT("r.ToonRayTracer.Toon.GlassEdgeWidth"),
+		0.2f,
+		TEXT("Width of the glass edge band: the band covers where sin(angle between the view ray and the surface normal) is above 1 - this value. On a sphere, it is this fraction of the radius from the silhouette (0 to 1)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonGlassEdgeColor(
+		TEXT("r.ToonRayTracer.Toon.GlassEdgeColor"),
+		TEXT("0.55,0.8,1.0"),
+		TEXT("Linear RGB color of the glass edge band, as \"R,G,B\""),
+		ECVF_Default);
 
 	// "R,G,B" 形式の文字列を色に変換する（読めなければ Default を返す）
 	FLinearColor ParseLinearColor(const FString& Text, const FLinearColor& Default)

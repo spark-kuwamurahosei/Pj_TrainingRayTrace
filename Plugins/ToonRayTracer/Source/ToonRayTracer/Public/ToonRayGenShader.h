@@ -202,6 +202,8 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonSoftShadowCosAngle)
 		SHADER_PARAMETER(uint32, ToonSoftShadowSamples)
 		SHADER_PARAMETER(uint32, ToonSoftShadowSteps)
+		// ガラスの影の濃さ（1 なら不透明の物体と同じ）
+		SHADER_PARAMETER(float, ToonGlassShadowOpacity)
 		// トゥーンの照り返し（間接光）の強さとレイの本数
 		SHADER_PARAMETER(float, ToonIndirectStrength)
 		SHADER_PARAMETER(uint32, ToonIndirectSamples)
@@ -290,6 +292,10 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(FVector3f, ToonOutlineColor)
 		// トゥーン T7：金属・ガラスで反射・屈折を追いかける回数の上限
 		SHADER_PARAMETER(uint32, ToonReflectionDepth)
+		// トゥーンのガラスの縁：色の帯の強さ・幅・色
+		SHADER_PARAMETER(float, ToonGlassEdgeStrength)
+		SHADER_PARAMETER(float, ToonGlassEdgeWidth)
+		SHADER_PARAMETER(FVector3f, ToonGlassEdgeColor)
 		// GPUScene（各メッシュの Custom Primitive Data）を読むためのシーンのユニフォームバッファ
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 		// 汎用化 G4：物体ごとの代表色（前のフレームまで）と、このフレームに見えた色の合計
