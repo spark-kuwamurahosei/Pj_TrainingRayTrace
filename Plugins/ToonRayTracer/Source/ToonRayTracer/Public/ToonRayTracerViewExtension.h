@@ -7,9 +7,11 @@
 #include "RendererInterface.h"
 #include "RenderGraphResources.h"
 #include "UObject/StrongObjectPtr.h"
+#include "ToonRayTracerCompat.h"
 
 class UTexture2D;
 class FTextureResource;
+struct FPostProcessingInputs;
 
 /**
  * 
@@ -31,10 +33,18 @@ public:
 	virtual void SubscribeToPostProcessingPass(
 		EPostProcessingPass Pass,
 		const FSceneView& InView,
-		FPostProcessingPassDelegateArray& InOutPassCallbacks,
+		FAfterPassCallbackDelegateArray& InOutPassCallbacks,
 		bool bIsPassEnabled) override;
 
+#if !TOON_RAY_TRACER_BEFORE_DOF_PASS
+	// UE5.5 には DOF の前（TSR より前）にパスを追加する口がないため、ポストプロセスの直前に描いてシーンの色に書き戻す
+	virtual void PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessingInputs& Inputs) override;
+#endif
+
 private:
+	// TSR の前に描くか（キャラクターだけトゥーン、トゥーン表示、シーンのレイ、BeforeTSR が有効）
+	static bool ShouldDrawBeforeTSR();
+
 	// トーンマップの後（出力解像度）に描く
 	FScreenPassTexture RenderToonRayTracingPass(
 		FRDGBuilder& GraphBuilder,

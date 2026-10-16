@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class ToonRayTracer : ModuleRules
@@ -20,7 +21,16 @@ public class ToonRayTracer : ModuleRules
 				// ... add other private include paths required here ...
 			}
 			);
-			
+
+		// UE5.5 では、TSR の前に描くために、ポストプロセスの直前の入力（FPostProcessingInputs）と
+		// ビューの描画範囲（FViewInfo）を読む。どちらも Renderer の公開されていないヘッダーにある
+		if (Target.Version.MajorVersion == 5 && Target.Version.MinorVersion < 6)
+		{
+			string RendererDir = GetModuleDirectory("Renderer");
+			PrivateIncludePaths.Add(Path.Combine(RendererDir, "Private"));
+			PrivateIncludePaths.Add(Path.Combine(RendererDir, "Internal"));
+		}
+
 		
 		PublicDependencyModuleNames.AddRange(
 			new string[]

@@ -91,7 +91,7 @@ FToonMaterial GetDefaultMaterial()
 //         キャラだけトゥーンにするときにトゥーンで塗るか、キャラクター用の影の設定を使うかに影響する
 FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 {
-	FInstanceSceneData InstanceData = GetInstanceSceneData(GPUSceneInstanceId);
+	FInstanceSceneData InstanceData = ToonGetInstanceSceneData(GPUSceneInstanceId);
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
 
 	FToonMaterial Material = GetDefaultMaterial();

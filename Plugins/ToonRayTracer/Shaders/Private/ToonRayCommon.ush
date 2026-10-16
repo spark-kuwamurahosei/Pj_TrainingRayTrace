@@ -2,6 +2,22 @@
 
 // 共通の道具：Custom Primitive Data の読み取り、乱数、レイとカメラのレイ、Perlin ノイズ
 
+// レイの最大距離の既定値（UE5.5 の RayTracingCommon.ush にはないので、同じ値で定義する）
+#ifndef RAY_DEFAULT_T_MAX
+#define RAY_DEFAULT_T_MAX (3.402823466e+38f)
+#endif
+
+// GPUScene のインスタンスのデータを読む
+// UE5.5 以前は、インスタンスのデータの並びの間隔（SOAStride）も渡す（TOON_ENGINE_VERSION は C++ から渡すエンジンの版。5.8 なら 508）
+FInstanceSceneData ToonGetInstanceSceneData(uint InstanceId)
+{
+#if TOON_ENGINE_VERSION < 506
+	return GetInstanceSceneData(InstanceId, Scene.GPUScene.InstanceDataSOAStride);
+#else
+	return GetInstanceSceneData(InstanceId);
+#endif
+}
+
 // Custom Primitive Data の Index 番目の値を読む（4つずつ float4 に詰められている）
 float GetCustomPrimitiveDataFloat(FPrimitiveSceneData PrimitiveData, uint Index)
 {

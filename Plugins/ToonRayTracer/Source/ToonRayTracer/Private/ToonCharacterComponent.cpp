@@ -7,6 +7,8 @@
 #include "HAL/IConsoleManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Rendering/SkeletalMeshRenderData.h"
+#include "RHI.h"
+#include "ToonRayTracerCompat.h"
 
 const FName UToonCharacterComponent::SeeThroughMaskTag(TEXT("ToonSeeThroughMask"));
 
@@ -157,7 +159,11 @@ void UToonCharacterComponent::CreateSeeThroughMaskMesh()
 		TArray<UTexture*> Textures;
 		if (Original)
 		{
+#if TOON_RAY_TRACER_USED_TEXTURES_OPTIONAL
 			Original->GetUsedTextures(Textures);
+#else
+			Original->GetUsedTextures(Textures, EMaterialQualityLevel::Num, true, GMaxRHIFeatureLevel, true);
+#endif
 		}
 		// 元のマテリアルの最初のテクスチャを、眉毛の線が描かれたテクスチャとみなす
 		if (!Textures.IsEmpty() && Textures[0])
