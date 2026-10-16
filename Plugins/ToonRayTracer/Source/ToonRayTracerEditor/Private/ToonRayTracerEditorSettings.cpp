@@ -233,6 +233,7 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	SoftShadowAngle = 5.0f;
 	SoftShadowSamples = 4;
 	SoftShadowSteps = 1;
+	GlassShadowOpacity = 0.5f;
 	IndirectStrength = 0.5f;
 	IndirectSamples = 2;
 	ShadowNoiseStrength = 0.0f;
@@ -252,6 +253,9 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	OutlineColor = FLinearColor(0.02f, 0.02f, 0.04f);
 
 	ReflectionDepth = 4;
+	GlassEdgeStrength = 0.6f;
+	GlassEdgeWidth = 0.2f;
+	GlassEdgeColor = FLinearColor(0.55f, 0.8f, 1.0f);
 }
 
 void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
@@ -356,6 +360,7 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SoftShadowAngle"), SoftShadowAngle);
 	SetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSamples"), SoftShadowSamples);
 	SetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"), SoftShadowSteps);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.GlassShadowOpacity"), GlassShadowOpacity);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.IndirectStrength"), IndirectStrength);
 	SetInt(TEXT("r.ToonRayTracer.Toon.IndirectSamples"), IndirectSamples);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"), ShadowNoiseStrength);
@@ -375,6 +380,9 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetColor(TEXT("r.ToonRayTracer.Toon.OutlineColor"), OutlineColor);
 
 	SetInt(TEXT("r.ToonRayTracer.Toon.ReflectionDepth"), ReflectionDepth);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.GlassEdgeStrength"), GlassEdgeStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.GlassEdgeWidth"), GlassEdgeWidth);
+	SetColor(TEXT("r.ToonRayTracer.Toon.GlassEdgeColor"), GlassEdgeColor);
 }
 
 void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
@@ -497,6 +505,7 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SoftShadowAngle"), SoftShadowAngle);
 	GetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSamples"), SoftShadowSamples);
 	GetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"), SoftShadowSteps);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.GlassShadowOpacity"), GlassShadowOpacity);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.IndirectStrength"), IndirectStrength);
 	GetInt(TEXT("r.ToonRayTracer.Toon.IndirectSamples"), IndirectSamples);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"), ShadowNoiseStrength);
@@ -516,6 +525,9 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetColor(TEXT("r.ToonRayTracer.Toon.OutlineColor"), OutlineColor);
 
 	GetInt(TEXT("r.ToonRayTracer.Toon.ReflectionDepth"), ReflectionDepth);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.GlassEdgeStrength"), GlassEdgeStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.GlassEdgeWidth"), GlassEdgeWidth);
+	GetColor(TEXT("r.ToonRayTracer.Toon.GlassEdgeColor"), GlassEdgeColor);
 }
 
 void UToonRayTracerEditorSettings::ResetAccumulation()

@@ -419,6 +419,10 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "やわらかい影：段階の数", ClampMin = "0", ClampMax = "16", UIMin = "0", UIMax = "8", EditCondition = "bCastShadows"))
 	int32 SoftShadowSteps;
 
+	/** ガラスの影の濃さ。0 なら影を落とさず、1 なら不透明の物体と同じ濃さ。シャドウレイが通り抜けたガラスの物体ごとに、光を (1 - この値) 倍にする */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "ガラスの影の濃さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0", EditCondition = "bCastShadows"))
+	float GlassShadowOpacity;
+
 	/** 照り返し（間接光）の強さ。周りの面の色を足し、赤い壁の近くが赤みを帯びるなどの照り返しを出す。0 なら照り返しなし */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "照り返しの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
 	float IndirectStrength;
@@ -488,6 +492,18 @@ public:
 	/** 金属・ガラスで反射・屈折を追いかける回数。0 なら普通の素材として塗る */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|反射", meta = (DisplayName = "反射・屈折の回数", ClampMin = "0", ClampMax = "16", UIMin = "0", UIMax = "8"))
 	int32 ReflectionDepth;
+
+	/** ガラスの縁の帯の強さ。輪郭に近い部分に色の帯を乗せ、背景が単色でもガラスに見えるようにする。0 なら帯なし */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|反射", meta = (DisplayName = "ガラスの縁の強さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float GlassEdgeStrength;
+
+	/** ガラスの縁の帯の幅（0 ～ 1）。球なら、輪郭から半径のこの割合までが帯になる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|反射", meta = (DisplayName = "ガラスの縁の幅", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float GlassEdgeWidth;
+
+	/** ガラスの縁の帯の色 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|反射", meta = (DisplayName = "ガラスの縁の色", HideAlphaChannel))
+	FLinearColor GlassEdgeColor;
 
 	/** すべての値を初期値に戻す */
 	void ResetToDefaults();

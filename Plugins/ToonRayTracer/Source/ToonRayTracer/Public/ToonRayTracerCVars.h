@@ -211,6 +211,9 @@ namespace ToonRayTracerCVars
 
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonSoftShadowSteps;
 
+	// ガラスの影の濃さ
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonGlassShadowOpacity;
+
 	// Perlin ノイズの応用：影の境目を手描き風に揺らす
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonShadowNoiseStrength;
 
@@ -257,6 +260,12 @@ namespace ToonRayTracerCVars
 
 	// トゥーン T7：様式化された反射
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonReflectionDepth;
+
+	// トゥーンのガラスの縁
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonGlassEdgeStrength;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonGlassEdgeWidth;
+	extern TAutoConsoleVariable<FString> CVarToonRayTracerToonGlassEdgeColor;
+	inline const FLinearColor DefaultToonGlassEdgeColor(0.55f, 0.8f, 1.0f);
 
 	// "R,G,B" 形式の文字列を色に変換する（読めなければ Default を返す）
 	FLinearColor ParseLinearColor(const FString& Text, const FLinearColor& Default);

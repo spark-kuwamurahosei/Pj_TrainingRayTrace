@@ -130,6 +130,86 @@ bool IsLightVisibleIgnoringObject(float3 Origin, float3 Direction, uint IgnoreOb
 	return true;
 }
 
+// ガラスの影を薄くする：Origin から Direction へシャドウレイを飛ばし、光が届く割合（0 ～ 1）を返す
+// ガラス（誘電体）に当たったら通り抜け、ガラスの物体ごとに光を (1 - ToonGlassShadowOpacity) 倍にする
+// （球のように入る面と出る面の 2 回当たる物体は、続けて同じ物体に当たった分は数えない）
+// ガラス以外に当たったら 0。bIgnoreSelf なら IgnoreObjectId の物体（自分自身）は通り抜ける
+// 最も近い交差を順にたどるため、最初の交差で打ち切る IsLightVisibleInDirection より重い。ToonGlassShadowOpacity が 1 未満のときだけ使う
+#define TOON_MAX_GLASS_SHADOW_HITS 8
+float ToonShadowTransmittance(float3 Origin, float3 Direction, bool bIgnoreBackFaces, bool bIgnoreSelf, uint IgnoreObjectId)
+{
+	FToonRay ShadowRay;
+	ShadowRay.Origin = Origin;
+	ShadowRay.Direction = Direction;
+
+	float Transmittance = 1.0f;
+	float TMin = TOON_RAY_TMIN;
+	uint LastGlassObjectId = 0xFFFFFFFFu;
+	[loop]
+	for (uint HitIndex = 0; HitIndex < TOON_MAX_GLASS_SHADOW_HITS; ++HitIndex)
+	{
+		uint HitObjectId;
+		uint HitType;
+		float HitT;
+		if (TraceMode == 0)
+		{
+			// 煙は光を少しずつしか遮らないため、トゥーンのくっきりした影には含めない
+			FToonHitRecord Rec = (FToonHitRecord)0;
+			if (!HitWorld(ShadowRay, TMin, 1.0e8f, Rec, false))
+			{
+				return Transmittance;
+			}
+			HitObjectId = Rec.ObjectId;
+			HitType = Rec.Material.Type;
+			HitT = Rec.T;
+		}
+		else
+		{
+			RayDesc Desc;
+			Desc.Origin = ShadowRay.Origin;
+			Desc.Direction = ShadowRay.Direction;
+			Desc.TMin = TMin;
+			Desc.TMax = RAY_DEFAULT_T_MAX;
+			FDefaultPayload Payload = (FDefaultPayload)0;
+			TraceRay(
+				TLAS,
+				RAY_FLAG_FORCE_OPAQUE | (bIgnoreBackFaces ? RAY_FLAG_CULL_BACK_FACING_TRIANGLES : 0),
+				RAY_TRACING_MASK_ALL,
+				RAY_TRACING_SHADER_SLOT_MATERIAL,
+				RAY_TRACING_NUM_SHADER_SLOTS,
+				0,
+				Desc,
+				Payload);
+			if (Payload.IsMiss())
+			{
+				return Transmittance;
+			}
+			HitObjectId = Payload.InstanceID;
+			HitType = GetSceneMaterial(Payload.InstanceID).Type;
+			HitT = Payload.HitT;
+		}
+
+		if (!(bIgnoreSelf && HitObjectId == IgnoreObjectId))
+		{
+			if (HitType != TOON_MATERIAL_DIELECTRIC)
+			{
+				return 0.0f;
+			}
+			if (HitObjectId != LastGlassObjectId)
+			{
+				Transmittance *= 1.0f - ToonGlassShadowOpacity;
+				LastGlassObjectId = HitObjectId;
+				if (Transmittance <= 0.0f)
+				{
+					return 0.0f;
+				}
+			}
+		}
+		TMin = HitT + TOON_RAY_TMIN;
+	}
+	return Transmittance;
+}
+
 // トゥーン T6：アウトライン
 // カメラレイの上下左右に、線の太さ分だけずらした補助レイを飛ばし、次の場合に線を引く（1 なら線、0 なら線なし）
 //   ・補助レイが空に抜けた（物体の輪郭）
@@ -240,7 +320,10 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 	FToonOnb Onb = MakeOnb(ToLightDirection);
 	float PhiOffset = ToonRandomFloat(RandomState);
 
-	uint NumVisible = 0;
+	// ガラスの影を薄くする場合は、ガラスを通り抜けて光が届く割合を求める
+	bool bGlassTransmittance = ToonGlassShadowOpacity < 1.0f;
+
+	float VisibleSum = 0.0f;
 	[loop]
 	for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
 	{
@@ -253,19 +336,21 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 			Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, Z)));
 		}
 
-		bool bVisible;
-		if (bIgnoreSelf)
+		if (bGlassTransmittance)
 		{
-			bVisible = IsLightVisibleIgnoringObject(ShadowOrigin, Direction, Rec.ObjectId);
+			VisibleSum += ToonShadowTransmittance(ShadowOrigin, Direction, !bIgnoreSelf && bIgnoreBackFaces, bIgnoreSelf, Rec.ObjectId);
+		}
+		else if (bIgnoreSelf)
+		{
+			VisibleSum += IsLightVisibleIgnoringObject(ShadowOrigin, Direction, Rec.ObjectId) ? 1.0f : 0.0f;
 		}
 		else
 		{
-			bVisible = IsLightVisibleInDirection(ShadowOrigin, Direction, bIgnoreBackFaces);
+			VisibleSum += IsLightVisibleInDirection(ShadowOrigin, Direction, bIgnoreBackFaces) ? 1.0f : 0.0f;
 		}
-		NumVisible += bVisible ? 1u : 0u;
 	}
 
-	float Visibility = (float)NumVisible / (float)NumSamples;
+	float Visibility = VisibleSum / (float)NumSamples;
 	// トゥーン：光が届く割合を段階に区切る（例：3 段階なら 0 / 0.5 / 1）
 	if (bSoft && ToonSoftShadowSteps >= 2)
 	{
@@ -733,6 +818,20 @@ void ShadeToonReflective(FToonPendingRay Current, FToonHitRecord Rec, float3 Geo
 		ReflectThroughput = Current.Throughput * ReflectRatio;
 		RefractThroughput = Current.Throughput * (1.0f - ReflectRatio);
 		RefractDirection = refract(Current.Ray.Direction, Rec.Normal, Ri);
+
+		// トゥーンのガラスの縁：外側の面の、輪郭に近い部分（視線と法線の角度が大きい部分）に、縁の色の帯を乗せる
+		// 背景が白い壁など単色だと、屈折して透けた先も同じ色になり、ガラスが不透明な球に見えるため、アニメのガラスのように縁を色で描く
+		// 帯は sinθ（θ：視線と法線の角度）が 1 - ToonGlassEdgeWidth より大きい部分。球なら、見た目の半径の外側 ToonGlassEdgeWidth の割合の輪になる
+		// 帯の境目は少しだけなめらかにし、内側は透けたまま、帯の部分は縁の色と透けた色を Strength で混ぜる
+		if (Rec.bFrontFace && ToonGlassEdgeStrength > 0.0f)
+		{
+			float SinView = sqrt(max(0.0f, 1.0f - CosTheta * CosTheta));
+			float Threshold = 1.0f - ToonGlassEdgeWidth;
+			float Band = smoothstep(Threshold - 0.02f, Threshold + 0.02f, SinView) * ToonGlassEdgeStrength;
+			Color += Current.Throughput * ToonGlassEdgeColor * Band;
+			ReflectThroughput *= 1.0f - Band;
+			RefractThroughput *= 1.0f - Band;
+		}
 	}
 
 	// 屈折を先に積み、反射を後に積む（後に積んだものから処理される）

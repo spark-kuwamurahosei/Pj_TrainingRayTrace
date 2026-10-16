@@ -81,6 +81,7 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	// 文字列型のコンソール変数もゲームスレッドでしか読めないため、ここで色に変換して一緒に渡す
 	const FLinearColor ShadowColor = ParseLinearColor(CVarToonRayTracerToonShadowColor.GetValueOnGameThread(), DefaultToonShadowColor);
 	const FLinearColor OutlineColor = ParseLinearColor(CVarToonRayTracerToonOutlineColor.GetValueOnGameThread(), DefaultToonOutlineColor);
+	const FLinearColor GlassEdgeColor = ParseLinearColor(CVarToonRayTracerToonGlassEdgeColor.GetValueOnGameThread(), DefaultToonGlassEdgeColor);
 	const FLinearColor SkinShadowColor = ParseLinearColor(CVarToonRayTracerToonSkinShadowColor.GetValueOnGameThread(), DefaultToonSkinShadowColor);
 	const FLinearColor SeeThroughColor = ParseLinearColor(CVarToonRayTracerToonSeeThroughColor.GetValueOnGameThread(), DefaultToonSeeThroughColor);
 	const FLinearColor GradationTopColor = ParseLinearColor(CVarToonRayTracerToonOriginalGradationTopColor.GetValueOnGameThread(), DefaultToonGradationTopColor);
@@ -107,7 +108,7 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 	FTextureResource* ImageResource = ImageTexture.IsValid() ? ImageTexture->GetResource() : nullptr;
 
 	ENQUEUE_RENDER_COMMAND(ToonRayTracerUpdateGameThreadState)(
-		[this, Light, Faces = MoveTemp(Faces), ShadowColor, OutlineColor, SkinShadowColor, GradationTopColor, GradationBottomColor, SeeThroughColor, ImageResource](FRHICommandListImmediate&)
+		[this, Light, Faces = MoveTemp(Faces), ShadowColor, OutlineColor, SkinShadowColor, GradationTopColor, GradationBottomColor, SeeThroughColor, GlassEdgeColor, ImageResource](FRHICommandListImmediate&)
 		{
 			ToonSeeThroughColor_RenderThread = SeeThroughColor;
 			ToonGradationTopColor_RenderThread = GradationTopColor;
@@ -117,6 +118,7 @@ void ToonRayTracerViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewF
 			ToonShadowColor_RenderThread = ShadowColor;
 			ToonSkinShadowColor_RenderThread = SkinShadowColor;
 			ToonOutlineColor_RenderThread = OutlineColor;
+			ToonGlassEdgeColor_RenderThread = GlassEdgeColor;
 			ImageTextureResource_RenderThread = ImageResource;
 		});
 }
@@ -321,6 +323,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonSoftShadowAngle = FMath::Clamp(CVarToonRayTracerToonSoftShadowAngle.GetValueOnRenderThread(), 0.0f, 90.0f);
 	const uint32 ToonSoftShadowSamples = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonSoftShadowSamples.GetValueOnRenderThread(), 1, 16));
 	const uint32 ToonSoftShadowSteps = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonSoftShadowSteps.GetValueOnRenderThread(), 0, 16));
+	const float ToonGlassShadowOpacity = FMath::Clamp(CVarToonRayTracerToonGlassShadowOpacity.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const float ToonIndirectStrength = FMath::Max(CVarToonRayTracerToonIndirectStrength.GetValueOnRenderThread(), 0.0f);
 	const uint32 ToonIndirectSamples = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonIndirectSamples.GetValueOnRenderThread(), 1, 16));
 	const float ToonShadowNoiseStrength = FMath::Max(CVarToonRayTracerToonShadowNoiseStrength.GetValueOnRenderThread(), 0.0f);
@@ -338,6 +341,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonFaceOutlineTolerance = FMath::Max(CVarToonRayTracerToonFaceOutlineTolerance.GetValueOnRenderThread(), 1.0f);
 	const FLinearColor ToonOutlineColor = ToonOutlineColor_RenderThread;
 	const uint32 ToonReflectionDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonReflectionDepth.GetValueOnRenderThread(), 0, 16));
+	const float ToonGlassEdgeStrength = FMath::Clamp(CVarToonRayTracerToonGlassEdgeStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonGlassEdgeWidth = FMath::Clamp(CVarToonRayTracerToonGlassEdgeWidth.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const FLinearColor ToonGlassEdgeColor = ToonGlassEdgeColor_RenderThread;
 
 	// ライトの向きや色、トゥーンの設定が変わったときも蓄積をリセットする
 	const FToonDirectionalLight& DirectionalLight = DirectionalLight_RenderThread;
@@ -345,13 +351,13 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(GetTypeHash(DirectionalLight.Intensity), GetTypeHash(DirectionalLight.bValid)));
 	const uint32 ToonHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(ToonBands), GetTypeHash(ToonShadowThreshold)), HashCombine(GetTypeHash(ToonLitThreshold), GetTypeHash(ToonEdgeSoftness))),
-		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), HashCombine(GetTypeHash(ToonLightScale), HashCombine(GetTypeHash(ToonSkyTint), GetTypeHash(ToonShadowSaturation)))), HashCombine(HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonSoftShadowAngle), GetTypeHash(ToonSoftShadowSamples)), HashCombine(GetTypeHash(ToonSoftShadowSteps), HashCombine(GetTypeHash(ToonIndirectStrength), GetTypeHash(ToonIndirectSamples))))), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
+		HashCombine(HashCombine(GetTypeHash(ToonShadowColor), HashCombine(GetTypeHash(ToonLightScale), HashCombine(GetTypeHash(ToonSkyTint), GetTypeHash(ToonShadowSaturation)))), HashCombine(HashCombine(HashCombine(GetTypeHash(bToonCastShadows), GetTypeHash(ToonShadowBias)), HashCombine(HashCombine(GetTypeHash(ToonSoftShadowAngle), GetTypeHash(ToonSoftShadowSamples)), HashCombine(HashCombine(GetTypeHash(ToonSoftShadowSteps), GetTypeHash(ToonGlassShadowOpacity)), HashCombine(GetTypeHash(ToonIndirectStrength), GetTypeHash(ToonIndirectSamples))))), HashCombine(HashCombine(GetTypeHash(ToonShadowNoiseStrength), GetTypeHash(ToonShadowNoiseSize)), HashCombine(GetTypeHash(bToonCharacterSelfShadow), HashCombine(HashCombine(GetTypeHash(bToonSkin), GetTypeHash(ToonSkinShadowThreshold)), GetTypeHash(ToonSkinShadowColor)))))));
 	const uint32 ToonHighlightHash = HashCombine(
 		HashCombine(GetTypeHash(ToonHighlightThreshold), GetTypeHash(ToonHighlightStrength)),
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
 	const uint32 ToonOutlineHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
-		HashCombine(HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonFaceOutlineTolerance)), GetTypeHash(ToonOutlineColor)), HashCombine(GetTypeHash(ToonReflectionDepth),
+		HashCombine(HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonFaceOutlineTolerance)), GetTypeHash(ToonOutlineColor)), HashCombine(HashCombine(GetTypeHash(ToonReflectionDepth), HashCombine(HashCombine(GetTypeHash(ToonGlassEdgeStrength), GetTypeHash(ToonGlassEdgeWidth)), GetTypeHash(ToonGlassEdgeColor))),
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
 				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias)),
 					HashCombine(HashCombine(HashCombine(GetTypeHash(ToonHairShadowMode), GetTypeHash(ToonHairSlotMask)), HashCombine(GetTypeHash(ToonHairShadowWidth), GetTypeHash(ToonHairShadowLightShift))), HashCombine(GetTypeHash(ToonHairShadowDistance), GetTypeHash(ToonHairShadowStrength))))))), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
@@ -627,6 +633,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonSoftShadowCosAngle = FMath::Cos(FMath::DegreesToRadians(ToonSoftShadowAngle * 0.5f));
 	PassParameters->ToonSoftShadowSamples = ToonSoftShadowSamples;
 	PassParameters->ToonSoftShadowSteps = ToonSoftShadowSteps;
+	PassParameters->ToonGlassShadowOpacity = ToonGlassShadowOpacity;
 	PassParameters->ToonIndirectStrength = ToonIndirectStrength;
 	PassParameters->ToonIndirectSamples = ToonIndirectSamples;
 	PassParameters->ToonShadowNoiseStrength = ToonShadowNoiseStrength;
@@ -724,6 +731,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonOutlineThreshold = ToonOutlineThreshold;
 	PassParameters->ToonFaceOutlineTolerance = ToonFaceOutlineTolerance;
 	PassParameters->ToonReflectionDepth = ToonReflectionDepth;
+	PassParameters->ToonGlassEdgeStrength = ToonGlassEdgeStrength;
+	PassParameters->ToonGlassEdgeWidth = ToonGlassEdgeWidth;
+	PassParameters->ToonGlassEdgeColor = FVector3f(ToonGlassEdgeColor.R, ToonGlassEdgeColor.G, ToonGlassEdgeColor.B);
 	PassParameters->ToonOutlineColor = FVector3f(ToonOutlineColor.R, ToonOutlineColor.G, ToonOutlineColor.B);
 	// GPUScene（各メッシュの Custom Primitive Data など）を読むためのシーンのユニフォームバッファ
 	FSceneUniformBuffer& SceneUniformBuffer = UE::FXRenderingUtils::CreateSceneUniformBuffer(GraphBuilder, View.Family->Scene);

@@ -177,6 +177,8 @@ float ToonShadowBias;
 float ToonSoftShadowCosAngle;
 uint ToonSoftShadowSamples;
 uint ToonSoftShadowSteps;
+// ガラスの影の濃さ（0：影なし ～ 1：不透明の物体と同じ）。シャドウレイが通り抜けたガラスの物体ごとに、光を (1 - この値) 倍にする
+float ToonGlassShadowOpacity;
 // トゥーンの照り返し（間接光、『The Rest of Your Life』の応用）
 // ・ToonIndirectStrength：周りの面の色を足す強さ（0 なら照り返しなし）
 // ・ToonIndirectSamples：周りを調べるレイの本数
@@ -336,6 +338,11 @@ float3 ToonOutlineColor;
 
 // トゥーン T7：金属・ガラスで反射・屈折を追いかける回数の上限
 uint ToonReflectionDepth;
+// トゥーンのガラスの縁：輪郭に近い部分（sin(視線と法線の角度) が 1 - ToonGlassEdgeWidth より大きい部分。球なら半径の外側 ToonGlassEdgeWidth の割合）に、ToonGlassEdgeColor の帯を乗せる
+// ToonGlassEdgeStrength：帯の強さ（0 なら帯なし、1 なら帯の部分は完全に縁の色）
+float ToonGlassEdgeStrength;
+float ToonGlassEdgeWidth;
+float3 ToonGlassEdgeColor;
 
 // 同じ物体どうしの段差の判定で、許容量を何倍に広げるか
 #define TOON_OUTLINE_SAME_OBJECT_SCALE 3.0f
