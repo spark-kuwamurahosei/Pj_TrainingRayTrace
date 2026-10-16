@@ -51,7 +51,7 @@ private:
 		const FSceneView& View,
 		const FPostProcessMaterialInputs& Inputs);
 
-	// 鳴潮風ルック フェーズ3：TSR の前（描画解像度、トーンマップ前の HDR）に描く
+	// Original ルック フェーズ3：TSR の前（描画解像度、トーンマップ前の HDR）に描く
 	FScreenPassTexture RenderToonRayTracingPassBeforeTSR(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
@@ -122,7 +122,7 @@ private:
 	FLinearColor ToonSkinShadowColor_RenderThread = FLinearColor(0.62f, 0.42f, 0.45f);
 	// トゥーンのアウトラインの色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonOutlineColor_RenderThread = FLinearColor(0.02f, 0.02f, 0.04f);
-	// 鳴潮モード：画面の上端と下端に掛けるグラデーションの色（文字列のコンソール変数をゲームスレッドで変換したもの）
+	// Original モード：画面の上端と下端に掛けるグラデーションの色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	// 眉毛の透けで塗る色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonSeeThroughColor_RenderThread = FLinearColor(0.3f, 0.08f, 0.09f);
 	FLinearColor ToonGradationTopColor_RenderThread = FLinearColor(1.06f, 1.03f, 0.96f);
@@ -144,7 +144,7 @@ private:
 		TRefCountPtr<IPooledRenderTarget> DepthTexture;
 		// 動く物体への対応：ピクセルの中心で何が見えていたかの要約（影や映り込みが変わったかを調べる）
 		TRefCountPtr<IPooledRenderTarget> SignatureTexture;
-		// 鳴潮モードの仕上げのぼかしの元（光の側のリムの色と、キャラクターの割合）の平均
+		// Original モードの仕上げのぼかしの元（光の側のリムの色と、キャラクターの割合）の平均
 		TRefCountPtr<IPooledRenderTarget> GlowTexture;
 		// 動く物体への対応：前のフレームに、シーン内で物体が動いていたかのフラグ
 		TRefCountPtr<FRDGPooledBuffer> SceneMotionBuffer;

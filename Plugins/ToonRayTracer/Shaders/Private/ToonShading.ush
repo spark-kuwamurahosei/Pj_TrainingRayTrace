@@ -102,7 +102,7 @@ bool IsLightVisible(float3 Origin, bool bIgnoreBackFaces)
 	return IsLightVisibleInDirection(Origin, ToLightDirection, bIgnoreBackFaces);
 }
 
-// 鳴潮風ルック フェーズ2：自分自身（IgnoreObjectId の物体）を通り抜けるシャドウレイ
+// Original ルック フェーズ2：自分自身（IgnoreObjectId の物体）を通り抜けるシャドウレイ
 // 最も近い交差を求め、自分自身なら、その先から飛ばし直す（自分の影を受けず、ほかの物体の影だけ受ける）
 // 通り抜ける回数には上限を設け、超えたら光が届くとみなす
 #define TOON_MAX_SELF_SHADOW_SKIPS 8
@@ -230,7 +230,7 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 // 乱数はフレームごとに変わり、蓄積や TSR で平均されてなめらかになる
 float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool bIgnoreBackFaces, inout uint RandomState)
 {
-	// 鳴潮風ルック フェーズ2：キャラクターは自分自身の影を受けない（服のまだらな影や、顔に落ちる前髪・頭の影を消す）
+	// Original ルック フェーズ2：キャラクターは自分自身の影を受けない（服のまだらな影や、顔に落ちる前髪・頭の影を消す）
 	// 近くの遮りだけ無視する方法では、レイが自分の体を通り抜けて反対側の髪や袖に当たり、かえって影が出るため、
 	// 自分自身はすべて通り抜け、ほかの物体（背景や小物）の影だけ受ける
 	bool bIgnoreSelf = Rec.Material.bCharacter != 0 && bToonCharacterSelfShadow == 0;
@@ -308,7 +308,7 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 		ShadowOffset = Shift * (ToonShadowNoiseStrength * NoiseSize * TOON_SHADOW_NOISE_OFFSET_SCALE);
 	}
 
-	// 鳴潮風ルック フェーズ2：肌は影との境目を肌用の値にする（N・L をずらして、全体の境目の位置に合わせる）
+	// Original ルック フェーズ2：肌は影との境目を肌用の値にする（N・L をずらして、全体の境目の位置に合わせる）
 	// 3 段階のときは、中間と明るい面の境目も同じだけずれる
 	// 顔の影：顔は面の向きの代わりに、頭の向きと光の向きから計算した境目を使う（顔の不規則な明暗をなくす）
 	float FaceNdotL;
@@ -320,10 +320,10 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 	{
 		NdotL += ToonShadowThreshold - ToonSkinShadowThreshold;
 	}
-	else if (Rec.Material.bWuthering != 0)
+	else if (Rec.Material.bOriginal != 0)
 	{
-		// 鳴潮モード：影の出やすさ（VC）で境目をずらす。毛束の奥など暗いところほど影になりやすい
-		NdotL += (Rec.Material.WutheringShadowBias - 0.5f) * ToonWutheringShadowBias;
+		// Original モード：影の出やすさ（VC）で境目をずらす。毛束の奥など暗いところほど影になりやすい
+		NdotL += (Rec.Material.OriginalShadowBias - 0.5f) * ToonOriginalShadowBias;
 	}
 
 	float LightLevel = ToonLightLevel(NdotL);
@@ -411,7 +411,7 @@ float3 ComputeToonRim(FToonHitRecord Rec, FToonRay Ray, float LightLevel)
 
 // トゥーン T2〜T5：普通の素材（金属・ガラス以外）の色
 // 明るい面は「素材の色 × ライトの色」、影の面は「素材の色 × 影色」で塗り、ハイライトとリムライトを乗せる
-// 鳴潮風ルック フェーズ3：Skylight の色味（明るさを 1 にそろえた色）
+// Original ルック フェーズ3：Skylight の色味（明るさを 1 にそろえた色）
 // UE が Skylight から作る、方向ごとの明るさの表（球面調和関数、View.SkyIrradianceEnvironmentMap）の平均（0 次の成分）に、Skylight の色を掛けて使う
 // 面の向きによる明暗を付けると、セル画のべた塗りの影にグラデーションが入るため、向きによらない平均の色にしている
 // 明るさの基準は RGB の平均にする（輝度を基準にすると、輝度への寄与が小さい青が強調され、青空の下で影が青紫に寄りすぎるため）
@@ -502,7 +502,7 @@ float3 ComputeToonIndirect(FToonHitRecord Rec, float3 GeometricNormal, inout uin
 	return Sum / (float)ToonIndirectSamples;
 }
 
-// OutLightLevel には、光の当たり具合（0：影 ～ 1：明るい面）を返す（鳴潮モードのリムのマスクに使う）
+// OutLightLevel には、光の当たり具合（0：影 ～ 1：明るい面）を返す（Original モードのリムのマスクに使う）
 float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState, bool bIndirect, out float OutLightLevel)
 {
 	OutLightLevel = 0.0f;
@@ -519,11 +519,11 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 
 	float3 Albedo = Rec.Material.Albedo;
 	// トゥーン T4：影の面は一定の色（セル画風）。メッシュに影色が設定されていればそれを使う
-	// 鳴潮風ルック フェーズ2：肌は肌用の影色（赤みのある色）にする
+	// Original ルック フェーズ2：肌は肌用の影色（赤みのある色）にする
 	FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
 	float3 ShadowTint = Rec.Material.bSkin != 0 ? Look.SkinShadowColor
 		: (Rec.Material.bHasShadowColor != 0 ? Rec.Material.ShadowColor : Look.ShadowColor);
-	// 鳴潮風ルック フェーズ3：影の面は、直接の光が届かず空や周りの光で照らされるので、Skylight の色に染める
+	// Original ルック フェーズ3：影の面は、直接の光が届かず空や周りの光で照らされるので、Skylight の色に染める
 	// （夕方なら赤み、曇りなら灰色がかった影になり、Lumen で描いた背景になじむ）。明るい面は Directional Light の色のまま
 	if (ToonSkyTint > 0.0f)
 	{
@@ -543,10 +543,10 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 		float ShadowGray = dot(ShadowColor, LuminanceWeights);
 		ShadowColor = max(ShadowGray + (ShadowColor - ShadowGray) * (1.0f + Look.ShadowSaturation), 0.0f);
 	}
-	// 鳴潮モード：影の部分の色はゲームのテクスチャ（LD）をそのまま使う（作り手が描いた影色。空の色にだけ少し染める）
-	if (Rec.Material.bWuthering != 0)
+	// Original モード：影の部分の色はゲームのテクスチャ（LD）をそのまま使う（作り手が描いた影色。空の色にだけ少し染める）
+	if (Rec.Material.bOriginal != 0)
 	{
-		ShadowColor = Rec.Material.WutheringShadowColor * (ToonSkyTint > 0.0f ? lerp(1.0f, GetToonSkyHue(), ToonSkyTint) : 1.0f);
+		ShadowColor = Rec.Material.OriginalShadowColor * (ToonSkyTint > 0.0f ? lerp(1.0f, GetToonSkyHue(), ToonSkyTint) : 1.0f);
 	}
 	float ShadowLuminance = dot(ShadowColor, LuminanceWeights);
 	float MaxShadowLuminance = dot(LitColor, LuminanceWeights) * TOON_MAX_SHADOW_TO_LIT_RATIO;
@@ -563,11 +563,11 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
 	Color += ComputeToonRim(Rec, Ray, LightLevel);
 
-	// 鳴潮モード：髪のハイライト（HM の G の形）と、キラッと光る小さなハイライト（HM の R）を、光の当たる側に入れる
-	if (Rec.Material.bWuthering != 0)
+	// Original モード：髪のハイライト（HM の G の形）と、キラッと光る小さなハイライト（HM の R）を、光の当たる側に入れる
+	if (Rec.Material.bOriginal != 0)
 	{
-		Color += LitColor * (saturate(Rec.Material.WutheringHighlight) * LightLevel * ToonWutheringHighlightStrength);
-		float Sparkle = smoothstep(0.4f, 0.6f, Rec.Material.WutheringSparkle) * LightLevel * ToonWutheringSparkleStrength;
+		Color += LitColor * (saturate(Rec.Material.OriginalHighlight) * LightLevel * ToonOriginalHighlightStrength);
+		float Sparkle = smoothstep(0.4f, 0.6f, Rec.Material.OriginalSparkle) * LightLevel * ToonOriginalSparkleStrength;
 		Color = lerp(Color, max(ToonLightColor, 1.0f), saturate(Sparkle));
 	}
 

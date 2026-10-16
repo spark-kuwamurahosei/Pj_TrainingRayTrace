@@ -11,14 +11,14 @@ using namespace ToonRayTracerCVars;
 
 void AddToonPostEffectsPasses(FRDGBuilder& GraphBuilder, const FSceneView& View, const FToonPostEffectsInputs& Inputs)
 {
-	// 鳴潮モード：仕上げに、キャラクターをぼかして重ね（Diffusion Filter・Soft Focus・Bloom）、画面全体へ上から下へのグラデーションを掛ける
+	// Original モード：仕上げに、キャラクターをぼかして重ね（Diffusion Filter・Soft Focus・Bloom）、画面全体へ上から下へのグラデーションを掛ける
 	// 背景も含めた画面に掛ける。蓄積の結果には含めない
-	const float GradationStrength = FMath::Max(CVarToonRayTracerToonWutheringGradationStrength.GetValueOnRenderThread(), 0.0f);
-	const float DiffusionStrength = FMath::Clamp(CVarToonRayTracerToonWutheringDiffusionStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
-	const float SoftFocusStrength = FMath::Clamp(CVarToonRayTracerToonWutheringSoftFocusStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
-	const float BloomStrength = FMath::Max(CVarToonRayTracerToonWutheringBloomStrength.GetValueOnRenderThread(), 0.0f);
+	const float GradationStrength = FMath::Max(CVarToonRayTracerToonOriginalGradationStrength.GetValueOnRenderThread(), 0.0f);
+	const float DiffusionStrength = FMath::Clamp(CVarToonRayTracerToonOriginalDiffusionStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float SoftFocusStrength = FMath::Clamp(CVarToonRayTracerToonOriginalSoftFocusStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float BloomStrength = FMath::Max(CVarToonRayTracerToonOriginalBloomStrength.GetValueOnRenderThread(), 0.0f);
 	const bool bGlow = DiffusionStrength > 0.0f || SoftFocusStrength > 0.0f || BloomStrength > 0.0f;
-	if (CVarToonRayTracerToonWuthering.GetValueOnRenderThread() == 0 || (GradationStrength <= 0.0f && !bGlow))
+	if (CVarToonRayTracerToonOriginal.GetValueOnRenderThread() == 0 || (GradationStrength <= 0.0f && !bGlow))
 	{
 		return;
 	}
@@ -78,9 +78,9 @@ void AddToonPostEffectsPasses(FRDGBuilder& GraphBuilder, const FSceneView& View,
 					FComputeShaderUtils::GetGroupCount(HalfSize, FToonPostEffectsShaderBase::ThreadGroupSize));
 			}
 		};
-		AddBlur(DiffusionTexture, CVarToonRayTracerToonWutheringDiffusionRadius.GetValueOnRenderThread());
-		AddBlur(SoftFocusTexture, CVarToonRayTracerToonWutheringSoftFocusRadius.GetValueOnRenderThread());
-		AddBlur(BloomTexture, CVarToonRayTracerToonWutheringBloomRadius.GetValueOnRenderThread());
+		AddBlur(DiffusionTexture, CVarToonRayTracerToonOriginalDiffusionRadius.GetValueOnRenderThread());
+		AddBlur(SoftFocusTexture, CVarToonRayTracerToonOriginalSoftFocusRadius.GetValueOnRenderThread());
+		AddBlur(BloomTexture, CVarToonRayTracerToonOriginalBloomRadius.GetValueOnRenderThread());
 	}
 	else
 	{

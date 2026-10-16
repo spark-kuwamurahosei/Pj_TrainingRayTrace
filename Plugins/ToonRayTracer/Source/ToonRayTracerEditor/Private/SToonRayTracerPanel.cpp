@@ -116,7 +116,7 @@ void SToonRayTracerPanel::Construct(const FArguments& InArgs)
 			]
 		]
 
-		// 鳴潮風ルックの確認用：時間帯ごとの環境（レベルの Directional Light と Skylight を切り替える）
+		// Original ルックの確認用：時間帯ごとの環境（レベルの Directional Light と Skylight を切り替える）
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		.Padding(8.0f, 0.0f, 8.0f, 4.0f)

@@ -27,9 +27,9 @@ struct FToonMaterial
 	float OutlineWidth;
 	// 『The Next Week』第9章：煙の濃さ（1cm あたりに散乱する確率）
 	float Density;
-	// 鳴潮風ルック：キャラクター（スケルタルメッシュか、Custom Primitive Data の [12] が正の値）なら 1
+	// Original ルック：キャラクター（スケルタルメッシュか、Custom Primitive Data の [12] が正の値）なら 1
 	uint bCharacter;
-	// 鳴潮風ルック：肌（UE のマテリアルのシェーディングモデルで判定）なら 1
+	// Original ルック：肌（UE のマテリアルのシェーディングモデルで判定）なら 1
 	uint bSkin;
 	// 目の表現：キャラクターの目のパーツ（ToonEyeSlotMask で指定したマテリアルスロット）なら 1
 	uint bEye;
@@ -41,12 +41,12 @@ struct FToonMaterial
 	float3 Emissive;
 	// キャラクターごとの設定の番号（ToonCharacterLook0 などの添え字）。なければ -1
 	int Character;
-	// 鳴潮モード：ゲームのテクスチャの値（Two Sided Foliage のマテリアルの GBuffer から読む）
-	uint bWuthering;
-	float3 WutheringShadowColor;
-	float WutheringHighlight;
-	float WutheringSparkle;
-	float WutheringShadowBias;
+	// Original モード：ゲームのテクスチャの値（Two Sided Foliage のマテリアルの GBuffer から読む）
+	uint bOriginal;
+	float3 OriginalShadowColor;
+	float OriginalHighlight;
+	float OriginalSparkle;
+	float OriginalShadowBias;
 };
 
 // 未設定のメッシュに使うマテリアル（第9章と同じ 50% の灰色）
@@ -70,11 +70,11 @@ FToonMaterial GetDefaultMaterial()
 	Material.bEye = 0;
 	Material.bNoEyelidShadow = 0;
 	Material.bFace = 0;
-	Material.bWuthering = 0;
-	Material.WutheringShadowColor = 0.0f;
-	Material.WutheringHighlight = 0.0f;
-	Material.WutheringSparkle = 0.0f;
-	Material.WutheringShadowBias = 0.5f;
+	Material.bOriginal = 0;
+	Material.OriginalShadowColor = 0.0f;
+	Material.OriginalHighlight = 0.0f;
+	Material.OriginalSparkle = 0.0f;
+	Material.OriginalShadowBias = 0.5f;
 	return Material;
 }
 
@@ -140,7 +140,7 @@ FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 		Material.OutlineWidth = max(OutlineWidthOverride, 0.0f);
 	}
 
-	// 鳴潮風ルック：キャラクターかどうか。スケルタルメッシュをキャラクターとし、Custom Primitive Data の [12] で上書きできる
+	// Original ルック：キャラクターかどうか。スケルタルメッシュをキャラクターとし、Custom Primitive Data の [12] で上書きできる
 	// （キャラの小物がスタティックメッシュの場合は正の値、キャラとして扱いたくないスケルタルメッシュは負の値）
 	float CharacterOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 12);
 	Material.bCharacter = CharacterOverride != 0.0f

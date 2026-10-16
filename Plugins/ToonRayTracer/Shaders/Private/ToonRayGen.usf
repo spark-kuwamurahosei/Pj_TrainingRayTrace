@@ -1,6 +1,6 @@
 #include "/Engine/Private/Common.ush"
 #include "/Engine/Private/RayTracing/RayTracingCommon.ush"
-// 鳴潮風ルック フェーズ3：TSR の前に描くとき、UE のトーンマップ（Filmic）を打ち消すため（FilmToneMapInverse、sRGBToLinear）
+// Original ルック フェーズ3：TSR の前に描くとき、UE のトーンマップ（Filmic）を打ち消すため（FilmToneMapInverse、sRGBToLinear）
 #include "/Engine/Private/TonemapCommon.ush"
 #include "ToonObjectColorTable.ush"
 
@@ -137,7 +137,7 @@ float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
 #endif
 }
 
-// 鳴潮風ルック フェーズ1：画面上の UV の位置で、カメラから見えている物体をトゥーンで塗るかどうか（キャラだけトゥーンにするとき）
+// Original ルック フェーズ1：画面上の UV の位置で、カメラから見えている物体をトゥーンで塗るかどうか（キャラだけトゥーンにするとき）
 // キャラクター（GetSceneMaterial の bCharacter）だけをトゥーンで塗る
 // アウトラインは手前の物体の側に引かれるため、キャラの輪郭の線もキャラのピクセルに収まる
 bool IsToonTargetPixel(float2 UV)
@@ -189,7 +189,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	}
 	uint MaxFrames = bSceneMoving ? clamp(MotionMaxAccumulatedFrames, 1u, MaxAccumulatedFrames) : MaxAccumulatedFrames;
 
-	// 鳴潮風ルック フェーズ1：キャラだけトゥーンにする場合、それ以外のピクセルは通常描画の画面をそのまま出す
+	// Original ルック フェーズ1：キャラだけトゥーンにする場合、それ以外のピクセルは通常描画の画面をそのまま出す
 	// 蓄積を終えたピクセル（トゥーンで塗ったピクセル）は、動きでやり直すまで判定を省く
 	// 背景のピクセルも、上の動きの判定（速度と深度）には含める（動く背景の物体がキャラに落とす影の変化に気付くため）
 	if (bToonCharacterOnly != 0 && TraceMode != 0 && ShadingMode == 3 && (bSceneMoving || HistoryFrames < MaxFrames)
@@ -308,7 +308,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		Color = sqrt(max(Color, 0.0f));
 	}
 
-	// 鳴潮風ルック フェーズ3：TSR の前に描く場合、トーンマップの後に描いたときに画面に出していた値（上のガンマ 2 の値）が、
+	// Original ルック フェーズ3：TSR の前に描く場合、トーンマップの後に描いたときに画面に出していた値（上のガンマ 2 の値）が、
 	// UE のトーンマップを通ったあとにそのまま出るよう、トーンマップの逆をかけた色を書き込む
 	// ・Filmic のカーブは、エンジンの逆関数（既定のカーブの設定で合わせたもの）で打ち消す
 	// ・画面の色は露出を先に掛けた値（PreExposure）で持ち、トーンマップで「1 / PreExposure × 自動露出」が掛かるので、その逆を掛ける

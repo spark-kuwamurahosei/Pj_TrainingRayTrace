@@ -6,9 +6,9 @@
 RWTexture2D<float4> OutputTexture;
 // 通常描画（トーンマップ後）の画面。キャラだけトゥーンにするとき、それ以外のピクセルにそのまま使う
 Texture2D SceneColorTexture;
-// 鳴潮風ルック フェーズ1：1 なら、トゥーンで塗るのはキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
+// Original ルック フェーズ1：1 なら、トゥーンで塗るのはキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
 uint bToonCharacterOnly;
-// 鳴潮風ルック フェーズ3：1 なら、TSR の前（描画解像度、トーンマップ前の HDR）に描く
+// Original ルック フェーズ3：1 なら、TSR の前（描画解像度、トーンマップ前の HDR）に描く
 // ピクセル中心に 1 本だけレイを飛ばし（TAA のジッターはカメラの行列に含まれる）、アンチエイリアスとフレームをまたいだ平均は TSR に任せる
 // 出力は線形の色のまま書き込み、トーンマップは UE に任せる
 uint bBeforeTSR;
@@ -19,7 +19,7 @@ float ToonEyeAdaptationExposure;
 
 // フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
 RWTexture2D<float4> AccumulationTexture;
-// 鳴潮モードの仕上げのぼかしの元（ToonGlowSample のフレームをまたいだ平均。ViewRect 内のローカル座標）
+// Original モードの仕上げのぼかしの元（ToonGlowSample のフレームをまたいだ平均。ViewRect 内のローカル座標）
 RWTexture2D<float4> ToonGlowTexture;
 
 // AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）
@@ -185,33 +185,33 @@ uint ToonIndirectSamples;
 // Perlin ノイズの応用：影の境目を手描き風に揺らす強さ（0 なら揺らさない）と、揺れの大きさ（cm）
 float ToonShadowNoiseStrength;
 float ToonShadowNoiseSize;
-// 鳴潮風ルック フェーズ2：0 なら、キャラクターは自分自身の影を受けない（ほかの物体の影だけ受ける）
+// Original ルック フェーズ2：0 なら、キャラクターは自分自身の影を受けない（ほかの物体の影だけ受ける）
 // 服のシワや重なりのまだらな影、前髪や頭が顔に落とす影が消える
 uint bToonCharacterSelfShadow;
-// 鳴潮風ルック フェーズ2：肌（顔）の塗り
+// Original ルック フェーズ2：肌（顔）の塗り
 // UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面を肌とし、
 // 影との境目の N・L と影色を肌用の値にする（顔に細かい影が入りにくく、影は赤みのある色にする）
 uint bToonSkin;
-// 鳴潮モード：ゲームのテクスチャ（影色の LD、ハイライトの HM、影の出やすさの VC）で影とハイライトを決める
+// Original モード：ゲームのテクスチャ（影色の LD、ハイライトの HM、影の出やすさの VC）で影とハイライトを決める
 // マテリアルのシェーディングモデルを Two Sided Foliage にし、空いている GBuffer の欄に書き込んで渡す
 //   Subsurface Color（GBufferD の rgb）：影の部分の色（LD）
 //   Metallic（GBufferB の r）：髪のハイライトの形（HM の G）
 //   Specular（GBufferB の g）：キラッと光る小さなハイライト（HM の R）
 //   Roughness（GBufferB の b）：影の出やすさ（VC の G。0.5 で変化なし、小さいほど影になりやすい）
-// ・bToonWutheringMode：1 なら有効
-// ・ToonWutheringHighlightStrength：髪のハイライトの強さ
-// ・ToonWutheringSparkleStrength：キラッと光る小さなハイライトの強さ
-// ・ToonWutheringShadowBias：影の出やすさを N・L に足すときの倍率
-uint bToonWutheringMode;
-float ToonWutheringHighlightStrength;
-float ToonWutheringSparkleStrength;
-float ToonWutheringShadowBias;
-// ・ToonWutheringReflectionRimStrength：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）の強さ（キャラクターのリムライトの強さに掛ける）
-float ToonWutheringReflectionRimStrength;
+// ・bToonOriginalMode：1 なら有効
+// ・ToonOriginalHighlightStrength：髪のハイライトの強さ
+// ・ToonOriginalSparkleStrength：キラッと光る小さなハイライトの強さ
+// ・ToonOriginalShadowBias：影の出やすさを N・L に足すときの倍率
+uint bToonOriginalMode;
+float ToonOriginalHighlightStrength;
+float ToonOriginalSparkleStrength;
+float ToonOriginalShadowBias;
+// ・ToonOriginalReflectionRimStrength：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）の強さ（キャラクターのリムライトの強さに掛ける）
+float ToonOriginalReflectionRimStrength;
 Texture2D GBufferDTexture;
 float ToonSkinShadowThreshold;
 float3 ToonSkinShadowColor;
-// 鳴潮風ルック フェーズ2：キャラクターのリムライトと線の色
+// Original ルック フェーズ2：キャラクターのリムライトと線の色
 // ・リムライト：光源の側の輪郭に、一定の幅（ピクセル）で明るい縁を入れる強さ
 // ・線の色：キャラクターの線を、黒ではなく素材の色を暗くした色にする倍率（0 なら全体の線の色）
 float ToonCharacterRimStrength;
@@ -298,7 +298,7 @@ float ToonHairShadowLightShift;
 // 6 なら、顔の影の結果を表示する（黄：明るい面、青：影、マゼンタ：近くに顔が見つからない）
 // 5 なら、目の N・H（面の向きと、光と視線の中間の向きの近さ）を明るさで表示し、ハイライトになる部分を赤で示す
 uint bToonDebugGeometry;
-// 鳴潮風ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
+// Original ルック フェーズ3：影の面を、Skylight（空と周りの光）の色にどれだけ染めるか（0 ～ 1）
 float ToonSkyTint;
 // 影の色の鮮やかさ：影の色（素材の色 × 影色）の明るさは保ったまま、彩度をどれだけ上げるか（0 なら変えない）
 float ToonShadowSaturation;

@@ -58,14 +58,14 @@ namespace ToonRayTracerCVars
 		TEXT("Maximum number of ray bounces (1-50) for ShadingMode 1. Toon shading uses r.ToonRayTracer.Toon.ReflectionDepth instead"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮風ルック フェーズ1：トゥーンで塗るのをキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
+	// Original ルック フェーズ1：トゥーンで塗るのをキャラクター（スケルタルメッシュ）だけにし、背景は通常描画のままにする
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterOnly(
 		TEXT("r.ToonRayTracer.Toon.CharacterOnly"),
 		0,
 		TEXT("Apply toon shading only to characters (skeletal meshes, or meshes with Custom Primitive Data [12] > 0). Other pixels keep the regular rendering"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮風ルック フェーズ3：キャラクターだけトゥーンにするとき、TSR の前（描画解像度、トーンマップ前）に描く
+	// Original ルック フェーズ3：キャラクターだけトゥーンにするとき、TSR の前（描画解像度、トーンマップ前）に描く
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonBeforeTSR(
 		TEXT("r.ToonRayTracer.Toon.BeforeTSR"),
 		1,
@@ -111,7 +111,7 @@ namespace ToonRayTracerCVars
 		TEXT("Linear RGB tint multiplied with the material color in shadow bands, as \"R,G,B\""),
 		ECVF_Default);
 
-	// 鳴潮風ルック フェーズ2：肌（UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面）の塗り
+	// Original ルック フェーズ2：肌（UE のマテリアルのシェーディングモデルが Subsurface / Preintegrated Skin / Subsurface Profile の面）の塗り
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonSkin(
 		TEXT("r.ToonRayTracer.Toon.Skin"),
 		1,
@@ -130,7 +130,7 @@ namespace ToonRayTracerCVars
 		TEXT("Linear RGB tint multiplied with the skin color in shadow bands, as \"R,G,B\""),
 		ECVF_Default);
 
-	// 鳴潮風ルック フェーズ2：キャラクターのリムライトと線の色
+	// Original ルック フェーズ2：キャラクターのリムライトと線の色
 	TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimStrength(
 		TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"),
 		1.5f,
@@ -149,7 +149,7 @@ namespace ToonRayTracerCVars
 		TEXT("Character outlines use the material color multiplied by this value instead of OutlineColor. 0: use OutlineColor"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮風ルック フェーズ3：影の面を Skylight（空と周りの光）の色にどれだけ染めるか
+	// Original ルック フェーズ3：影の面を Skylight（空と周りの光）の色にどれだけ染めるか
 	TAutoConsoleVariable<float> CVarToonRayTracerToonSkyTint(
 		TEXT("r.ToonRayTracer.Toon.SkyTint"),
 		0.3f,
@@ -158,90 +158,90 @@ namespace ToonRayTracerCVars
 
 	// 影の色の鮮やかさ：影の色の明るさは保ったまま、彩度を上げる
 	// マテリアルの発光：UE のマテリアルの発光（エミッシブ）を、トゥーンの塗りに足す強さ
-	// 鳴潮モード：ゲームのテクスチャ（影色 LD、ハイライト HM、影の出やすさ VC）を、Two Sided Foliage のマテリアルの GBuffer から読む
-	TAutoConsoleVariable<int32> CVarToonRayTracerToonWuthering(
-		TEXT("r.ToonRayTracer.Toon.Wuthering"),
+	// Original モード：ゲームのテクスチャ（影色 LD、ハイライト HM、影の出やすさ VC）を、Two Sided Foliage のマテリアルの GBuffer から読む
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonOriginal(
+		TEXT("r.ToonRayTracer.Toon.Original"),
 		1,
-		TEXT("Wuthering Waves mode: materials with the Two Sided Foliage shading model pass the game textures through the GBuffer (Subsurface Color: shadow color, Metallic: hair highlight, Specular: sparkle, Roughness: shadow bias) (0: off, 1: on)"),
+		TEXT("Original mode: materials with the Two Sided Foliage shading model pass the game textures through the GBuffer (Subsurface Color: shadow color, Metallic: hair highlight, Specular: sparkle, Roughness: shadow bias) (0: off, 1: on)"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringHighlightStrength(
-		TEXT("r.ToonRayTracer.Toon.WutheringHighlightStrength"),
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalHighlightStrength(
+		TEXT("r.ToonRayTracer.Toon.OriginalHighlightStrength"),
 		0.5f,
-		TEXT("Strength of the hair highlight from the game texture in the Wuthering Waves mode"),
+		TEXT("Strength of the hair highlight from the game texture in the Original mode"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringSparkleStrength(
-		TEXT("r.ToonRayTracer.Toon.WutheringSparkleStrength"),
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalSparkleStrength(
+		TEXT("r.ToonRayTracer.Toon.OriginalSparkleStrength"),
 		1.0f,
-		TEXT("Strength of the small sparkle highlight from the game texture in the Wuthering Waves mode"),
+		TEXT("Strength of the small sparkle highlight from the game texture in the Original mode"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringShadowBias(
-		TEXT("r.ToonRayTracer.Toon.WutheringShadowBias"),
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalShadowBias(
+		TEXT("r.ToonRayTracer.Toon.OriginalShadowBias"),
 		0.6f,
-		TEXT("How much the shadow bias from the game texture shifts the shadow boundary (N dot L) in the Wuthering Waves mode"),
+		TEXT("How much the shadow bias from the game texture shifts the shadow boundary (N dot L) in the Original mode"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮モード：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringReflectionRimStrength(
-		TEXT("r.ToonRayTracer.Toon.WutheringReflectionRimStrength"),
+	// Original モード：光と反対の側の輪郭に入れる、空の色の縁（照り返しのリム）
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalReflectionRimStrength(
+		TEXT("r.ToonRayTracer.Toon.OriginalReflectionRimStrength"),
 		0.5f,
-		TEXT("Strength of the sky-colored rim on the shadow-side silhouette in the Wuthering Waves mode (multiplied with the character rim strength). 0: off"),
+		TEXT("Strength of the sky-colored rim on the shadow-side silhouette in the Original mode (multiplied with the character rim strength). 0: off"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮モード：仕上げに、キャラクターをぼかして重ねる（Diffusion Filter・Soft Focus・Bloom）
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringDiffusionStrength(
-		TEXT("r.ToonRayTracer.Toon.WutheringDiffusionStrength"),
+	// Original モード：仕上げに、キャラクターをぼかして重ねる（Diffusion Filter・Soft Focus・Bloom）
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalDiffusionStrength(
+		TEXT("r.ToonRayTracer.Toon.OriginalDiffusionStrength"),
 		0.8f,
-		TEXT("Diffusion filter in the Wuthering Waves mode (0-1): the blurred \"color x color x light color\" of the character is screened over the multiplied color, keeping the lighter of it and the original. 0: off"),
+		TEXT("Diffusion filter in the Original mode (0-1): the blurred \"color x color x light color\" of the character is screened over the multiplied color, keeping the lighter of it and the original. 0: off"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringDiffusionRadius(
-		TEXT("r.ToonRayTracer.Toon.WutheringDiffusionRadius"),
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalDiffusionRadius(
+		TEXT("r.ToonRayTracer.Toon.OriginalDiffusionRadius"),
 		24.0f,
 		TEXT("Blur radius in pixels of the diffusion filter"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringSoftFocusStrength(
-		TEXT("r.ToonRayTracer.Toon.WutheringSoftFocusStrength"),
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalSoftFocusStrength(
+		TEXT("r.ToonRayTracer.Toon.OriginalSoftFocusStrength"),
 		0.2f,
-		TEXT("Soft focus in the Wuthering Waves mode (0-1): how much a blurred copy of the character is blended over it. 0: off"),
+		TEXT("Soft focus in the Original mode (0-1): how much a blurred copy of the character is blended over it. 0: off"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringSoftFocusRadius(
-		TEXT("r.ToonRayTracer.Toon.WutheringSoftFocusRadius"),
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalSoftFocusRadius(
+		TEXT("r.ToonRayTracer.Toon.OriginalSoftFocusRadius"),
 		6.0f,
 		TEXT("Blur radius in pixels of the soft focus"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringBloomStrength(
-		TEXT("r.ToonRayTracer.Toon.WutheringBloomStrength"),
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalBloomStrength(
+		TEXT("r.ToonRayTracer.Toon.OriginalBloomStrength"),
 		2.0f,
-		TEXT("Bloom of the lit-side character rim in the Wuthering Waves mode: the blurred rim is added (also around the character). 0: off"),
+		TEXT("Bloom of the lit-side character rim in the Original mode: the blurred rim is added (also around the character). 0: off"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringBloomRadius(
-		TEXT("r.ToonRayTracer.Toon.WutheringBloomRadius"),
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalBloomRadius(
+		TEXT("r.ToonRayTracer.Toon.OriginalBloomRadius"),
 		16.0f,
 		TEXT("Blur radius in pixels of the rim bloom"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮モード：画面全体に、上から下へのグラデーションを掛ける（仕上げの色味）
-	TAutoConsoleVariable<float> CVarToonRayTracerToonWutheringGradationStrength(
-		TEXT("r.ToonRayTracer.Toon.WutheringGradationStrength"),
+	// Original モード：画面全体に、上から下へのグラデーションを掛ける（仕上げの色味）
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalGradationStrength(
+		TEXT("r.ToonRayTracer.Toon.OriginalGradationStrength"),
 		1.0f,
-		TEXT("Strength of the top-to-bottom color gradation multiplied over the whole screen in the Wuthering Waves mode. 0: off"),
+		TEXT("Strength of the top-to-bottom color gradation multiplied over the whole screen in the Original mode. 0: off"),
 		ECVF_RenderThreadSafe);
 
-	TAutoConsoleVariable<FString> CVarToonRayTracerToonWutheringGradationTopColor(
-		TEXT("r.ToonRayTracer.Toon.WutheringGradationTopColor"),
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonOriginalGradationTopColor(
+		TEXT("r.ToonRayTracer.Toon.OriginalGradationTopColor"),
 		TEXT("1.06,1.03,0.96"),
 		TEXT("Linear RGB multiplied at the top of the screen by the gradation, as \"R,G,B\""),
 		ECVF_Default);
 
-	TAutoConsoleVariable<FString> CVarToonRayTracerToonWutheringGradationBottomColor(
-		TEXT("r.ToonRayTracer.Toon.WutheringGradationBottomColor"),
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonOriginalGradationBottomColor(
+		TEXT("r.ToonRayTracer.Toon.OriginalGradationBottomColor"),
 		TEXT("0.9,0.92,1.0"),
 		TEXT("Linear RGB multiplied at the bottom of the screen by the gradation, as \"R,G,B\""),
 		ECVF_Default);
@@ -518,7 +518,7 @@ namespace ToonRayTracerCVars
 		TEXT("Size (cm) of the shadow boundary wobble. Computed in mesh local space with the mesh scale applied, so the pattern sticks to the mesh"),
 		ECVF_RenderThreadSafe);
 
-	// 鳴潮風ルック フェーズ2：キャラクターが自分自身の影を受けるか（0 なら、服のまだらな影や顔に落ちる前髪の影が消える）
+	// Original ルック フェーズ2：キャラクターが自分自身の影を受けるか（0 なら、服のまだらな影や顔に落ちる前髪の影が消える）
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterSelfShadow(
 		TEXT("r.ToonRayTracer.Toon.CharacterSelfShadow"),
 		0,

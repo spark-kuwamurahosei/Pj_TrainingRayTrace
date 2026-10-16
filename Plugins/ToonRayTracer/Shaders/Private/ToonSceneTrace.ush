@@ -366,23 +366,23 @@ void ApplyGBufferMaterial(int2 GBufferPixel, inout FToonHitRecord Rec)
 		return;
 	}
 
-	// 鳴潮風ルック フェーズ2：肌の判定。GBufferB の a の下位 4 ビットにシェーディングモデルが入っている（DecodeShadingModelId）
+	// Original ルック フェーズ2：肌の判定。GBufferB の a の下位 4 ビットにシェーディングモデルが入っている（DecodeShadingModelId）
 	float4 GBufferB = GBufferBTexture.Load(int3(GBufferPixel, 0));
 	uint ShadingModelId = ((uint)round(GBufferB.a * 255.0f)) & 0xF;
 
-	// 鳴潮モード：Two Sided Foliage のマテリアルは、空いている GBuffer の欄にゲームのテクスチャの値が入っている
+	// Original モード：Two Sided Foliage のマテリアルは、空いている GBuffer の欄にゲームのテクスチャの値が入っている
 	// （Metallic や Roughness は別の意味で使っているため、金属の判定もしない）
 	if (ShadingModelId == TOON_SHADINGMODELID_TWOSIDED_FOLIAGE)
 	{
-		if (bToonWutheringMode != 0)
+		if (bToonOriginalMode != 0)
 		{
 			// GBufferD の rgb には Subsurface Color の平方根が入っている（EncodeSubsurfaceColor）
 			float3 Encoded = GBufferDTexture.Load(int3(GBufferPixel, 0)).rgb;
-			Rec.Material.bWuthering = 1;
-			Rec.Material.WutheringShadowColor = Encoded * Encoded;
-			Rec.Material.WutheringHighlight = GBufferB.r;
-			Rec.Material.WutheringSparkle = GBufferB.g;
-			Rec.Material.WutheringShadowBias = GBufferB.b;
+			Rec.Material.bOriginal = 1;
+			Rec.Material.OriginalShadowColor = Encoded * Encoded;
+			Rec.Material.OriginalHighlight = GBufferB.r;
+			Rec.Material.OriginalSparkle = GBufferB.g;
+			Rec.Material.OriginalShadowBias = GBufferB.b;
 		}
 		if (bUseGBufferBaseColor != 0)
 		{

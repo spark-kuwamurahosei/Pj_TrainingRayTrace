@@ -178,7 +178,7 @@ ToonRayTracer パネルの「キャラクター」欄でも、同じことがで
 
 | 変数 | 既定値 | 内容 |
 |---|---|---|
-| `CharacterOnly` | 0 | トゥーンで塗るのをキャラクター（スケルタルメッシュ）だけにし、背景は通常描画（Lumen など）のままにする（鳴潮風のルック）。メッシュごとに Custom Primitive Data の `[12]` で上書きできる。ShadingMode 3（トゥーン）、TraceMode 1（シーン）のときに有効 |
+| `CharacterOnly` | 0 | トゥーンで塗るのをキャラクター（スケルタルメッシュ）だけにし、背景は通常描画（Lumen など）のままにする（Original のルック）。メッシュごとに Custom Primitive Data の `[12]` で上書きできる。ShadingMode 3（トゥーン）、TraceMode 1（シーン）のときに有効 |
 | `BeforeTSR` | 1 | `CharacterOnly` のとき、TSR の前（描画解像度、トーンマップ前の HDR）に描く。ピクセル中心に 1 本だけレイを飛ばし（TAA のジッターはカメラの行列に含む）、アンチエイリアス・アップスケール・フレームをまたいだ平均は TSR に任せる。動いている間の輪郭のギザつきが抑えられ、トーンマップ・DOF・ブルームも背景と同じようにかかる。自前の蓄積と動きの判定は使わない。0 ならトーンマップの後（出力解像度）に描く |
 | `InverseTonemap` | 1 | `BeforeTSR` のとき、UE のトーンマップ（Filmic）の逆と露出の逆をかけた色を書き込み、トーンマップの後に描いた場合と同じ色味にする。色域の拡張・ブルーム・ビネットは打ち消さないため近似。0 なら背景と同じようにトーンマップがかかる |
 | `CharacterSelfShadow` | 0 | キャラクターが自分自身の影を受けるか。0 ならキャラクターの面からのシャドウレイは自分自身を通り抜け、背景や小物など、ほかの物体の影だけ受ける（服のシワや重なりのまだらな影、顔に落ちる前髪や頭の影が消える） |
@@ -223,20 +223,20 @@ ToonRayTracer パネルの「キャラクター」欄でも、同じことがで
 | `EdgeSoftness` | 0.02 | 段階の境目のぼかし幅（N・L） |
 | `ShadowColor` | `0.35,0.4,0.6` | 影色（線形の R,G,B）。メッシュごとの設定がなければこれを使う |
 | `LightScale` | 1.0 | 明るい面の明るさの倍率（ライトのルクス値は使わない） |
-| `Wuthering` | 1 | 鳴潮モード。シェーディングモデルが Two Sided Foliage のマテリアルは、空いている GBuffer の欄に入れたゲームのテクスチャで影とハイライトを決める（Subsurface Color：影の部分の色 LD、Metallic：髪のハイライトの形 HM の G、Specular：キラッと光る小さなハイライト HM の R、Roughness：影の出やすさ VC の G で 0.5 なら変化なし）。影の部分はテクスチャの影色をそのまま使い、髪のハイライトは光の当たる側に入れる。Two Sided Foliage のマテリアルでは、金属の判定はしない。0 なら無効 |
-| `WutheringHighlightStrength` | 0.5 | 鳴潮モードの髪のハイライト（HM の G）の強さ |
-| `WutheringSparkleStrength` | 1.0 | 鳴潮モードのキラッと光る小さなハイライト（HM の R）の強さ |
-| `WutheringShadowBias` | 0.6 | 鳴潮モードで、影の出やすさ（VC の G）が影の境目（N・L）をずらす量 |
-| `WutheringReflectionRimStrength` | 0.5 | 鳴潮モードの照り返しのリム。光と反対の側の輪郭に、空の色（Skylight の色味）の縁を、影の部分だけに入れる強さ（`CharacterRimStrength` に掛ける。幅は `CharacterRimWidth`）。鳴潮モードでは、光の側のリムも光の当たる部分だけに入れ、どちらも光の方向を向いている度合い（N・L）でなだらかに弱める。0 なら入れない |
-| `WutheringDiffusionStrength` | 0.8 | 鳴潮モードの Diffusion Filter（0 ～ 1）。鳴潮モードでは、キャラクター全体（ゲームのテクスチャを使っていない顔や肌も含む）に掛ける。キャラクターの色（表示の値）どうしを乗算した色に、ぼかした「乗算した色 × 光の色」をスクリーンで重ね、元の色と比べて明るい方を残す（比較(明)）。明るい部分が光の色でふんわりにじみ、暗い部分はそのまま。0 なら掛けない |
-| `WutheringDiffusionRadius` | 24 | Diffusion Filter のぼかしの半径（ピクセル。半分の解像度でぼかす） |
-| `WutheringSoftFocusStrength` | 0.2 | 鳴潮モードの Soft Focus（0 ～ 1）。キャラクターの色だけをぼかした画像を、キャラクターの上に重ねる割合（背景の色は混ぜない。目には重ねず、瞳の模様やハイライトをくっきり残す）。0 なら掛けない |
-| `WutheringSoftFocusRadius` | 6 | Soft Focus のぼかしの半径（ピクセル） |
-| `WutheringBloomStrength` | 2.0 | 鳴潮モードのリムの Bloom。光の側のリムだけをぼかして加える強さ（キャラクターの外側にもにじむ）。0 なら加えない |
-| `WutheringBloomRadius` | 16 | リムの Bloom のぼかしの半径（ピクセル） |
-| `WutheringGradationStrength` | 1.0 | 鳴潮モードの仕上げのグラデーション。画面全体（背景も含む）に、上端で `WutheringGradationTopColor`、下端で `WutheringGradationBottomColor` を掛ける強さ。0 なら掛けない |
-| `WutheringGradationTopColor` | 1.06,1.03,0.96 | グラデーションで画面の上端に掛ける色（線形 RGB） |
-| `WutheringGradationBottomColor` | 0.9,0.92,1.0 | グラデーションで画面の下端に掛ける色（線形 RGB） |
+| `Original` | 1 | Original モード。シェーディングモデルが Two Sided Foliage のマテリアルは、空いている GBuffer の欄に入れたゲームのテクスチャで影とハイライトを決める（Subsurface Color：影の部分の色 LD、Metallic：髪のハイライトの形 HM の G、Specular：キラッと光る小さなハイライト HM の R、Roughness：影の出やすさ VC の G で 0.5 なら変化なし）。影の部分はテクスチャの影色をそのまま使い、髪のハイライトは光の当たる側に入れる。Two Sided Foliage のマテリアルでは、金属の判定はしない。0 なら無効 |
+| `OriginalHighlightStrength` | 0.5 | Original モードの髪のハイライト（HM の G）の強さ |
+| `OriginalSparkleStrength` | 1.0 | Original モードのキラッと光る小さなハイライト（HM の R）の強さ |
+| `OriginalShadowBias` | 0.6 | Original モードで、影の出やすさ（VC の G）が影の境目（N・L）をずらす量 |
+| `OriginalReflectionRimStrength` | 0.5 | Original モードの照り返しのリム。光と反対の側の輪郭に、空の色（Skylight の色味）の縁を、影の部分だけに入れる強さ（`CharacterRimStrength` に掛ける。幅は `CharacterRimWidth`）。Original モードでは、光の側のリムも光の当たる部分だけに入れ、どちらも光の方向を向いている度合い（N・L）でなだらかに弱める。0 なら入れない |
+| `OriginalDiffusionStrength` | 0.8 | Original モードの Diffusion Filter（0 ～ 1）。Original モードでは、キャラクター全体（ゲームのテクスチャを使っていない顔や肌も含む）に掛ける。キャラクターの色（表示の値）どうしを乗算した色に、ぼかした「乗算した色 × 光の色」をスクリーンで重ね、元の色と比べて明るい方を残す（比較(明)）。明るい部分が光の色でふんわりにじみ、暗い部分はそのまま。0 なら掛けない |
+| `OriginalDiffusionRadius` | 24 | Diffusion Filter のぼかしの半径（ピクセル。半分の解像度でぼかす） |
+| `OriginalSoftFocusStrength` | 0.2 | Original モードの Soft Focus（0 ～ 1）。キャラクターの色だけをぼかした画像を、キャラクターの上に重ねる割合（背景の色は混ぜない。目には重ねず、瞳の模様やハイライトをくっきり残す）。0 なら掛けない |
+| `OriginalSoftFocusRadius` | 6 | Soft Focus のぼかしの半径（ピクセル） |
+| `OriginalBloomStrength` | 2.0 | Original モードのリムの Bloom。光の側のリムだけをぼかして加える強さ（キャラクターの外側にもにじむ）。0 なら加えない |
+| `OriginalBloomRadius` | 16 | リムの Bloom のぼかしの半径（ピクセル） |
+| `OriginalGradationStrength` | 1.0 | Original モードの仕上げのグラデーション。画面全体（背景も含む）に、上端で `OriginalGradationTopColor`、下端で `OriginalGradationBottomColor` を掛ける強さ。0 なら掛けない |
+| `OriginalGradationTopColor` | 1.06,1.03,0.96 | グラデーションで画面の上端に掛ける色（線形 RGB） |
+| `OriginalGradationBottomColor` | 0.9,0.92,1.0 | グラデーションで画面の下端に掛ける色（線形 RGB） |
 | `EmissiveStrength` | 1.0 | マテリアルの発光の強さ。UE のマテリアルの発光（エミッシブ）の色を、トゥーンの塗りの上に影や光の向きに関係なく足す。ベースパスの直後のシーンの色（ライティング前なので発光だけが入っている）を写し取って使うため、カメラから見えている面だけに効く（反射や屈折の先には出ない）。TSR の前に描き、トーンマップの逆をかける場合は、トーンマップの逆をかけた後にシーンの色のまま足すので、通常描画と同じ明るさになり、ブルームも同じようにかかる。0 なら足さない |
 | `ShadowSaturation` | 0.6 | 影の色の鮮やかさ。影の色（素材の色 × 影色）の明るさ（輝度）は保ったまま、輝度との差（色みの成分）を (1 + この値) 倍に広げて彩度を上げる。影がくすんだ灰色にならず、髪や服の色に合った鮮やかな影になる。0 なら変えない |
 | `SkyTint` | 0.3 | 影の面を、Skylight（空と周りの光）の平均の色にどれだけ染めるか（0 ～ 1）。Lumen の照り返しは含まないため、青空の下では影が青に寄る。夕方なら赤み、曇りなら灰色がかった影になり、Lumen などで描いた背景になじむ。面の向きによらない平均の色なので、影はべた塗りのまま。TraceMode 1（シーン）のときに有効 |

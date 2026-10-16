@@ -62,7 +62,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		// フレームをまたいだ平均値（線形色、ViewRect 内のローカル座標）
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, AccumulationTexture)
-		// 鳴潮モードの仕上げのぼかしの元（rgb：光の側のリムの色、a：鳴潮モードのキャラクターの割合）のフレームをまたいだ平均
+		// Original モードの仕上げのぼかしの元（rgb：光の側のリムの色、a：Original モードのキャラクターの割合）のフレームをまたいだ平均
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, ToonGlowTexture)
 		// AccumulationTexture に蓄積済みのフレーム数（0 ならリセット直後）
 		SHADER_PARAMETER(uint32, AccumulatedFrames)
@@ -158,13 +158,13 @@ class FToonRayGenShader : public FGlobalShader
 		// マテリアルの発光：ベースパスの直後のシーンの色と、足す強さ（0 なら足さない）
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonEmissiveTexture)
 		SHADER_PARAMETER(float, ToonEmissiveStrength)
-		// 鳴潮モード：ゲームのテクスチャで影とハイライトを決める（GBufferD に影色が入る）
+		// Original モード：ゲームのテクスチャで影とハイライトを決める（GBufferD に影色が入る）
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, GBufferDTexture)
-		SHADER_PARAMETER(uint32, bToonWutheringMode)
-		SHADER_PARAMETER(float, ToonWutheringHighlightStrength)
-		SHADER_PARAMETER(float, ToonWutheringSparkleStrength)
-		SHADER_PARAMETER(float, ToonWutheringShadowBias)
-		SHADER_PARAMETER(float, ToonWutheringReflectionRimStrength)
+		SHADER_PARAMETER(uint32, bToonOriginalMode)
+		SHADER_PARAMETER(float, ToonOriginalHighlightStrength)
+		SHADER_PARAMETER(float, ToonOriginalSparkleStrength)
+		SHADER_PARAMETER(float, ToonOriginalShadowBias)
+		SHADER_PARAMETER(float, ToonOriginalReflectionRimStrength)
 		// GBuffer 内の描画範囲（描画解像度。アップスケール後の ViewRect とは異なることがある）
 		SHADER_PARAMETER(FIntPoint, GBufferViewRectMin)
 		SHADER_PARAMETER(FIntPoint, GBufferViewRectSize)
@@ -208,13 +208,13 @@ class FToonRayGenShader : public FGlobalShader
 		// Perlin ノイズの応用：影の境目を揺らす強さと、揺れの大きさ（cm）
 		SHADER_PARAMETER(float, ToonShadowNoiseStrength)
 		SHADER_PARAMETER(float, ToonShadowNoiseSize)
-		// 鳴潮風ルック フェーズ2：0 なら、キャラクターは自分自身の影を受けない
+		// Original ルック フェーズ2：0 なら、キャラクターは自分自身の影を受けない
 		SHADER_PARAMETER(uint32, bToonCharacterSelfShadow)
-		// 鳴潮風ルック フェーズ2：肌（シェーディングモデルが Subsurface 系の面）の影との境目の N・L と影色
+		// Original ルック フェーズ2：肌（シェーディングモデルが Subsurface 系の面）の影との境目の N・L と影色
 		SHADER_PARAMETER(uint32, bToonSkin)
 		SHADER_PARAMETER(float, ToonSkinShadowThreshold)
 		SHADER_PARAMETER(FVector3f, ToonSkinShadowColor)
-		// 鳴潮風ルック フェーズ2：キャラクターのリムライトの強さと幅（ピクセル）、線の色の倍率
+		// Original ルック フェーズ2：キャラクターのリムライトの強さと幅（ピクセル）、線の色の倍率
 		SHADER_PARAMETER(float, ToonCharacterRimStrength)
 		SHADER_PARAMETER(float, ToonCharacterRimWidth)
 		SHADER_PARAMETER(float, ToonCharacterOutlineColorScale)
@@ -268,7 +268,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonHairShadowWidth)
 		SHADER_PARAMETER(float, ToonHairShadowLightShift)
 		SHADER_PARAMETER(uint32, bToonDebugGeometry)
-		// 鳴潮風ルック フェーズ3：影の面を Skylight の色にどれだけ染めるか
+		// Original ルック フェーズ3：影の面を Skylight の色にどれだけ染めるか
 		SHADER_PARAMETER(float, ToonSkyTint)
 		// 影の色の鮮やかさ（彩度を上げる量）
 		SHADER_PARAMETER(float, ToonShadowSaturation)
@@ -386,7 +386,7 @@ class FToonObjectColorResolveCS : public FGlobalShader
 	}
 };
 
-// 鳴潮モード：レイトレーシングの後に、画面全体へ掛ける仕上げの処理（ToonPostEffects.usf）
+// Original モード：レイトレーシングの後に、画面全体へ掛ける仕上げの処理（ToonPostEffects.usf）
 // Diffusion Filter・Soft Focus・Bloom（キャラクターをぼかして重ねる）と、上から下へのグラデーション
 class FToonPostEffectsShaderBase : public FGlobalShader
 {

@@ -6,7 +6,7 @@
 
 class FSceneView;
 
-// 鳴潮モード：レイトレーシングの後に掛ける仕上げの処理（ToonPostEffects.usf）に渡す値
+// Original モード：レイトレーシングの後に掛ける仕上げの処理（ToonPostEffects.usf）に渡す値
 struct FToonPostEffectsInputs
 {
 	// レイトレーシングの結果を書き込んだ出力（背景を含む画面全体）。その場で書き換える
@@ -24,6 +24,6 @@ struct FToonPostEffectsInputs
 	FLinearColor GradationBottomColor = FLinearColor::White;
 };
 
-// 鳴潮モードが有効なら、キャラクターをぼかして重ね（Diffusion Filter・Soft Focus・Bloom）、画面全体へ上から下へのグラデーションを掛けるパスを追加する
-// 強さはコンソール変数（r.ToonRayTracer.Toon.Wuthering*）から読む。どれも 0 なら何もしない
+// Original モードが有効なら、キャラクターをぼかして重ね（Diffusion Filter・Soft Focus・Bloom）、画面全体へ上から下へのグラデーションを掛けるパスを追加する
+// 強さはコンソール変数（r.ToonRayTracer.Toon.Original*）から読む。どれも 0 なら何もしない
 void AddToonPostEffectsPasses(FRDGBuilder& GraphBuilder, const FSceneView& View, const FToonPostEffectsInputs& Inputs);
