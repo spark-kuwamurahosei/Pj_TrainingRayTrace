@@ -380,6 +380,31 @@ namespace ToonRayTracerCVars
 		TEXT("Shade the character's face with a shadow boundary computed from the head direction and the light direction instead of the surface normals, like SDF face shadows (0: off, 1: on)"),
 		ECVF_RenderThreadSafe);
 
+	// 顔の影の SDF 版：境目の形を、顔の正面に投影したしきい値マップ（SDF テクスチャ）で決める
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonFaceShadowSDF(
+		TEXT("r.ToonRayTracer.Toon.FaceShadowSDF"),
+		0,
+		TEXT("Use the shadow threshold map (FaceShadowSDFTexture) projected onto the front of the face for the face shadow boundary instead of the computed one (0: computed, 1: SDF texture). Needs FaceShadow 1"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonFaceShadowSDFTexture(
+		TEXT("r.ToonRayTracer.Toon.FaceShadowSDFTexture"),
+		TEXT(""),
+		TEXT("Texture asset path of the face shadow threshold map, drawn as seen from the front of the face with the light coming from the right of the image. Made with sdf_shadow_threshold_map from masks ordered from the light behind to the light in front: darker texels become lit earlier as the light moves from behind to the front"),
+		ECVF_Default);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceShadowSDFScale(
+		TEXT("r.ToonRayTracer.Toon.FaceShadowSDFScale"),
+		1.6f,
+		TEXT("Half size of the face shadow threshold map, in half face widths (the distance between the eyes is 1)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceShadowSDFOffsetY(
+		TEXT("r.ToonRayTracer.Toon.FaceShadowSDFOffsetY"),
+		-0.4f,
+		TEXT("Height of the center of the face shadow threshold map from the eyes, in half face widths (negative is below the eyes)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonFaceSlotMask(
 		TEXT("r.ToonRayTracer.Toon.FaceSlotMask"),
 		8,
@@ -747,6 +772,6 @@ namespace ToonRayTracerCVars
 	TAutoConsoleVariable<int32> CVarToonRayTracerDebugGeometry(
 		TEXT("r.ToonRayTracer.Debug.Geometry"),
 		0,
-		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result. 3: triangles treated as the eyes (green) and the rest of the eye slot (red). 4: upper eyelid shadow result on the eyes. 5: N dot H of the eye treated as a sphere (brightness) and the highlight (red). 6: face shadow (yellow: lit, blue: shadow, magenta: no face nearby)"),
+		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result. 3: triangles treated as the eyes (green) and the rest of the eye slot (red). 4: upper eyelid shadow result on the eyes. 5: N dot H of the eye treated as a sphere (brightness) and the highlight (red). 6: face shadow (yellow: lit, blue: shadow, magenta: no face nearby). 7 / 8: coordinates on the face shadow threshold map (R, G: coarse / fine, B: 1 inside the map), used to make the drawing template"),
 		ECVF_RenderThreadSafe);
 }
