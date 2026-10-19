@@ -307,6 +307,58 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪の影：濃さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float HairShadowStrength;
 
+	/** テクスチャ（髪のマテリアルの Specular）から描く髪のハイライトの強さ。明るい面の色に掛けて足す。プロファイルで「髪のハイライトをテクスチャから描く」にしたキャラクターだけ */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：テクスチャの強さ", ClampMin = "0.0", UIMax = "1.0"))
+	float HairHighlightTextureStrength;
+
+	/** テクスチャの髪のハイライトの色（マスクが 1 の場所で、光の色を掛けて足す） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：テクスチャの色", HideAlphaChannel))
+	FLinearColor HairHighlightTextureColor;
+
+	/** テクスチャの髪のハイライト（と Original モードの髪のハイライト）を、輪郭の側で消す範囲（N・V がこれより小さいところほど薄くする。0 なら消さない） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：Falloff", ClampMin = "0.0", ClampMax = "1.0"))
+	float HairHighlightFalloff;
+
+	/** 光と視線から計算する髪のハイライト。0：なし、1：頭を一周する 1 本の帯、2：毛の束ごとの短い切れ端（髪のメッシュの向きから求める。帯の周りだけ）。テクスチャから描くキャラクターには入れない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：計算で作る形", ClampMin = "0", ClampMax = "2"))
+	int32 HairHighlightMode;
+
+	/** 光と視線に合わせて髪の上を動く、帯状のハイライト（天使の輪）の強さ（0 ～ 1）。0 ならなし。Original モードの髪には入れない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：強さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float HairHighlightStrength;
+
+	/** 髪のハイライトの帯の幅 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：幅", ClampMin = "0.001", ClampMax = "1.0", UIMin = "0.01", UIMax = "0.5"))
+	float HairHighlightWidth;
+
+	/** 髪のハイライトの帯を毛の流れに沿ってずらす量（正：頭のてっぺんの側、負：毛先の側） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：上下のずらし", UIMin = "-0.5", UIMax = "0.5"))
+	float HairHighlightShift;
+
+	/** 髪のハイライトの下の縁のギザギザの大きさ（帯の幅に対する割合。0 ならまっすぐな帯） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：ギザギザの大きさ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
+	float HairHighlightJagged;
+
+	/** 髪のハイライトの、頭の周りのギザギザの数 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：ギザギザの数", ClampMin = "0.0", UIMin = "0.0", UIMax = "80.0"))
+	float HairHighlightJaggedCount;
+
+	/** 髪のハイライトのギザギザの形（1：三角、大きいほど毛先のような細くとがった形） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：ギザギザのとがり", ClampMin = "0.1", UIMin = "1.0", UIMax = "8.0"))
+	float HairHighlightJaggedSharpness;
+
+	/** 髪のハイライトの縁のぼかし（帯の幅に対する割合。0 ならくっきり） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：縁のぼかし", ClampMin = "0.0", ClampMax = "1.0"))
+	float HairHighlightSoftness;
+
+	/** カメラから見た頭の横の側へ行くほど、髪のハイライトを細くする割合（1 なら輪郭で消える） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：両端を細く", ClampMin = "0.0", ClampMax = "1.0"))
+	float HairHighlightTaper;
+
+	/** 計算で作る形が 2 のとき、切れ端が出る範囲（帯の周り）の幅。帯の幅に対する倍率 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "髪のハイライト：切れ端の範囲", ClampMin = "1.0", UIMax = "8.0"))
+	float HairHighlightArea;
+
 	/** 顔の向きを求めるための、頭のボーンの名前 */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：頭のボーン"))
 	FString FaceHeadBone;

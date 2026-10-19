@@ -131,6 +131,7 @@ private:
 	FLinearColor ToonOutlineColor_RenderThread = FLinearColor(0.02f, 0.02f, 0.04f);
 	// ガラスの縁の色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonGlassEdgeColor_RenderThread = FLinearColor(0.55f, 0.8f, 1.0f);
+	FLinearColor ToonHairHighlightTextureColor_RenderThread = FLinearColor(0.46f, 0.4f, 0.25f);
 	// Original モード：画面の上端と下端に掛けるグラデーションの色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	// 眉毛の透けで塗る色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonSeeThroughColor_RenderThread = FLinearColor(0.3f, 0.08f, 0.09f);

@@ -594,6 +594,101 @@ float3 ComputeToonIndirect(FToonHitRecord Rec, float3 GeometricNormal, inout uin
 	return Sum / (float)ToonIndirectSamples;
 }
 
+// 髪の帯状のハイライト（天使の輪）：頭の中心を求めるときの、顔の中心（両目の中点）からの後ろと上へのずらし（顔の半分の幅を 1 とする）
+#define TOON_HAIR_HIGHLIGHT_HEAD_BACK 0.8f
+#define TOON_HAIR_HIGHLIGHT_HEAD_UP 0.4f
+// 頭の中心からこの距離（顔の半分の幅を 1 とする）より遠い髪（後ろ髪の先など）には入れない。手前から少しずつ消す
+#define TOON_HAIR_HIGHLIGHT_MAX_DISTANCE 3.5f
+
+// 髪の帯状のハイライト（天使の輪）の強さ（0 ～ 1）
+// 髪の毛は頭のてっぺんから下へ流れているとみなし、頭を球として、点の毛の向き T（球の上での上向き）を求める
+// Kajiya-Kay と同じく、毛の向きとハーフベクトル H が直角（T・H = 0）になる場所が光るので、頭を一周する帯になり、光と視線に合わせて上下に動く
+// 帯の下の縁は、頭の周りの角度でギザギザにする（アニメ調の天使の輪の形）。光の当たる面だけに入れる
+float ComputeToonHairHighlight(FToonHitRecord Rec, FToonRay Ray, float LightLevel)
+{
+	if (Rec.Material.bHair == 0 || Rec.Material.bOriginal != 0 || Rec.Material.bHairHighlightTexture != 0 || ToonHairHighlightMode == 0 || LightLevel <= 0.0f)
+	{
+		return 0.0f;
+	}
+	int Face = Rec.Material.Character >= 0 ? Rec.Material.Character : FindToonFace(Rec.Position);
+	if (Face < 0)
+	{
+		return 0.0f;
+	}
+	FToonCharacterLook Look = GetToonCharacterLook(Face);
+	if (Look.HairHighlightStrength <= 0.0f)
+	{
+		return 0.0f;
+	}
+
+	const float3 Up = float3(0.0f, 0.0f, 1.0f);
+	float3 Right = ToonFaceRight[Face].xyz;
+	float3 Forward = ToonFaceForward[Face].xyz;
+	float HalfWidth = max(ToonFaceCenter[Face].w, 1.0e-4f);
+	float3 HeadCenter = ToonFaceCenter[Face].xyz + (Up * TOON_HAIR_HIGHLIGHT_HEAD_UP - Forward * TOON_HAIR_HIGHLIGHT_HEAD_BACK) * HalfWidth;
+	float3 Offset = Rec.Position - HeadCenter;
+	float Distance = length(Offset) / HalfWidth;
+	if (Distance >= TOON_HAIR_HIGHLIGHT_MAX_DISTANCE || Distance < 1.0e-4f)
+	{
+		return 0.0f;
+	}
+	float3 SphereNormal = Offset / (Distance * HalfWidth);
+	float3 Tangent = Up - dot(Up, SphereNormal) * SphereNormal;
+	float TangentLength = length(Tangent);
+	if (TangentLength < 1.0e-3f)
+	{
+		return 0.0f;
+	}
+	Tangent /= TangentLength;
+
+	float3 HalfVector = normalize(ToLightDirection - Ray.Direction);
+	// 正なら帯より下（毛先の側）、負なら上（てっぺんの側）
+	float Band = dot(Tangent, HalfVector) + Look.HairHighlightShift;
+	float Width = max(Look.HairHighlightWidth, 1.0e-3f);
+	// 1：毛の束ごとの切れ端。頭の球で決めた帯の周り（Area 倍の幅）だけで、毛の向きをメッシュの法線から求め直す
+	// 束ごとに面の向きが違うので、帯が束ごとに途切れ、束のふくらみに沿った短いハイライトになる
+	float AreaMask = 1.0f;
+	if (ToonHairHighlightMode == 2)
+	{
+		float AreaWidth = Width * ToonHairHighlightArea;
+		AreaMask = 1.0f - smoothstep(AreaWidth * 0.7f, AreaWidth, abs(Band));
+		if (AreaMask <= 0.0f)
+		{
+			return 0.0f;
+		}
+		float3 StrandTangent = Up - dot(Up, Rec.Normal) * Rec.Normal;
+		float StrandLength = length(StrandTangent);
+		if (StrandLength < 1.0e-3f)
+		{
+			return 0.0f;
+		}
+		Band = dot(StrandTangent / StrandLength, HalfVector) + Look.HairHighlightShift;
+	}
+	// カメラから見た頭の横の側（球の面が視線と直角に近い）ほど細くし、両端がすっと消える弧にする
+	Width *= lerp(1.0f, saturate(dot(SphereNormal, -Ray.Direction)), ToonHairHighlightTaper);
+	if (Band > 0.0f && ToonHairHighlightJagged > 0.0f)
+	{
+		// 頭の周りの角度で三角波を作り、下の縁を下へ伸ばす
+		float Angle = atan2(dot(SphereNormal, Right), dot(SphereNormal, Forward)) / (2.0f * PI);
+		float Triangle = abs(frac(Angle * ToonHairHighlightJaggedCount) * 2.0f - 1.0f);
+		Width *= 1.0f + ToonHairHighlightJagged * pow(Triangle, ToonHairHighlightJaggedSharpness);
+	}
+	float Highlight = 1.0f - smoothstep(Width * (1.0f - ToonHairHighlightSoftness) - 1.0e-4f, Width, abs(Band));
+	float DistanceFade = 1.0f - smoothstep(TOON_HAIR_HIGHLIGHT_MAX_DISTANCE * 0.8f, TOON_HAIR_HIGHLIGHT_MAX_DISTANCE, Distance);
+	return saturate(Highlight * AreaMask * DistanceFade * LightLevel * Look.HairHighlightStrength);
+}
+
+// テクスチャで形を決める髪のハイライトの Falloff：面がカメラの方を向いているほど 1、輪郭の側（N・V が小さい）ほど 0
+// テクスチャに描いたハイライトがベタ張りに見えず、髪の丸みに沿って外側で消える
+float ToonHairHighlightFalloffMask(FToonHitRecord Rec, FToonRay Ray)
+{
+	if (ToonHairHighlightFalloff <= 0.0f)
+	{
+		return 1.0f;
+	}
+	return smoothstep(0.0f, ToonHairHighlightFalloff, dot(Rec.Normal, -Ray.Direction));
+}
+
 // OutLightLevel には、光の当たり具合（0：影 ～ 1：明るい面）を返す（Original モードのリムのマスクに使う）
 float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal, inout uint RandomState, bool bIndirect, out float OutLightLevel)
 {
@@ -654,11 +749,19 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
 	Color += ComputeToonRim(Rec, Ray, LightLevel);
+	// 髪の帯状のハイライト（天使の輪）：明るい面の色をさらに明るくした色で塗る（白く飛ばさず、髪の色みを残す）
+	Color = lerp(Color, LitColor * 1.6f + ToonLightColor * 0.15f, ComputeToonHairHighlight(Rec, Ray, LightLevel));
+	// テクスチャで形を決める髪のハイライト：マテリアルの Specular の形に、ハイライトの色（光の色を掛ける）を足す。明るい面だけで、輪郭の側ほど消える
+	// マスクと色は、元のテクスチャに描かれていたハイライトとの差から作るので、正面から見ると元のテクスチャとほぼ同じ明るさになる
+	if (Rec.Material.bHairHighlightTexture != 0 && Rec.Material.bOriginal == 0)
+	{
+		Color += ToonLightColor * ToonHairHighlightTextureColor * (saturate(Rec.Material.HairHighlightMask) * ToonHairHighlightFalloffMask(Rec, Ray) * LightLevel * ToonHairHighlightTextureStrength);
+	}
 
 	// Original モード：髪のハイライト（HM の G の形）と、キラッと光る小さなハイライト（HM の R）を、光の当たる側に入れる
 	if (Rec.Material.bOriginal != 0)
 	{
-		Color += LitColor * (saturate(Rec.Material.OriginalHighlight) * LightLevel * ToonOriginalHighlightStrength);
+		Color += LitColor * (saturate(Rec.Material.OriginalHighlight) * ToonHairHighlightFalloffMask(Rec, Ray) * LightLevel * ToonOriginalHighlightStrength);
 		float Sparkle = smoothstep(0.4f, 0.6f, Rec.Material.OriginalSparkle) * LightLevel * ToonOriginalSparkleStrength;
 		Color = lerp(Color, max(ToonLightColor, 1.0f), saturate(Sparkle));
 	}

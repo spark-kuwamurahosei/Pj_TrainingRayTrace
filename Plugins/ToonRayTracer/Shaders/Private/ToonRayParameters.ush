@@ -307,6 +307,30 @@ uint bToonHairShadow;
 uint ToonHairSlotMask;
 float ToonHairShadowDistance;
 float ToonHairShadowStrength;
+// 髪の帯状のハイライト（天使の輪）
+// ・ToonHairHighlightStrength / Width / Shift：強さ・帯の幅・上下のずらしの全体の設定（キャラクターごとの値は ToonCharacterLook6 の yzw）
+// ・ToonHairHighlightJagged：下の縁のギザギザの大きさ（帯の幅に対する割合）、ToonHairHighlightJaggedCount：頭の周りのギザギザの数
+float ToonHairHighlightStrength;
+float ToonHairHighlightWidth;
+float ToonHairHighlightShift;
+float ToonHairHighlightJagged;
+float ToonHairHighlightJaggedCount;
+// ・ToonHairHighlightJaggedSharpness：ギザギザの形（1：三角、大きいほど毛先のような細くとがった形）
+// ・ToonHairHighlightSoftness：帯の縁のぼかし（帯の幅に対する割合）
+// ・ToonHairHighlightTaper：カメラから見た頭の横の側へ行くほど帯を細くする割合（1 なら輪郭で消える）
+float ToonHairHighlightJaggedSharpness;
+float ToonHairHighlightSoftness;
+float ToonHairHighlightTaper;
+// ・ToonHairHighlightMode：光と視線から計算するハイライト。0 ならなし、1 なら頭を一周する 1 本の帯（毛の向きは頭の球から）、
+//   2 なら毛の束ごとの切れ端（毛の向きはメッシュの法線から。帯の周りだけ）。テクスチャから描くキャラクターには入れない
+// ・ToonHairHighlightArea：2 のとき、切れ端が出る範囲（帯の周り）の幅。帯の幅に対する倍率
+// ・ToonHairHighlightTextureStrength / Color：テクスチャ（髪のマテリアルの Specular）のハイライトの強さと色（光の色を掛けて足す。マスクが 1 の場所で Color）
+// ・ToonHairHighlightFalloff：テクスチャのハイライト（と Original モードの髪のハイライト）を、N・V がこれより小さい輪郭の側ほど消す
+uint ToonHairHighlightMode;
+float ToonHairHighlightArea;
+float ToonHairHighlightTextureStrength;
+float ToonHairHighlightFalloff;
+float3 ToonHairHighlightTextureColor;
 float ToonHairShadowWidth;
 float ToonHairShadowLightShift;
 // 確認用：1 なら、カメラのレイが当たった面のジオメトリ番号（マテリアルスロット）を色で表示する

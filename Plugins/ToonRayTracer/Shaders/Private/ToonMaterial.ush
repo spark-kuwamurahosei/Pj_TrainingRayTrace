@@ -37,6 +37,12 @@ struct FToonMaterial
 	uint bNoEyelidShadow;
 	// 顔の影：キャラクターの顔のパーツ（ToonFaceSlotMask で指定したマテリアルスロット）なら 1
 	uint bFace;
+	// 髪の帯状のハイライト：キャラクターの髪のパーツ（髪のスロット）なら 1
+	uint bHair;
+	// 髪のハイライトをテクスチャから描くキャラクターの髪なら 1（プロファイルの「髪のハイライトをテクスチャから描く」）
+	uint bHairHighlightTexture;
+	// 髪のハイライトの形（マテリアルの Specular。GBuffer から読むので、カメラから見える面だけ）
+	float HairHighlightMask;
 	// マテリアルの発光（カメラから見えている面だけ。影や光の向きに関係なく足す）
 	float3 Emissive;
 	// キャラクターごとの設定の番号（ToonCharacterLook0 などの添え字）。なければ -1
@@ -70,6 +76,9 @@ FToonMaterial GetDefaultMaterial()
 	Material.bEye = 0;
 	Material.bNoEyelidShadow = 0;
 	Material.bFace = 0;
+	Material.bHair = 0;
+	Material.bHairHighlightTexture = 0;
+	Material.HairHighlightMask = 0.0f;
 	Material.bOriginal = 0;
 	Material.OriginalShadowColor = 0.0f;
 	Material.OriginalHighlight = 0.0f;

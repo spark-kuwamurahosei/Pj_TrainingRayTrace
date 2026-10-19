@@ -188,6 +188,22 @@ namespace ToonRayTracerCVars
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairShadowStrength;
 
+	// 髪の帯状のハイライト（天使の輪）
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightStrength;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightWidth;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightShift;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightJagged;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightJaggedCount;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightJaggedSharpness;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightSoftness;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonHairHighlightMode;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightArea;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightTextureStrength;
+	extern TAutoConsoleVariable<FString> CVarToonRayTracerToonHairHighlightTextureColor;
+	inline const FLinearColor DefaultToonHairHighlightTextureColor(0.46f, 0.4f, 0.25f);
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightFalloff;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightTaper;
+
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonFaceWidthScale;
 
 	// 頭と両目のボーンの名前（ゲームスレッドで読む）

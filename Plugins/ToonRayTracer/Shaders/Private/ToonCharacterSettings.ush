@@ -19,6 +19,8 @@ struct FToonCharacterParts
 	uint2 EyeShadowExcludeSlotMask;
 	// 眉毛の線の形を Custom Depth に描いているか
 	bool bSeeThroughCustomDepth;
+	// 髪のハイライトをテクスチャ（髪のマテリアルの Specular）から描くか
+	bool bHairHighlightTexture;
 	// 顔の境目のぼかし（顔の半分の幅に対する割合）
 	float FaceShadowSoftness;
 	// キャラクターの大きさに合わせた幅や距離（cm）
@@ -103,6 +105,9 @@ struct FToonCharacterLook
 	float3 SeeThroughColor;
 	float SeeThroughColorBlend;
 	float EdgeSoftness;
+	float HairHighlightStrength;
+	float HairHighlightWidth;
+	float HairHighlightShift;
 };
 
 FToonCharacterLook GetToonCharacterLook(int Character)
@@ -136,6 +141,9 @@ FToonCharacterLook GetToonCharacterLook(int Character)
 		Look.SeeThroughColor = Look5.rgb;
 		Look.SeeThroughColorBlend = Look5.a;
 		Look.EdgeSoftness = Look6.x;
+		Look.HairHighlightStrength = Look6.y;
+		Look.HairHighlightWidth = Look6.z;
+		Look.HairHighlightShift = Look6.w;
 		return Look;
 	}
 	Look.ShadowColor = ToonShadowColor;
@@ -157,6 +165,9 @@ FToonCharacterLook GetToonCharacterLook(int Character)
 	Look.SeeThroughColor = ToonSeeThroughColor;
 	Look.SeeThroughColorBlend = ToonSeeThroughColorBlend;
 	Look.EdgeSoftness = ToonEdgeSoftness;
+	Look.HairHighlightStrength = ToonHairHighlightStrength;
+	Look.HairHighlightWidth = ToonHairHighlightWidth;
+	Look.HairHighlightShift = ToonHairHighlightShift;
 	return Look;
 }
 
@@ -177,6 +188,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 		Parts.SeeThroughSlotMask = Slots2.zw;
 		Parts.EyeShadowExcludeSlotMask = ToonCharacterSlots3[Face].xy;
 		Parts.bSeeThroughCustomDepth = ToonCharacterSlots3[Face].z != 0u;
+		Parts.bHairHighlightTexture = ToonCharacterSlots3[Face].w != 0u;
 		Parts.EyeTriangleStart = (uint)round(Params.x);
 		Parts.EyeTriangleEnd = (uint)round(Params.y);
 		Parts.FaceShadowSoftness = Params.z;
@@ -194,6 +206,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 	Parts.HairSlotMask = uint2(ToonHairSlotMask, 0u);
 	Parts.EyeShadowExcludeSlotMask = 0u;
 	Parts.bSeeThroughCustomDepth = false;
+	Parts.bHairHighlightTexture = false;
 	FInstanceSceneData InstanceData = ToonGetInstanceSceneData(GPUSceneInstanceId);
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
 	float SeeThroughOverride = GetCustomPrimitiveDataFloat(PrimitiveData, 13);

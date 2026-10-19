@@ -68,6 +68,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "髪のスロット", GetOptions = "GetSlotNameOptions"))
 	TArray<FName> HairSlots;
 
+	/** 髪のハイライトを、髪のマテリアルの Specular に入れた形（テクスチャ）から描く。明るい面にだけ入れ、輪郭の側ほど消える（Falloff）。
+	 *  髪のスロットのマテリアルは、Specular にハイライトの形（0 ～ 1）を出すもの（M_ToonHairHighlightMask など）にする */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "髪のハイライトをテクスチャから描く"))
+	bool bHairHighlightFromTexture = false;
+
 	/** 眉毛の透けで、髪越しに見せるパーツ（眉毛など）。空なら全体の設定 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "髪越しに見せるスロット", GetOptions = "GetSlotNameOptions"))
 	TArray<FName> SeeThroughSlots;
@@ -222,6 +227,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|目", meta = (DisplayName = "瞳のハイライトのしきい値", EditCondition = "bOverrideEyeHighlightThreshold", ClampMin = "0.0", ClampMax = "1.0"))
 	float EyeHighlightThreshold = 0.99f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|髪のハイライト", meta = (InlineEditConditionToggle))
+	bool bOverrideHairHighlightStrength = false;
+
+	/** 光と視線に合わせて髪の上を動く、帯状のハイライト（天使の輪）の強さ（0 ～ 1）。チェックを入れたときだけ使い、外していれば全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|髪のハイライト", meta = (DisplayName = "強さ", EditCondition = "bOverrideHairHighlightStrength", ClampMin = "0.0", ClampMax = "1.0"))
+	float HairHighlightStrength = 0.9f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|髪のハイライト", meta = (InlineEditConditionToggle))
+	bool bOverrideHairHighlightWidth = false;
+
+	/** 帯の幅。チェックを入れたときだけ使い、外していれば全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|髪のハイライト", meta = (DisplayName = "幅", EditCondition = "bOverrideHairHighlightWidth", ClampMin = "0.001", UIMax = "0.5"))
+	float HairHighlightWidth = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|髪のハイライト", meta = (InlineEditConditionToggle))
+	bool bOverrideHairHighlightShift = false;
+
+	/** 帯を毛の流れに沿ってずらす量（正：頭のてっぺんの側、負：毛先の側）。チェックを入れたときだけ使い、外していれば全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|髪のハイライト", meta = (DisplayName = "上下のずらし", EditCondition = "bOverrideHairHighlightShift", UIMin = "-0.5", UIMax = "0.5"))
+	float HairHighlightShift = 0.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|前髪・眉毛", meta = (InlineEditConditionToggle))
 	bool bOverrideHairShadowStrength = false;
 
@@ -289,7 +315,7 @@ public:
 	//   [3] 顔の前からの光の補正、上まぶたの影の明るさ、瞳のハイライトの強さ、しきい値
 	//   [4] 前髪の影の濃さ、前髪の影の光の側へのずらし、眉毛の透けの濃さ、明るさ
 	//   [5] 眉毛の透けで塗る色 RGB、色で塗る割合
-	//   [6] 明るい面と影の境目のぼかし、（空き）、（空き）、（空き）
+	//   [6] 明るい面と影の境目のぼかし、髪のハイライトの強さ、幅、上下のずらし
 	static constexpr int32 NumLookVectors = 7;
 	void GetLookOverrides(uint32& OutMask, FVector4f (&OutLook)[NumLookVectors]) const;
 
