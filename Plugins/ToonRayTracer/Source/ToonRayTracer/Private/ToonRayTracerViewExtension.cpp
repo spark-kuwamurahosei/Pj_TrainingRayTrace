@@ -738,7 +738,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 			FVector4f(ToonFaceShadowFrontBias, ToonEyeShadowBrightness, ToonEyeHighlightStrength, ToonEyeHighlightThreshold),
 			FVector4f(ToonHairShadowStrength, ToonHairShadowLightShift, ToonSeeThroughOpacity, ToonSeeThroughBrightness),
 			FVector4f(ToonSeeThroughColor_RenderThread.R, ToonSeeThroughColor_RenderThread.G, ToonSeeThroughColor_RenderThread.B,
-				FMath::Clamp(CVarToonRayTracerToonSeeThroughColorBlend.GetValueOnRenderThread(), 0.0f, 1.0f)) };
+				FMath::Clamp(CVarToonRayTracerToonSeeThroughColorBlend.GetValueOnRenderThread(), 0.0f, 1.0f)),
+			FVector4f(ToonEdgeSoftness, 0.0f, 0.0f, 0.0f) };
 		for (int32 Index = 0; Index < FToonRayGenShader::MaxFaces; ++Index)
 		{
 			const FToonFace Face = Faces_RenderThread.IsValidIndex(Index) ? Faces_RenderThread[Index] : FToonFace();
@@ -765,6 +766,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 			PassParameters->ToonCharacterLook3[Index] = Look[3];
 			PassParameters->ToonCharacterLook4[Index] = Look[4];
 			PassParameters->ToonCharacterLook5[Index] = Look[5];
+			PassParameters->ToonCharacterLook6[Index] = Look[6];
 		}
 	}
 	PassParameters->ToonEyeTriangleStart = ToonEyeTriangleStart;

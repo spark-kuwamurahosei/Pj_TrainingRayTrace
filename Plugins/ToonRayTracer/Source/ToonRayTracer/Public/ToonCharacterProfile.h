@@ -113,6 +113,13 @@ public:
 	// ---- 見た目（チェックを入れた項目だけ、全体の設定を上書きする） ----
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|影", meta = (InlineEditConditionToggle))
+	bool bOverrideEdgeSoftness = false;
+
+	/** 明るい面と影の境目のぼかし幅（N・L）。大きいほど柔らかい境目になる。チェックを入れたときだけ使い、外していれば全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|影", meta = (DisplayName = "境目のぼかし", EditCondition = "bOverrideEdgeSoftness", ClampMin = "0.0", UIMax = "0.3"))
+	float EdgeSoftness = 0.02f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|影", meta = (InlineEditConditionToggle))
 	bool bOverrideShadowColor = false;
 
 	/** 影の面の色（素材の色に掛ける）。チェックを入れたときだけ使い、外していれば全体の設定 */
@@ -282,7 +289,8 @@ public:
 	//   [3] 顔の前からの光の補正、上まぶたの影の明るさ、瞳のハイライトの強さ、しきい値
 	//   [4] 前髪の影の濃さ、前髪の影の光の側へのずらし、眉毛の透けの濃さ、明るさ
 	//   [5] 眉毛の透けで塗る色 RGB、色で塗る割合
-	static constexpr int32 NumLookVectors = 6;
+	//   [6] 明るい面と影の境目のぼかし、（空き）、（空き）、（空き）
+	static constexpr int32 NumLookVectors = 7;
 	void GetLookOverrides(uint32& OutMask, FVector4f (&OutLook)[NumLookVectors]) const;
 
 	// メッシュのマテリアルスロットの名前を、レイトレーシングのジオメトリ番号（LOD 0 のセクション番号）のビットに変換する（0 ～ 63 番）
