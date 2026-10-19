@@ -255,16 +255,21 @@ float ToonEyeHighlightSearchRadius;
 // ・ToonFaceRight / ToonFaceForward：顔の右と前の向き（水平）。Forward の w は、この顔として扱う範囲の半径（cm）
 uint bToonFaceShadow;
 uint ToonFaceSlotMask;
-// 顔の影の SDF 版：境目の形を、顔の正面に投影したしきい値マップで決める
-// ・bToonFaceShadowSDF：1 なら有効（しきい値マップを読み込めているときだけ）
-// ・ToonFaceSDFTexture：顔を正面から見た形で、光が画像の右から来るときに描いたしきい値マップ。光が後ろから前へ回るにつれて、値の小さい（暗い）場所から先に明るくなる
-// ・ToonFaceSDFScale：しきい値マップの半分の大きさ（顔の半分の幅を 1 としたとき）
-// ・ToonFaceSDFOffsetY：しきい値マップの中心の、目の高さからの上下の位置（顔の半分の幅を 1 としたとき。下が負）
-uint bToonFaceShadowSDF;
-Texture2D ToonFaceSDFTexture;
+// 顔の影の SDF 版：境目の形を、顔の正面に投影したしきい値マップで決める（顔ごと）
+// ・ToonFaceSDFParams：x が 0 でなければ使う（しきい値マップを読み込めているときだけ）、y：しきい値マップの半分の大きさ（顔の半分の幅を 1）、
+//   z：しきい値マップの中心の、目の高さからの上下の位置（顔の半分の幅を 1。下が負）
+// ・ToonFaceSDFTexture0 ～ 7：顔の番号ごとのしきい値マップ。顔を正面から見た形で、光が画像の右から来るときに描いたもの。
+//   光が後ろから前へ回るにつれて、値の小さい（暗い）場所から先に明るくなる
+float4 ToonFaceSDFParams[TOON_MAX_FACES];
+Texture2D ToonFaceSDFTexture0;
+Texture2D ToonFaceSDFTexture1;
+Texture2D ToonFaceSDFTexture2;
+Texture2D ToonFaceSDFTexture3;
+Texture2D ToonFaceSDFTexture4;
+Texture2D ToonFaceSDFTexture5;
+Texture2D ToonFaceSDFTexture6;
+Texture2D ToonFaceSDFTexture7;
 SamplerState ToonFaceSDFTextureSampler;
-float ToonFaceSDFScale;
-float ToonFaceSDFOffsetY;
 uint NumToonFaces;
 // 顔の影：境目の曲がり具合。目の高さから上下に離れるほど、境目を光の側へ戻す（頬や顎に沿ったカーブ。0 ならまっすぐ）
 float ToonFaceShadowCurve;

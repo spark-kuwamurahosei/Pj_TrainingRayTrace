@@ -9,16 +9,32 @@
 
 // 顔の影の SDF 版：Position を顔の正面の平面に投影し、しきい値マップの座標（0 ～ 1）を求める。マップの範囲外なら false
 // 顔を正面から見た形で描くので、画像の右は顔の左側（ToonFaceRight の逆向き）、画像の上は上
-// ToonFaceSDFScale：マップの半分の大きさ、ToonFaceSDFOffsetY：マップの中心の目の高さからの位置（どちらも顔の半分の幅を 1 とする）
+// ToonFaceSDFParams の y：マップの半分の大きさ、z：マップの中心の目の高さからの位置（どちらも顔の半分の幅を 1 とする）
 bool GetToonFaceSDFUV(int Face, float3 Position, out float2 UV)
 {
 	float HalfWidth = max(ToonFaceCenter[Face].w, 1.0e-4f);
 	float3 Offset = Position - ToonFaceCenter[Face].xyz;
 	float S = dot(Offset, ToonFaceRight[Face].xyz) / HalfWidth;
 	float Height = Offset.z / HalfWidth;
-	float Scale = max(ToonFaceSDFScale, 1.0e-3f);
-	UV = float2(0.5f - 0.5f * S / Scale, 0.5f - 0.5f * (Height - ToonFaceSDFOffsetY) / Scale);
+	float Scale = max(ToonFaceSDFParams[Face].y, 1.0e-3f);
+	UV = float2(0.5f - 0.5f * S / Scale, 0.5f - 0.5f * (Height - ToonFaceSDFParams[Face].z) / Scale);
 	return all(UV >= 0.0f) && all(UV <= 1.0f);
+}
+
+// 顔の番号のしきい値マップを読む（テクスチャはシェーダーのパラメータで配列にできないため、顔ごとのスロットから選ぶ）
+float SampleToonFaceSDF(int Face, float2 UV)
+{
+	switch (Face)
+	{
+	case 0: return ToonFaceSDFTexture0.SampleLevel(ToonFaceSDFTextureSampler, UV, 0).r;
+	case 1: return ToonFaceSDFTexture1.SampleLevel(ToonFaceSDFTextureSampler, UV, 0).r;
+	case 2: return ToonFaceSDFTexture2.SampleLevel(ToonFaceSDFTextureSampler, UV, 0).r;
+	case 3: return ToonFaceSDFTexture3.SampleLevel(ToonFaceSDFTextureSampler, UV, 0).r;
+	case 4: return ToonFaceSDFTexture4.SampleLevel(ToonFaceSDFTextureSampler, UV, 0).r;
+	case 5: return ToonFaceSDFTexture5.SampleLevel(ToonFaceSDFTextureSampler, UV, 0).r;
+	case 6: return ToonFaceSDFTexture6.SampleLevel(ToonFaceSDFTextureSampler, UV, 0).r;
+	default: return ToonFaceSDFTexture7.SampleLevel(ToonFaceSDFTextureSampler, UV, 0).r;
+	}
 }
 
 // 顔の影：Position に最も近い顔（両目の中点からの距離が範囲の半径以内）について、
@@ -59,7 +75,7 @@ bool ComputeFaceShadowNdotL(float3 Position, uint ObjectId, out float FaceNdotL)
 	// マップは sdf_shadow_threshold_map の出力そのまま（光が真後ろのマスクから白い場所は 0、正面のマスクで初めて白くなる場所は 1 に近い）なので、
 	// 値が「1 - 角度」以下の場所が明るい（光が後ろから前へ回るにつれて、値の小さい場所から明るくなる）
 	float2 SDFUV;
-	if (bToonFaceShadowSDF != 0 && GetToonFaceSDFUV(BestFace, Position, SDFUV))
+	if (ToonFaceSDFParams[BestFace].x != 0.0f && GetToonFaceSDFUV(BestFace, Position, SDFUV))
 	{
 		float LitSDF = 1.0f;
 		if (Horizontal >= TOON_FACE_VERTICAL_LIGHT)
@@ -69,7 +85,7 @@ bool ComputeFaceShadowNdotL(float3 Position, uint ObjectId, out float FaceNdotL)
 			{
 				SDFUV.x = 1.0f - SDFUV.x;
 			}
-			float Threshold = ToonFaceSDFTexture.SampleLevel(ToonFaceSDFTextureSampler, SDFUV, 0).r;
+			float Threshold = SampleToonFaceSDF(BestFace, SDFUV);
 			LitSDF = (1.0f - Angle) - Threshold;
 		}
 		// 計算で作る境目と同じく、顔の境目のぼかし幅（マップの値の差で測る）を、全体のぼかし幅に直す

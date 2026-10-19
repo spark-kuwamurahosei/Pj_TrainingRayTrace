@@ -6,6 +6,19 @@
 
 class USkeletalMesh;
 class USkeletalMeshComponent;
+class UTexture2D;
+
+// 顔の影の境目の作り方
+UENUM(BlueprintType)
+enum class EToonFaceShadowMethod : uint8
+{
+	// パネル（コンソール変数）の全体の設定に従う（「顔：影の境目を SDF テクスチャで作る」と「顔：SDF テクスチャ」）
+	Global		UMETA(DisplayName = "全体の設定に従う"),
+	// 頭の向きと光の向きから計算で作る
+	Computed	UMETA(DisplayName = "計算で作る"),
+	// このプロファイルの SDF テクスチャ（しきい値マップ）で作る
+	SDF			UMETA(DisplayName = "SDF テクスチャで作る"),
+};
 
 // キャラクターのモデルごとのトゥーンの設定（プロファイル）
 // モデルごとに 1 つ作り、キャラクターのアクターに付けた Toon Character コンポーネントで選ぶ
@@ -161,6 +174,25 @@ public:
 	/** 横寄りの光で、鼻筋だけが細く明るくなるのを防ぐ補正。チェックを入れたときだけ使い、外していれば全体の設定 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|顔", meta = (DisplayName = "前からの光の補正", EditCondition = "bOverrideFaceShadowFrontBias", ClampMin = "0.0", ClampMax = "0.99"))
 	float FaceShadowFrontBias = 0.4f;
+
+	/** 顔の影の境目の作り方。「全体の設定に従う」なら、パネルの「顔：影の境目を SDF テクスチャで作る」と「顔：SDF テクスチャ」を使う */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|顔", meta = (DisplayName = "影の境目の作り方"))
+	EToonFaceShadowMethod FaceShadowMethod = EToonFaceShadowMethod::Global;
+
+	/** このキャラクターの顔の影のしきい値マップ。顔を正面から見た形で、光が画像の右から来るときに描いたマスクから sdf_shadow_threshold_map で作る（README の「顔の影の SDF 版」を参照） */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|顔", meta = (DisplayName = "SDF テクスチャ", EditCondition = "FaceShadowMethod == EToonFaceShadowMethod::SDF", EditConditionHides))
+	TObjectPtr<UTexture2D> FaceShadowSDFTexture;
+
+	/** しきい値マップの半分の大きさ（顔の半分の幅を 1 としたとき）。0 なら全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|顔", meta = (DisplayName = "SDF テクスチャの大きさ", ClampMin = "0.0", UIMax = "3.0", EditCondition = "FaceShadowMethod == EToonFaceShadowMethod::SDF", EditConditionHides))
+	float FaceShadowSDFScale = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|顔", meta = (InlineEditConditionToggle))
+	bool bOverrideFaceShadowSDFOffsetY = false;
+
+	/** しきい値マップの中心の、目の高さからの上下の位置（顔の半分の幅を 1 としたとき。下が負）。チェックを入れたときだけ使い、外していれば全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|顔", meta = (DisplayName = "SDF テクスチャの上下の位置", UIMin = "-2.0", UIMax = "2.0", EditCondition = "bOverrideFaceShadowSDFOffsetY"))
+	float FaceShadowSDFOffsetY = -0.4f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "見た目|目", meta = (InlineEditConditionToggle))
 	bool bOverrideEyeShadowBrightness = false;

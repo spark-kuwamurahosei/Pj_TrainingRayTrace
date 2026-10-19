@@ -242,12 +242,17 @@ class FToonRayGenShader : public FGlobalShader
 		// 顔の影：有効か、顔のマテリアルスロットのビット、顔の数と位置・向き
 		SHADER_PARAMETER(uint32, bToonFaceShadow)
 		SHADER_PARAMETER(uint32, ToonFaceSlotMask)
-		// 顔の影の SDF 版：有効か（しきい値マップを読み込めているか）、しきい値マップ、投影の大きさと上下の位置
-		SHADER_PARAMETER(uint32, bToonFaceShadowSDF)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture)
+		// 顔の影の SDF 版：顔ごとのしきい値マップ（顔の番号ごとのスロット）と、x：使うか、y：投影の大きさ、z：上下の位置
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonFaceSDFParams, [MaxFaces])
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture0)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture1)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture2)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture3)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture4)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture5)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture6)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonFaceSDFTexture7)
 		SHADER_PARAMETER_SAMPLER(SamplerState, ToonFaceSDFTextureSampler)
-		SHADER_PARAMETER(float, ToonFaceSDFScale)
-		SHADER_PARAMETER(float, ToonFaceSDFOffsetY)
 		SHADER_PARAMETER(uint32, NumToonFaces)
 		SHADER_PARAMETER(float, ToonFaceShadowCurve)
 		SHADER_PARAMETER(float, ToonFaceShadowSoftness)
