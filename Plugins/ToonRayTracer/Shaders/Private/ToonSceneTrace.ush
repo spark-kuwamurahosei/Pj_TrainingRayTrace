@@ -165,6 +165,9 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 	Rec.Material.bNoEyelidShadow = Rec.Material.bEye != 0 && IsSlotInMask(Parts.EyeShadowExcludeSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
 	// 顔の影：当たったパーツ（マテリアルスロット）が顔か
 	Rec.Material.bFace = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.FaceSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
+	// 髪の帯状のハイライト：当たったパーツが髪か
+	Rec.Material.bHair = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.HairSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
+	Rec.Material.bHairHighlightTexture = Rec.Material.bHair != 0 && Parts.bHairHighlightTexture ? 1u : 0u;
 
 	if (!bComputeNormal)
 	{
@@ -401,6 +404,8 @@ void ApplyGBufferMaterial(int2 GBufferPixel, inout FToonHitRecord Rec)
 	// GBufferC の rgb にはベースカラーが入っている（DeferredShadingCommon の DecodeBaseColor）
 	// sRGB のレンダーターゲットなので、読み出した時点で線形の色になっている
 	float3 BaseColor = GBufferCTexture.Load(int3(GBufferPixel, 0)).rgb;
+	// 髪のハイライトの形：マテリアルの Specular（GBufferB の g）。使うのは「髪のハイライトをテクスチャから描く」キャラクターの髪だけ
+	Rec.Material.HairHighlightMask = GBufferB.g;
 	if (bUseGBufferBaseColor != 0)
 	{
 		Rec.Material.Albedo = BaseColor;

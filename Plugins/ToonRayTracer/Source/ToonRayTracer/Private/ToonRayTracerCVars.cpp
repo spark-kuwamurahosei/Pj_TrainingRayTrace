@@ -466,6 +466,76 @@ namespace ToonRayTracerCVars
 		TEXT("Strength of the bangs shadow on the face (0-1)"),
 		ECVF_RenderThreadSafe);
 
+	// 髪の帯状のハイライト（天使の輪）
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightStrength(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightStrength"),
+		0.9f,
+		TEXT("Strength of the band highlight on the hair (angel ring) that moves with the light and the view (0: off, 1: the band is fully the highlight color). Not used for hair in the Original mode"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightWidth(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightWidth"),
+		0.1f,
+		TEXT("Width of the hair band highlight, as |dot(hair strand direction, half vector)| (larger is wider)"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightShift(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightShift"),
+		0.0f,
+		TEXT("Moves the hair band highlight along the strands (positive: toward the top of the head, negative: toward the ends)"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightJagged(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightJagged"),
+		1.5f,
+		TEXT("How jagged the lower edge of the hair band highlight is, relative to its width (0: straight band)"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonHairHighlightMode(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightMode"),
+		0,
+		TEXT("Hair highlight computed from the light and the view (not used for characters that read the highlight from the texture).\n")
+		TEXT(" 0: none (only the texture highlight)\n")
+		TEXT(" 1: one ring around the head (hair direction from the head sphere)\n")
+		TEXT(" 2: short pieces per hair bundle (hair direction from the mesh normal, limited to the area around the ring)"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightTextureStrength(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightTextureStrength"),
+		1.0f,
+		TEXT("Strength of the hair highlight drawn from the texture mask (the Specular of the hair material, for characters whose profile reads the highlight from the texture). Adds HairHighlightTextureColor times the light color, times the mask and this value"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonHairHighlightTextureColor(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightTextureColor"),
+		TEXT("0.46,0.4,0.25"),
+		TEXT("Linear RGB color added where the hair highlight mask is 1 (multiplied by the light color), as \"R,G,B\""),
+		ECVF_Default);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightFalloff(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightFalloff"),
+		0.5f,
+		TEXT("Falloff of the texture hair highlight (also the Original mode hair highlight): the highlight fades out toward the outline where N.V is below this value (0: no falloff)"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightArea(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightArea"),
+		3.0f,
+		TEXT("Mode 1: width of the area around the ring where the pieces can appear, relative to the band width"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightSoftness(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightSoftness"),
+		0.05f,
+		TEXT("Blur of the edges of the hair band highlight, relative to its width (0: hard edge)"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightTaper(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightTaper"),
+		0.0f,
+		TEXT("How much the hair band highlight narrows toward the sides of the head seen from the camera (0: same width everywhere, 1: vanishes at the outline)"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightJaggedSharpness(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightJaggedSharpness"),
+		4.0f,
+		TEXT("Shape of the jags of the hair band highlight (1: triangles, larger: thin pointed spikes like hair strands)"),
+		ECVF_RenderThreadSafe);
+	TAutoConsoleVariable<float> CVarToonRayTracerToonHairHighlightJaggedCount(
+		TEXT("r.ToonRayTracer.Toon.HairHighlightJaggedCount"),
+		40.0f,
+		TEXT("Number of jags of the hair band highlight around the head"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonFaceWidthScale(
 		TEXT("r.ToonRayTracer.Toon.FaceWidthScale"),
 		1.0f,

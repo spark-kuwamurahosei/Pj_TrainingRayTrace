@@ -207,6 +207,9 @@ void UToonCharacterProfile::FillLookFromGlobalSettings()
 	EyeHighlightStrength = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.EyeHighlightStrength"));
 	EyeHighlightThreshold = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.EyeHighlightThreshold"));
 	HairShadowStrength = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.HairShadowStrength"));
+	HairHighlightStrength = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.HairHighlightStrength"));
+	HairHighlightWidth = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.HairHighlightWidth"));
+	HairHighlightShift = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.HairHighlightShift"));
 	HairShadowLightShift = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.HairShadowLightShift"));
 	SeeThroughOpacity = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughOpacity"));
 	SeeThroughBrightness = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.SeeThroughBrightness"));
@@ -254,6 +257,9 @@ void UToonCharacterProfile::GetLookOverrides(uint32& OutMask, FVector4f (&OutLoo
 	SetColor(bOverrideSeeThroughColor, 5, SeeThroughColor);
 	SetFloat(bOverrideSeeThroughColor, 5, 3, 1.0f);
 	SetFloat(bOverrideEdgeSoftness, 6, 0, EdgeSoftness);
+	SetFloat(bOverrideHairHighlightStrength, 6, 1, HairHighlightStrength);
+	SetFloat(bOverrideHairHighlightWidth, 6, 2, HairHighlightWidth);
+	SetFloat(bOverrideHairHighlightShift, 6, 3, HairHighlightShift);
 }
 
 uint64 UToonCharacterProfile::SlotNamesToSectionMask(const USkeletalMeshComponent* Mesh, const TArray<FName>& SlotNames)
