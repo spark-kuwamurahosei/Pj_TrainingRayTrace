@@ -295,6 +295,7 @@ float4 ToonCharacterLook2[TOON_MAX_FACES];
 float4 ToonCharacterLook3[TOON_MAX_FACES];
 float4 ToonCharacterLook4[TOON_MAX_FACES];
 float4 ToonCharacterLook5[TOON_MAX_FACES];
+float4 ToonCharacterLook6[TOON_MAX_FACES];
 // 前髪の影：顔のピクセルから光へシャドウレイを飛ばし、同じキャラクターの髪のパーツに当たったときだけ影にする
 // ・bToonHairShadow：0 なら無効、1 なら見え方で決める（前髪の縁の下に帯状の影）、2 なら光の方向へシャドウレイを飛ばす
 // ・ToonHairSlotMask：髪のマテリアルスロット（スロット番号 n なら 2^n のビット）

@@ -196,6 +196,7 @@ void UToonCharacterProfile::FillLookFromGlobalSettings()
 	ShadowColor = GetConsoleColor(TEXT("r.ToonRayTracer.Toon.ShadowColor"), ShadowColor);
 	SkinShadowColor = GetConsoleColor(TEXT("r.ToonRayTracer.Toon.SkinShadowColor"), SkinShadowColor);
 	ShadowSaturation = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.ShadowSaturation"));
+	EdgeSoftness = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.EdgeSoftness"));
 	OutlineWidth = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.OutlineWidthSkinned"));
 	OutlineColorScale = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"));
 	RimStrength = GetConsoleFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"));
@@ -252,6 +253,7 @@ void UToonCharacterProfile::GetLookOverrides(uint32& OutMask, FVector4f (&OutLoo
 	// 色を指定したら、髪を暗くする代わりにその色で塗る
 	SetColor(bOverrideSeeThroughColor, 5, SeeThroughColor);
 	SetFloat(bOverrideSeeThroughColor, 5, 3, 1.0f);
+	SetFloat(bOverrideEdgeSoftness, 6, 0, EdgeSoftness);
 }
 
 uint64 UToonCharacterProfile::SlotNamesToSectionMask(const USkeletalMeshComponent* Mesh, const TArray<FName>& SlotNames)

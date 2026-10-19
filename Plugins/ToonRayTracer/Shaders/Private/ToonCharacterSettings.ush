@@ -102,6 +102,7 @@ struct FToonCharacterLook
 	float SeeThroughBrightness;
 	float3 SeeThroughColor;
 	float SeeThroughColorBlend;
+	float EdgeSoftness;
 };
 
 FToonCharacterLook GetToonCharacterLook(int Character)
@@ -115,6 +116,7 @@ FToonCharacterLook GetToonCharacterLook(int Character)
 		float4 Look3 = ToonCharacterLook3[Character];
 		float4 Look4 = ToonCharacterLook4[Character];
 		float4 Look5 = ToonCharacterLook5[Character];
+		float4 Look6 = ToonCharacterLook6[Character];
 		Look.ShadowColor = Look0.rgb;
 		Look.ShadowSaturation = Look0.a;
 		Look.SkinShadowColor = Look1.rgb;
@@ -133,6 +135,7 @@ FToonCharacterLook GetToonCharacterLook(int Character)
 		Look.SeeThroughBrightness = Look4.w;
 		Look.SeeThroughColor = Look5.rgb;
 		Look.SeeThroughColorBlend = Look5.a;
+		Look.EdgeSoftness = Look6.x;
 		return Look;
 	}
 	Look.ShadowColor = ToonShadowColor;
@@ -153,6 +156,7 @@ FToonCharacterLook GetToonCharacterLook(int Character)
 	Look.SeeThroughBrightness = ToonSeeThroughBrightness;
 	Look.SeeThroughColor = ToonSeeThroughColor;
 	Look.SeeThroughColorBlend = ToonSeeThroughColorBlend;
+	Look.EdgeSoftness = ToonEdgeSoftness;
 	return Look;
 }
 

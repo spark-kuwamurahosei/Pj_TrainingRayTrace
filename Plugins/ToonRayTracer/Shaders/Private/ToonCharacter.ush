@@ -89,7 +89,7 @@ bool ComputeFaceShadowNdotL(float3 Position, uint ObjectId, out float FaceNdotL)
 			LitSDF = (1.0f - Angle) - Threshold;
 		}
 		// 計算で作る境目と同じく、顔の境目のぼかし幅（マップの値の差で測る）を、全体のぼかし幅に直す
-		FaceNdotL = ToonShadowThreshold + LitSDF * max(ToonEdgeSoftness, 1.0e-4f) / max(ToonCharacterParams[BestFace].z, 1.0e-4f);
+		FaceNdotL = ToonShadowThreshold + LitSDF * max(Look.EdgeSoftness, 1.0e-4f) / max(ToonCharacterParams[BestFace].z, 1.0e-4f);
 		return true;
 	}
 
@@ -106,7 +106,7 @@ bool ComputeFaceShadowNdotL(float3 Position, uint ObjectId, out float FaceNdotL)
 	}
 	// 全体の影の境目（ToonShadowThreshold）をまたぐように N・L の値に直す（段階数はほかの面と同じになる）
 	// 顔だけ境目のぼかしを広げるため、顔の上で ToonFaceShadowSoftness の幅が、全体のぼかし幅（ToonEdgeSoftness）になるように縮める
-	FaceNdotL = ToonShadowThreshold + Lit * max(ToonEdgeSoftness, 1.0e-4f) / max(ToonCharacterParams[BestFace].z, 1.0e-4f);
+	FaceNdotL = ToonShadowThreshold + Lit * max(Look.EdgeSoftness, 1.0e-4f) / max(ToonCharacterParams[BestFace].z, 1.0e-4f);
 	return true;
 }
 

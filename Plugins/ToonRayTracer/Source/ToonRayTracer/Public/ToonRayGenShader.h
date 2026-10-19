@@ -273,6 +273,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook3, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook4, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook5, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook6, [MaxFaces])
 		// 前髪の影：有効か、髪のマテリアルスロットのビット、髪を探す距離（cm）、影の濃さ
 		SHADER_PARAMETER(uint32, bToonHairShadow)
 		SHADER_PARAMETER(uint32, ToonHairSlotMask)

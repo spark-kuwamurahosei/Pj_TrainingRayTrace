@@ -5,9 +5,10 @@
 
 // トゥーン T2：NdotL（-1 ～ 1）を段階に区切り、0（影）～ 1（明るい面）の値にする
 // 境目は smoothstep でごく狭い幅だけぼかし、ギザギザを防ぐ
-float ToonLightLevel(float NdotL)
+// Softness：明るい面と影の境目のぼかし幅（キャラクターはプロファイルで上書きできる）
+float ToonLightLevelWithSoftness(float NdotL, float EdgeSoftness)
 {
-	float Softness = max(ToonEdgeSoftness, 1.0e-4f);
+	float Softness = max(EdgeSoftness, 1.0e-4f);
 	float ShadowToNext = smoothstep(ToonShadowThreshold - Softness, ToonShadowThreshold + Softness, NdotL);
 	if (ToonBands <= 2)
 	{
@@ -17,6 +18,11 @@ float ToonLightLevel(float NdotL)
 	// 3段階：影（0）→ 中間（0.5）→ 明るい面（1）
 	float MidToLit = smoothstep(ToonLitThreshold - Softness, ToonLitThreshold + Softness, NdotL);
 	return 0.5f * (ShadowToNext + MidToLit);
+}
+
+float ToonLightLevel(float NdotL)
+{
+	return ToonLightLevelWithSoftness(NdotL, ToonEdgeSoftness);
 }
 
 // Perlin ノイズの応用：ノイズを計算する位置（物体に貼り付いた座標）
@@ -411,7 +417,8 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 		NdotL += (Rec.Material.OriginalShadowBias - 0.5f) * ToonOriginalShadowBias;
 	}
 
-	float LightLevel = ToonLightLevel(NdotL);
+	// キャラクターの面は、そのキャラクターの境目のぼかし幅を使う
+	float LightLevel = ToonLightLevelWithSoftness(NdotL, GetToonCharacterLook(Rec.Material.Character).EdgeSoftness);
 
 	// 始点を実際の面の向きへ少し浮かせ、滑らかな法線とポリゴンの向きのずれによる自己遮蔽（黒い斑点）を防ぐ
 	if (bToonCastShadows != 0 && LightLevel > 0.0f)
