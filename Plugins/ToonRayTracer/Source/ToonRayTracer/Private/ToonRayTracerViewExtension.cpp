@@ -382,10 +382,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
 		HashCombine(HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonFaceOutlineTolerance)), GetTypeHash(ToonOutlineColor)), HashCombine(HashCombine(GetTypeHash(ToonReflectionDepth), HashCombine(HashCombine(GetTypeHash(ToonGlassEdgeStrength), GetTypeHash(ToonGlassEdgeWidth)), GetTypeHash(ToonGlassEdgeColor))),
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
-				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), HashCombine(HashCombine(GetTypeHash(bToonFaceShadowSDF), GetTypeHash(FaceSDFTextureRHI)), HashCombine(GetTypeHash(ToonFaceSDFScale), GetTypeHash(ToonFaceSDFOffsetY)))), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias)),
+				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias)),
 					HashCombine(HashCombine(HashCombine(GetTypeHash(ToonHairShadowMode), GetTypeHash(ToonHairSlotMask)), HashCombine(GetTypeHash(ToonHairShadowWidth), GetTypeHash(ToonHairShadowLightShift))), HashCombine(GetTypeHash(ToonHairShadowDistance), GetTypeHash(ToonHairShadowStrength))))))), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
 	// キャラクターごとの設定が変わったら蓄積をやり直す（顔の位置は含めない）
-	uint32 CharacterHash = 0;
+	uint32 CharacterHash = HashCombine(HashCombine(GetTypeHash(bToonFaceShadowSDF), GetTypeHash(FaceSDFTextureRHI)), HashCombine(GetTypeHash(ToonFaceSDFScale), GetTypeHash(ToonFaceSDFOffsetY)));
 	for (const FToonFace& Face : Faces_RenderThread)
 	{
 		CharacterHash = HashCombine(CharacterHash, HashCombine(
@@ -396,6 +396,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 			HashCombine(HashCombine(GetTypeHash(Face.Params.X), GetTypeHash(Face.Params.Y)), HashCombine(GetTypeHash(Face.Params.Z), GetTypeHash(Face.Params.W))),
 			HashCombine(HashCombine(GetTypeHash(Face.Params2.X), GetTypeHash(Face.Params2.Y)), HashCombine(GetTypeHash(Face.Params2.Z), GetTypeHash(Face.Params2.W)))));
 		CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(Face.CharacterId), GetTypeHash(Face.LookOverrideMask)));
+		CharacterHash = HashCombine(CharacterHash, HashCombine(HashCombine(GetTypeHash(Face.FaceShadowMethod), GetTypeHash(Face.FaceSDFResource)),
+			HashCombine(GetTypeHash(Face.FaceSDFScale), HashCombine(GetTypeHash(Face.FaceSDFOffsetY), GetTypeHash(Face.bFaceSDFOffsetY)))));
 		for (const FVector4f& Look : Face.Look)
 		{
 			CharacterHash = HashCombine(CharacterHash, HashCombine(HashCombine(GetTypeHash(Look.X), GetTypeHash(Look.Y)), HashCombine(GetTypeHash(Look.Z), GetTypeHash(Look.W))));
@@ -678,14 +680,43 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->bToonEyeUnlit = bToonEyeUnlit ? 1u : 0u;
 	// 顔の影：顔の位置は Translated World 空間に変換して渡す（double で足してから float にする）
 	PassParameters->bToonFaceShadow = bToonFaceShadow ? 1u : 0u;
-	// 顔の影の SDF 版：読み込めていなければ黒のダミーを渡し、計算で作る境目を使う
-	PassParameters->bToonFaceShadowSDF = bToonFaceShadowSDF ? 1u : 0u;
-	PassParameters->ToonFaceSDFTexture = FaceSDFTextureRHI
-		? RegisterExternalTexture(GraphBuilder, FaceSDFTextureRHI, TEXT("ToonRayTracerFaceSDFTexture"))
-		: GSystemTextures.GetBlackDummy(GraphBuilder);
-	PassParameters->ToonFaceSDFTextureSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-	PassParameters->ToonFaceSDFScale = ToonFaceSDFScale;
-	PassParameters->ToonFaceSDFOffsetY = ToonFaceSDFOffsetY;
+	// 顔の影の SDF 版：顔ごとに、使うしきい値マップと投影の大きさ・上下の位置を決める
+	// プロファイルが「全体の設定に従う」なら全体の設定、「SDF テクスチャで作る」ならプロファイルのテクスチャ（なければ計算で作る）
+	// シェーダーのパラメータではテクスチャを配列にできないので、顔の番号ごとのテクスチャのスロットで渡す（使わない顔には黒のダミー）
+	{
+		static_assert(FToonRayGenShader::MaxFaces == 8, "ToonFaceSDFTexture0 ～ 7 の数と合わせる");
+		FRDGTextureRef FaceSDFTextures[FToonRayGenShader::MaxFaces];
+		for (int32 Index = 0; Index < FToonRayGenShader::MaxFaces; ++Index)
+		{
+			const FToonFace* Face = Faces_RenderThread.IsValidIndex(Index) ? &Faces_RenderThread[Index] : nullptr;
+			FRHITexture* TextureRHI = nullptr;
+			float Scale = ToonFaceSDFScale;
+			float OffsetY = ToonFaceSDFOffsetY;
+			if (Face && Face->FaceShadowMethod == static_cast<uint32>(EToonFaceShadowMethod::SDF))
+			{
+				TextureRHI = Face->FaceSDFResource ? Face->FaceSDFResource->GetTexture2DRHI() : nullptr;
+				Scale = Face->FaceSDFScale > 0.0f ? Face->FaceSDFScale : Scale;
+				OffsetY = Face->bFaceSDFOffsetY ? Face->FaceSDFOffsetY : OffsetY;
+			}
+			else if (!Face || Face->FaceShadowMethod == static_cast<uint32>(EToonFaceShadowMethod::Global))
+			{
+				TextureRHI = bToonFaceShadowSDF ? FaceSDFTextureRHI : nullptr;
+			}
+			PassParameters->ToonFaceSDFParams[Index] = FVector4f(TextureRHI ? 1.0f : 0.0f, FMath::Max(Scale, 0.01f), OffsetY, 0.0f);
+			FaceSDFTextures[Index] = TextureRHI
+				? RegisterExternalTexture(GraphBuilder, TextureRHI, TEXT("ToonRayTracerFaceSDFTexture"))
+				: GSystemTextures.GetBlackDummy(GraphBuilder);
+		}
+		PassParameters->ToonFaceSDFTexture0 = FaceSDFTextures[0];
+		PassParameters->ToonFaceSDFTexture1 = FaceSDFTextures[1];
+		PassParameters->ToonFaceSDFTexture2 = FaceSDFTextures[2];
+		PassParameters->ToonFaceSDFTexture3 = FaceSDFTextures[3];
+		PassParameters->ToonFaceSDFTexture4 = FaceSDFTextures[4];
+		PassParameters->ToonFaceSDFTexture5 = FaceSDFTextures[5];
+		PassParameters->ToonFaceSDFTexture6 = FaceSDFTextures[6];
+		PassParameters->ToonFaceSDFTexture7 = FaceSDFTextures[7];
+		PassParameters->ToonFaceSDFTextureSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+	}
 	PassParameters->ToonFaceSlotMask = ToonFaceSlotMask;
 	PassParameters->NumToonFaces = static_cast<uint32>(Faces_RenderThread.Num());
 	PassParameters->ToonFaceShadowCurve = ToonFaceShadowCurve;

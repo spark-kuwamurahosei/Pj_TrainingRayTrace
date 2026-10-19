@@ -4,6 +4,7 @@
 #include "ToonCharacterComponent.h"
 #include "ToonCharacterProfile.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Engine/Texture2D.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -185,6 +186,18 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 		if (Profile)
 		{
 			Profile->GetLookOverrides(Face.LookOverrideMask, Face.Look);
+
+			// 顔の影の作り方とプロファイルの SDF テクスチャ（テクスチャのリソースはレンダースレッドで読む）
+			Face.FaceShadowMethod = static_cast<uint32>(Profile->FaceShadowMethod);
+			if (Profile->FaceShadowMethod == EToonFaceShadowMethod::SDF && Profile->FaceShadowSDFTexture)
+			{
+				// シェーダーから直接読むので、すべてのミップを常にメモリに置く（ミップなしで取り込んでいれば 1 枚だけ）
+				Profile->FaceShadowSDFTexture->SetForceMipLevelsToBeResident(ImageTextureResidentSeconds);
+				Face.FaceSDFResource = Profile->FaceShadowSDFTexture->GetResource();
+			}
+			Face.FaceSDFScale = Profile->FaceShadowSDFScale;
+			Face.FaceSDFOffsetY = Profile->FaceShadowSDFOffsetY;
+			Face.bFaceSDFOffsetY = Profile->bOverrideFaceShadowSDFOffsetY;
 		}
 	}
 }

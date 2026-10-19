@@ -104,6 +104,13 @@ private:
 		uint32 CharacterId = 0;
 		// 見た目の上書き（UToonCharacterProfile::GetLookOverrides を参照）。全体の設定との組み合わせはレンダースレッドで決める
 		uint32 LookOverrideMask = 0;
+		// 顔の影の SDF 版：0 全体の設定に従う、1 計算で作る、2 プロファイルの SDF テクスチャ（FaceSDFResource）で作る
+		uint32 FaceShadowMethod = 0;
+		FTextureResource* FaceSDFResource = nullptr;
+		// しきい値マップの大きさ（0 なら全体の設定）と、上下の位置（bFaceSDFOffsetY が false なら全体の設定）
+		float FaceSDFScale = 0.0f;
+		float FaceSDFOffsetY = 0.0f;
+		bool bFaceSDFOffsetY = false;
 		FVector4f Look[6] = { FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f), FVector4f(0.0f, 0.0f, 0.0f, 0.0f) };
 	};
 
