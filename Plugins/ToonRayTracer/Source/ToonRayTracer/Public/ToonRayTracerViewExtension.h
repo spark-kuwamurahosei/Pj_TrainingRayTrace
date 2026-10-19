@@ -137,6 +137,11 @@ private:
 	// レンダースレッドからのみアクセスする
 	FTextureResource* ImageTextureResource_RenderThread = nullptr;
 
+	// 顔の影の SDF 版：しきい値マップ（r.ToonRayTracer.Toon.FaceShadowSDFTexture のパスから読み込む）
+	TStrongObjectPtr<UTexture2D> FaceSDFTexture;
+	FString FaceSDFTexturePath;			// 読み込みを試したパス
+	FTextureResource* FaceSDFTextureResource_RenderThread = nullptr;
+
 	// カメラが静止している間、フレームをまたいで結果を平均するための状態（ビューごと）
 	struct FAccumulationState
 	{

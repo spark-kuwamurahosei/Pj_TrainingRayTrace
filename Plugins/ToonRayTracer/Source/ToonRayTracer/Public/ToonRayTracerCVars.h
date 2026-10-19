@@ -161,6 +161,12 @@ namespace ToonRayTracerCVars
 	// 顔の影：顔の明暗を、頭の向きと光の向きから計算した境目で決める
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonFaceShadow;
 
+	// 顔の影の SDF 版
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonFaceShadowSDF;
+	extern TAutoConsoleVariable<FString> CVarToonRayTracerToonFaceShadowSDFTexture;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonFaceShadowSDFScale;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonFaceShadowSDFOffsetY;
+
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonFaceSlotMask;
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonFaceShadowCurve;

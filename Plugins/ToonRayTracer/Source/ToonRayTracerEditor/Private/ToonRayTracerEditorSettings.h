@@ -240,6 +240,22 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：影の境目を計算で作る"))
 	bool bFaceShadow;
 
+	/** 顔の影の境目の形を、計算ではなく、顔の正面に投影したしきい値マップ（SDF テクスチャ）で決める。「顔：影の境目を計算で作る」が有効なときに使う */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：影の境目を SDF テクスチャで作る", EditCondition = "bFaceShadow"))
+	bool bFaceShadowSDF;
+
+	/** 顔の影のしきい値マップ。顔を正面から見た形で、光が画像の右から来るときに描く（sdf_shadow_threshold_map で、光が後ろから前の順に並べたマスクから作る。値の小さい場所ほど、光が後ろから前へ回るときに先に明るくなる） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：SDF テクスチャ", AllowedClasses = "/Script/Engine.Texture2D", EditCondition = "bFaceShadow && bFaceShadowSDF"))
+	FSoftObjectPath FaceShadowSDFTexture;
+
+	/** しきい値マップの半分の大きさ（顔の半分の幅を 1 としたとき） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：SDF テクスチャの大きさ", ClampMin = "0.1", UIMin = "0.5", UIMax = "3.0", EditCondition = "bFaceShadow && bFaceShadowSDF"))
+	float FaceShadowSDFScale;
+
+	/** しきい値マップの中心の、目の高さからの上下の位置（顔の半分の幅を 1 としたとき。下が負） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：SDF テクスチャの上下の位置", UIMin = "-2.0", UIMax = "2.0", EditCondition = "bFaceShadow && bFaceShadowSDF"))
+	float FaceShadowSDFOffsetY;
+
 	/** 顔として扱うパーツのマテリアルスロット番号（スケルタルメッシュのエディタのエレメント番号） */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "顔：スロット番号"))
 	TArray<int32> FaceSlots;

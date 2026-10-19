@@ -7,6 +7,20 @@
 // 顔の影：境目を曲げるときの、目の高さからの上下の距離の上限（顔の半分の幅を 1 としたとき）
 #define TOON_FACE_CURVE_MAX_HEIGHT 2.0f
 
+// 顔の影の SDF 版：Position を顔の正面の平面に投影し、しきい値マップの座標（0 ～ 1）を求める。マップの範囲外なら false
+// 顔を正面から見た形で描くので、画像の右は顔の左側（ToonFaceRight の逆向き）、画像の上は上
+// ToonFaceSDFScale：マップの半分の大きさ、ToonFaceSDFOffsetY：マップの中心の目の高さからの位置（どちらも顔の半分の幅を 1 とする）
+bool GetToonFaceSDFUV(int Face, float3 Position, out float2 UV)
+{
+	float HalfWidth = max(ToonFaceCenter[Face].w, 1.0e-4f);
+	float3 Offset = Position - ToonFaceCenter[Face].xyz;
+	float S = dot(Offset, ToonFaceRight[Face].xyz) / HalfWidth;
+	float Height = Offset.z / HalfWidth;
+	float Scale = max(ToonFaceSDFScale, 1.0e-3f);
+	UV = float2(0.5f - 0.5f * S / Scale, 0.5f - 0.5f * (Height - ToonFaceSDFOffsetY) / Scale);
+	return all(UV >= 0.0f) && all(UV <= 1.0f);
+}
+
 // 顔の影：Position に最も近い顔（両目の中点からの距離が範囲の半径以内）について、
 // 面の向きの代わりに使う N・L の値を求める。近くに顔がなければ false
 // 顔の左右の位置 S（-1：片側の端、0：中央、1：反対側の端）と、光の向き（顔から見て前後と左右）から境目を決める
@@ -39,6 +53,30 @@ bool ComputeFaceShadowNdotL(float3 Position, uint ObjectId, out float FaceNdotL)
 	// （前寄りの成分が少しだけあると、境目が中心線のすぐ影の側に来て、横から見たときに鼻筋だけが細く明るく見えるため）
 	// 正面からの光（1）はそのまま 1 になり、顔全体が明るい
 	FToonCharacterLook Look = GetToonCharacterLook(BestFace);
+
+	// SDF 版：光の水平の向きが顔の正面からどれだけ回っているか（0：正面、0.5：真横、1：真後ろ）を、しきい値マップの値と比べる
+	// マップは光が画像の右（顔の左側）から来るときの形なので、光が顔の右側から来るときは左右を反転して読む
+	// マップは sdf_shadow_threshold_map の出力そのまま（光が真後ろのマスクから白い場所は 0、正面のマスクで初めて白くなる場所は 1 に近い）なので、
+	// 値が「1 - 角度」以下の場所が明るい（光が後ろから前へ回るにつれて、値の小さい場所から明るくなる）
+	float2 SDFUV;
+	if (bToonFaceShadowSDF != 0 && GetToonFaceSDFUV(BestFace, Position, SDFUV))
+	{
+		float LitSDF = 1.0f;
+		if (Horizontal >= TOON_FACE_VERTICAL_LIGHT)
+		{
+			float Angle = atan2(abs(LightRight), LightForward) / PI;
+			if (LightRight > 0.0f)
+			{
+				SDFUV.x = 1.0f - SDFUV.x;
+			}
+			float Threshold = ToonFaceSDFTexture.SampleLevel(ToonFaceSDFTextureSampler, SDFUV, 0).r;
+			LitSDF = (1.0f - Angle) - Threshold;
+		}
+		// 計算で作る境目と同じく、顔の境目のぼかし幅（マップの値の差で測る）を、全体のぼかし幅に直す
+		FaceNdotL = ToonShadowThreshold + LitSDF * max(ToonEdgeSoftness, 1.0e-4f) / max(ToonCharacterParams[BestFace].z, 1.0e-4f);
+		return true;
+	}
+
 	float FrontBias = clamp(Look.FaceShadowFrontBias, 0.0f, 0.99f);
 	float Front = (LightForward / max(Horizontal, 1.0e-4f) - FrontBias) / (1.0f - FrontBias);
 	float Lit = Horizontal < TOON_FACE_VERTICAL_LIGHT ? 1.0f

@@ -83,6 +83,23 @@ bool GetToonDebugGeometryColor(FToonRay CameraRay, out float3 DebugColor)
 		DebugColor = IsEyeHit(DebugPayload, bCharacter, DebugParts) ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
 		return true;
 	}
+	// 顔の影のしきい値マップの座標（7：大まかな値、8：細かい値＝16 倍した小数部分）。B が 1 ならマップの範囲内
+	// 普通の画面と並べて撮り、画面の色をマップの座標に移して、マスクを描くための下絵を作る（2 枚を合わせて 12 ビットの精度になる）
+	if ((bToonDebugGeometry == 7 || bToonDebugGeometry == 8) && TraceMode != 0)
+	{
+		FDefaultPayload DebugPayload;
+		float2 UV;
+		int Face = -1;
+		if (TraceScene(CameraRay, 0.0f, DebugPayload))
+		{
+			Face = FindToonFace(CameraRay.At(DebugPayload.HitT));
+		}
+		if (Face >= 0 && GetToonFaceSDFUV(Face, CameraRay.At(DebugPayload.HitT), UV))
+		{
+			DebugColor = float3(bToonDebugGeometry == 7 ? UV : frac(UV * 16.0f), 1.0f);
+		}
+		return true;
+	}
 	return false;
 }
 
