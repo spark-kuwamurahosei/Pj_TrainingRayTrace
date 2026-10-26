@@ -143,6 +143,102 @@ namespace ToonRayTracerCVars
 		TEXT("Width in pixels of the character rim light"),
 		ECVF_RenderThreadSafe);
 
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonShadowSimplify(
+		TEXT("r.ToonRayTracer.Toon.ShadowSimplify"),
+		1,
+		TEXT("Simplify the shape of cast shadows: also casts shadow rays from points shifted by ShadowSimplifyRadius perpendicular to the light, and treats the point as lit if any of them reaches the light. Shadows of thin objects (hair tips etc.) disappear and the edges of large shadows become simple. 0: off, 1: shadows on characters only, 2: all surfaces"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowSimplifyRadius(
+		TEXT("r.ToonRayTracer.Toon.ShadowSimplifyRadius"),
+		8.0f,
+		TEXT("Simplify the shape of cast shadows: shadow ray thickness (cm). Objects thinner than about twice this value cast no shadow"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonCrease(
+		TEXT("r.ToonRayTracer.Toon.Crease"),
+		1,
+		TEXT("Crease lines: ink lines in concave corners (cloth folds, collar folds, between fingers), found with short rays along the surface. 0: off, 1: characters only (not the face or eyes), 2: all surfaces"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonCreaseDistance(
+		TEXT("r.ToonRayTracer.Toon.CreaseDistance"),
+		20.0f,
+		TEXT("Crease lines: length (cm) of the rays along the surface. Roughly the width of the line"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonCreaseLift(
+		TEXT("r.ToonRayTracer.Toon.CreaseLift"),
+		0.25f,
+		TEXT("Crease lines: how much the rays are lifted from the surface (sine of the angle). Larger values only draw lines in sharper corners"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonCreaseSamples(
+		TEXT("r.ToonRayTracer.Toon.CreaseSamples"),
+		6,
+		TEXT("Crease lines: number of rays per pixel (1-16). The directions change every frame and are averaged by the accumulation or TSR"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonCreaseStrength(
+		TEXT("r.ToonRayTracer.Toon.CreaseStrength"),
+		1.0f,
+		TEXT("Crease lines: strength of the line (0-1). Drawn with the outline color"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonBeforeTSRMaxBrightness(
+		TEXT("r.ToonRayTracer.Toon.BeforeTSRMaxBrightness"),
+		0.9f,
+		TEXT("When drawing before TSR with the inverse tonemap, limits the brightest channel of the toon color (display value, 0-1) to this value. The inverse tonemap makes colors near white extremely bright, so bloom makes them glow; 1 means no limit"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterRimShadow(
+		TEXT("r.ToonRayTracer.Toon.CharacterRimShadow"),
+		1,
+		TEXT("Character rim light only where the light actually reaches: casts a shadow ray (passing through the character itself) from the rim point toward the light, and removes the rim if another object blocks it (1: on, 0: off)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonDeepShadow(
+		TEXT("r.ToonRayTracer.Toon.DeepShadow"),
+		1,
+		TEXT("Second shadow (a darker shadow in recessed places such as under the chin or inside the collar), decided by how much short rays from the surface are blocked. 0: off, 1: characters only (not the face or eyes), 2: all surfaces"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowDistance(
+		TEXT("r.ToonRayTracer.Toon.DeepShadowDistance"),
+		40.0f,
+		TEXT("Second shadow: length (cm) of the short rays that check how recessed the surface is"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonDeepShadowSamples(
+		TEXT("r.ToonRayTracer.Toon.DeepShadowSamples"),
+		6,
+		TEXT("Second shadow: number of short rays per pixel (1-16). The direction changes every frame and is averaged by the accumulation or TSR"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowThreshold(
+		TEXT("r.ToonRayTracer.Toon.DeepShadowThreshold"),
+		0.5f,
+		TEXT("Second shadow: ratio of blocked rays above which the surface becomes the second shadow (0-1). Lower values make more of the surface the second shadow"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowSoftness(
+		TEXT("r.ToonRayTracer.Toon.DeepShadowSoftness"),
+		0.1f,
+		TEXT("Second shadow: blur of the edge, as a ratio of blocked rays"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowBrightness(
+		TEXT("r.ToonRayTracer.Toon.DeepShadowBrightness"),
+		0.7f,
+		TEXT("Second shadow: brightness of the second shadow relative to the normal shadow color (1: same as the shadow)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowLit(
+		TEXT("r.ToonRayTracer.Toon.DeepShadowLit"),
+		1.0f,
+		TEXT("Second shadow: how much recessed places on the lit side become the normal shadow (0: the lit side is unchanged, 1: recessed places on the lit side are shadowed)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterOutlineColorScale(
 		TEXT("r.ToonRayTracer.Toon.CharacterOutlineColorScale"),
 		0.25f,

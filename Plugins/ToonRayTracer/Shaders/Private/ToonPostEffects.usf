@@ -122,6 +122,8 @@ float BloomStrength;
 uint OutputEncoding;
 // トーンマップで掛かる露出（0 なら不明として露出の補正をしない）
 float ToonEyeAdaptationExposure;
+// トーンマップの逆をかけるとき、表示の値のいちばん明るいチャンネルの上限（RayGen と同じ。差を足すので、両方で同じ変換にしないと色がずれる）
+float ToonBeforeTSRMaxBrightness;
 
 // Original モード：上から下へのグラデーション
 // 画面の上端では GradationTopColor、下端では GradationBottomColor を掛ける（間はなめらかにつなぐ）
@@ -136,7 +138,13 @@ float3 DisplayToOutput(float3 Display)
 	if (OutputEncoding == 1)
 	{
 		float ExposureScale = ToonEyeAdaptationExposure > 0.0f ? View.PreExposure / ToonEyeAdaptationExposure : 1.0f;
-		return FilmToneMapInverse(sRGBToLinear(saturate(Display))) * ExposureScale;
+		float3 Limited = saturate(Display);
+		float MaxChannel = max(Limited.r, max(Limited.g, Limited.b));
+		if (MaxChannel > ToonBeforeTSRMaxBrightness)
+		{
+			Limited *= ToonBeforeTSRMaxBrightness / MaxChannel;
+		}
+		return FilmToneMapInverse(sRGBToLinear(Limited)) * ExposureScale;
 	}
 	if (OutputEncoding == 2)
 	{

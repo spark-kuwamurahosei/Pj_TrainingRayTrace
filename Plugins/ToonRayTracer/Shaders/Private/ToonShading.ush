@@ -314,6 +314,38 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 // 光が届く割合（0 ～ 1）を返す。影を落とす物体から離れるほど、影の境目がぼける（半影）
 // 円錐の中の方向は、本の random_to_sphere と同じく一様に選ぶ。回転方向はサンプルごとに均等に散らし（層化）、ノイズを減らす
 // 乱数はフレームごとに変わり、蓄積や TSR で平均されてなめらかになる
+// シャドウレイ 1 本で光が届くか（自分自身を通り抜けるかどうかで使い分ける）
+bool IsToonShadowRayVisible(float3 Origin, float3 Direction, bool bIgnoreBackFaces, bool bIgnoreSelf, uint IgnoreObjectId)
+{
+	return bIgnoreSelf ? IsLightVisibleIgnoringObject(Origin, Direction, IgnoreObjectId) : IsLightVisibleInDirection(Origin, Direction, bIgnoreBackFaces);
+}
+
+// 影の形を整える：遮られたシャドウレイについて、始点を光に垂直な方向へ ToonShadowSimplifyRadius だけずらした 4 点からも飛ばし、
+// どれか 1 本でも光が届けば、光が届くとみなす（太いシャドウレイ）
+// 太さの 2 倍ほどより細い物（髪の毛先、細い棒など）の影は消え、大きな影は輪郭が少し内側に寄って単純な形になる
+// （ちらつく小さな影のない、セル画のくっきりした影にする。シャドウマップの影では、影の形を絵に合わせてこのように単純にできない）
+// ずらす向きはフレームごとに回し、蓄積や TSR で平均する
+#define TOON_SHADOW_SIMPLIFY_SAMPLES 4
+bool IsToonShadowRayVisibleSimplified(float3 Origin, float3 Direction, bool bIgnoreBackFaces, bool bIgnoreSelf, uint IgnoreObjectId, float Rotation)
+{
+	if (IsToonShadowRayVisible(Origin, Direction, bIgnoreBackFaces, bIgnoreSelf, IgnoreObjectId))
+	{
+		return true;
+	}
+	FToonOnb Onb = MakeOnb(Direction);
+	[loop]
+	for (uint Index = 0; Index < TOON_SHADOW_SIMPLIFY_SAMPLES; ++Index)
+	{
+		float Phi = 2.0f * PI * ((float)Index + Rotation) / (float)TOON_SHADOW_SIMPLIFY_SAMPLES;
+		float3 Offset = OnbTransform(Onb, float3(cos(Phi), sin(Phi), 0.0f)) * ToonShadowSimplifyRadius;
+		if (IsToonShadowRayVisible(Origin + Offset, Direction, bIgnoreBackFaces, bIgnoreSelf, IgnoreObjectId))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool bIgnoreBackFaces, inout uint RandomState)
 {
 	// Original ルック フェーズ2：キャラクターは自分自身の影を受けない（服のまだらな影や、顔に落ちる前髪・頭の影を消す）
@@ -328,6 +360,11 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 
 	// ガラスの影を薄くする場合は、ガラスを通り抜けて光が届く割合を求める
 	bool bGlassTransmittance = ToonGlassShadowOpacity < 1.0f;
+
+	// 影の形を整える（1：キャラクターに落ちる影だけ、2：すべての面）
+	bool bSimplify = ToonShadowSimplifyRadius > 0.0f
+		&& (ToonShadowSimplify == 2 || (ToonShadowSimplify == 1 && Rec.Material.bCharacter != 0));
+	float SimplifyRotation = bSimplify ? ToonRandomFloat(RandomState) : 0.0f;
 
 	float VisibleSum = 0.0f;
 	[loop]
@@ -346,13 +383,13 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 		{
 			VisibleSum += ToonShadowTransmittance(ShadowOrigin, Direction, !bIgnoreSelf && bIgnoreBackFaces, bIgnoreSelf, Rec.ObjectId);
 		}
-		else if (bIgnoreSelf)
+		else if (bSimplify)
 		{
-			VisibleSum += IsLightVisibleIgnoringObject(ShadowOrigin, Direction, Rec.ObjectId) ? 1.0f : 0.0f;
+			VisibleSum += IsToonShadowRayVisibleSimplified(ShadowOrigin, Direction, bIgnoreBackFaces, bIgnoreSelf, Rec.ObjectId, SimplifyRotation) ? 1.0f : 0.0f;
 		}
 		else
 		{
-			VisibleSum += IsLightVisibleInDirection(ShadowOrigin, Direction, bIgnoreBackFaces) ? 1.0f : 0.0f;
+			VisibleSum += IsToonShadowRayVisible(ShadowOrigin, Direction, bIgnoreBackFaces, bIgnoreSelf, Rec.ObjectId) ? 1.0f : 0.0f;
 		}
 	}
 
@@ -462,6 +499,117 @@ float ComputeToonLightLevel(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 	}
 
 	return LightLevel;
+}
+
+// 2 影：Origin から Direction へ、MaxT（cm）以内に何かあるか。最初の交差で打ち切る（ClosestHit を呼ばない）
+// 奥まった場所では、くぼみの内側の面に表からも裏からも当たりうるので、裏面も数える
+bool IsOccludedWithin(float3 Origin, float3 Direction, float MaxT)
+{
+	FToonRay Ray;
+	Ray.Origin = Origin;
+	Ray.Direction = Direction;
+	if (TraceMode == 0)
+	{
+		FToonHitRecord Rec = (FToonHitRecord)0;
+		return HitWorld(Ray, TOON_RAY_TMIN, MaxT, Rec, false);
+	}
+
+	RayDesc Desc;
+	Desc.Origin = Origin;
+	Desc.Direction = Direction;
+	Desc.TMin = TOON_RAY_TMIN;
+	Desc.TMax = MaxT;
+	FDefaultPayload Payload = (FDefaultPayload)0;
+	Payload.HitT = 1.0f;
+	TraceRay(
+		TLAS,
+		RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,
+		RAY_TRACING_MASK_ALL,
+		RAY_TRACING_SHADER_SLOT_MATERIAL,
+		RAY_TRACING_NUM_SHADER_SLOTS,
+		0,
+		Desc,
+		Payload);
+	return !Payload.IsMiss();
+}
+
+// 2 影（0：普通 ～ 1：2 影）
+// アニメ塗りの 2 段階の影：あごの下・襟の中・髪の内側など奥まった場所に、普通の影（1 影）よりもう一段暗い影を入れる
+// 面から法線の側へコサイン分布で短いレイ（ToonDeepShadowDistance）を飛ばし、遮られた割合がしきい値を超えた場所を 2 影にする
+// 画面に映っているものしか見ない SSAO と違い、画面の外の形やキャラクター自身の体も含めて判定するので、境目が安定する
+// 方位角は等分してずらし（層化）、高さは乱数で選ぶ。フレームごとに向きが変わり、蓄積や TSR で平均されて境目がなめらかになる
+float ComputeToonDeepShadow(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
+{
+	if (ToonDeepShadow == 0 || ToonDeepShadowDistance <= 0.0f)
+	{
+		return 0.0f;
+	}
+	// 1：キャラクターだけ。顔（顔の影は別に作っている）と目（明るく描く）は除く
+	if (ToonDeepShadow == 1 && (Rec.Material.bCharacter == 0 || Rec.Material.bFace != 0 || Rec.Material.bEye != 0))
+	{
+		return 0.0f;
+	}
+
+	float3 Origin = Rec.Position + GeometricNormal * ToonShadowBias;
+	FToonOnb Onb = MakeOnb(Rec.Normal);
+	uint NumSamples = clamp(ToonDeepShadowSamples, 1u, 16u);
+	float PhiOffset = ToonRandomFloat(RandomState);
+	float Blocked = 0.0f;
+	[loop]
+	for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
+	{
+		float R2 = ToonRandomFloat(RandomState);
+		float Phi = 2.0f * PI * frac(((float)SampleIndex + PhiOffset) / (float)NumSamples);
+		float SinTheta = sqrt(R2);
+		float3 Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, sqrt(max(1.0f - R2, 0.0f)))));
+		// 滑らかな法線とポリゴンの向きがずれて、自分の面の裏へ向かうレイは数えない（遮られていない扱い）
+		if (dot(Direction, GeometricNormal) > 0.0f && IsOccludedWithin(Origin, Direction, ToonDeepShadowDistance))
+		{
+			Blocked += 1.0f;
+		}
+	}
+	float Occlusion = Blocked / (float)NumSamples;
+	float Softness = max(ToonDeepShadowSoftness, 1.0e-3f);
+	return smoothstep(ToonDeepShadowThreshold - Softness, ToonDeepShadowThreshold + Softness, Occlusion);
+}
+
+// くぼみの線（0 ～ 1）。カメラから見える面で求め、ApplyToonCameraLighting でアウトラインに重ねる
+static float ToonCameraCrease = 0.0f;
+
+// くぼみの線：へこんだ角（服のしわ、襟の折り目、指の間など）に線を入れる
+// 面に沿った向き（面から ToonCreaseLift だけ持ち上げた向き）へ短いレイ（ToonCreaseDistance）を飛ばし、
+// すぐ近くに面があれば、へこんだ角のそばとみなす。平らな面や外へふくらんだ面では、面に沿ったレイはどこにも当たらない
+// 今のアウトラインは輪郭や物体の境目、カメラから見た段差でしか線を引けないため、同じ物体の中の浅いしわを補う
+// 方位角は等分してずらし（層化）、フレームごとに回して、蓄積や TSR で平均する
+float ComputeToonCrease(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
+{
+	if (ToonCrease == 0 || ToonCreaseStrength <= 0.0f || ToonCreaseDistance <= 0.0f)
+	{
+		return 0.0f;
+	}
+	// 1：キャラクターだけ。顔（鼻や唇の小さな凹凸）と目は除く
+	if (ToonCrease == 1 && (Rec.Material.bCharacter == 0 || Rec.Material.bFace != 0 || Rec.Material.bEye != 0))
+	{
+		return 0.0f;
+	}
+
+	float3 Origin = Rec.Position + GeometricNormal * ToonShadowBias;
+	FToonOnb Onb = MakeOnb(Rec.Normal);
+	float Lift = saturate(ToonCreaseLift);
+	float Along = sqrt(max(1.0f - Lift * Lift, 0.0f));
+	uint NumSamples = clamp(ToonCreaseSamples, 1u, 16u);
+	float PhiOffset = ToonRandomFloat(RandomState);
+	[loop]
+	for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
+	{
+		float Phi = 2.0f * PI * ((float)SampleIndex + PhiOffset) / (float)NumSamples;
+		float3 Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * Along, sin(Phi) * Along, Lift)));
+		if (dot(Direction, GeometricNormal) > 0.0f && IsOccludedWithin(Origin, Direction, ToonCreaseDistance))
+		{
+			return ToonCreaseStrength;
+		}
+	}
+	return 0.0f;
 }
 
 // トゥーン T5：ハイライトの段階（0 ～ 1）
@@ -745,6 +893,19 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	// 目の表現：アニメ調では、目は光の向きや影に関係なく明るく描く（白目が影の色で沈まないようにする）
 	bool bUnlitEye = Rec.Material.bEye != 0 && bToonEyeUnlit != 0;
 	float LightLevel = bUnlitEye ? 1.0f : ComputeToonLightLevel(Rec, GeometricNormal, RandomState);
+	// 2 影：奥まった場所は、影の面ならさらに暗い 2 影に、明るい面なら（ToonDeepShadowLit の割合で）普通の影にする
+	// 照り返し（間接光）を足すのはカメラから見える面だけなので、2 影もカメラから見える面だけにする（映り込みの先では省く）
+	float DeepShadow = (bUnlitEye || !bIndirect) ? 0.0f : ComputeToonDeepShadow(Rec, GeometricNormal, RandomState);
+	// くぼみの線もカメラから見える面だけ（アウトラインに重ねる）
+	if (bIndirect)
+	{
+		ToonCameraCrease = bUnlitEye ? 0.0f : ComputeToonCrease(Rec, GeometricNormal, RandomState);
+	}
+	if (DeepShadow > 0.0f)
+	{
+		ShadowColor *= lerp(1.0f, ToonDeepShadowBrightness, DeepShadow * (1.0f - LightLevel));
+		LightLevel *= 1.0f - DeepShadow * ToonDeepShadowLit;
+	}
 	OutLightLevel = LightLevel;
 	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));

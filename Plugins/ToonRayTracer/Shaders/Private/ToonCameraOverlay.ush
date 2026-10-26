@@ -132,6 +132,13 @@ bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout
 			Overlay.OutlineColor = Rec.Material.Albedo * Look.OutlineColorScale;
 		}
 		Overlay.CharacterRim = Rec.Material.Albedo * ToonLightColor * (Look.RimStrength * ToonCharacterRim(UV, Rec, ToLightDirection));
+		// 光が届く場所だけのリム：画面上の深度だけで決めたリムは、遮るものを知らないので、壁際やほかのキャラクターの陰でも光ってしまう
+		// リムを入れる点から光の方向へシャドウレイを飛ばし、ほかの物体に遮られていれば消す（キャラクター自身は通り抜ける。逆光の輪郭は自分の体の向こうから光が来るため）
+		if (bToonCharacterRimShadow != 0 && bToonCastShadows != 0 && any(Overlay.CharacterRim > 0.0f)
+			&& !IsLightVisibleIgnoringObject(Rec.Position + Rec.Normal * ToonShadowBias, ToLightDirection, Rec.ObjectId))
+		{
+			Overlay.CharacterRim = 0.0f;
+		}
 		// Original モード：光と反対の側の輪郭にも、空の色（青み）の縁を入れる（照り返しのリム）。光の当たり方によるマスクは、陰影を計算した後で掛ける
 		if (Rec.Material.bOriginal != 0 && ToonOriginalReflectionRimStrength > 0.0f)
 		{
@@ -158,6 +165,9 @@ bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout
 // カメラから見えている普通の素材を塗った後に、光の当たり具合（LightLevel）に合わせて重ねる表現を調整する
 void ApplyToonCameraLighting(FToonHitRecord Rec, float LightLevel, inout FToonCameraOverlay Overlay)
 {
+	// くぼみの線：アウトラインと同じ色で重ねる
+	Overlay.Outline = max(Overlay.Outline, ToonCameraCrease);
+
 	// Original モード：光の側のリムは光の当たる部分だけ、照り返しのリムは影の部分だけに入れる
 	// どちらも、光の方向を向いている度合い（N・L）でなだらかに弱める（Falloff）
 	if (Rec.Material.bOriginal != 0)

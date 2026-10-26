@@ -219,6 +219,24 @@ class FToonRayGenShader : public FGlobalShader
 		// Original ルック フェーズ2：キャラクターのリムライトの強さと幅（ピクセル）、線の色の倍率
 		SHADER_PARAMETER(float, ToonCharacterRimStrength)
 		SHADER_PARAMETER(float, ToonCharacterRimWidth)
+		// リムライトを光が届く場所だけに入れるか、2 影（奥まった場所のさらに暗い影）
+		SHADER_PARAMETER(uint32, bToonCharacterRimShadow)
+		// 影の形を整える、くぼみの線、TSR の前に描くときの明るさの上限
+		SHADER_PARAMETER(uint32, ToonShadowSimplify)
+		SHADER_PARAMETER(float, ToonShadowSimplifyRadius)
+		SHADER_PARAMETER(uint32, ToonCrease)
+		SHADER_PARAMETER(float, ToonCreaseDistance)
+		SHADER_PARAMETER(float, ToonCreaseLift)
+		SHADER_PARAMETER(uint32, ToonCreaseSamples)
+		SHADER_PARAMETER(float, ToonCreaseStrength)
+		SHADER_PARAMETER(float, ToonBeforeTSRMaxBrightness)
+		SHADER_PARAMETER(uint32, ToonDeepShadow)
+		SHADER_PARAMETER(float, ToonDeepShadowDistance)
+		SHADER_PARAMETER(uint32, ToonDeepShadowSamples)
+		SHADER_PARAMETER(float, ToonDeepShadowThreshold)
+		SHADER_PARAMETER(float, ToonDeepShadowSoftness)
+		SHADER_PARAMETER(float, ToonDeepShadowBrightness)
+		SHADER_PARAMETER(float, ToonDeepShadowLit)
 		SHADER_PARAMETER(float, ToonCharacterOutlineColorScale)
 		// 眉毛の透け：重ねる割合、髪の色を暗くする倍率、髪の奥を探す距離（cm）
 		SHADER_PARAMETER(float, ToonSeeThroughOpacity)
@@ -496,6 +514,8 @@ class FToonPostEffectsCS : public FToonPostEffectsShaderBase
 		// 出力の色の形式（0：表示の値、1：トーンマップの逆をかけた値、2：線形の色）と、トーンマップで掛かる露出
 		SHADER_PARAMETER(uint32, OutputEncoding)
 		SHADER_PARAMETER(float, ToonEyeAdaptationExposure)
+		// トーンマップの逆をかけるとき、表示の値のいちばん明るいチャンネルの上限（RayGen と同じ）
+		SHADER_PARAMETER(float, ToonBeforeTSRMaxBrightness)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		// グラデーションの強さと、画面の上端・下端で掛ける色
 		SHADER_PARAMETER(float, GradationStrength)
