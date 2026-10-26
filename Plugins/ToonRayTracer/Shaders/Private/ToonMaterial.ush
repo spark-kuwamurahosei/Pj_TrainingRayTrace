@@ -39,6 +39,8 @@ struct FToonMaterial
 	uint bFace;
 	// 髪の帯状のハイライト：キャラクターの髪のパーツ（髪のスロット）なら 1
 	uint bHair;
+	// キャラクターのパーツの番号（ジオメトリ番号＝マテリアルスロット）。キャラクター以外や不明なら 0xFFFFFFFF
+	uint CharacterSlot;
 	// 髪のハイライトをテクスチャから描くキャラクターの髪なら 1（プロファイルの「髪のハイライトをテクスチャから描く」）
 	uint bHairHighlightTexture;
 	// 髪のハイライトの形（マテリアルの Specular。GBuffer から読むので、カメラから見える面だけ）
@@ -77,6 +79,7 @@ FToonMaterial GetDefaultMaterial()
 	Material.bNoEyelidShadow = 0;
 	Material.bFace = 0;
 	Material.bHair = 0;
+	Material.CharacterSlot = 0xFFFFFFFFu;
 	Material.bHairHighlightTexture = 0;
 	Material.HairHighlightMask = 0.0f;
 	Material.bOriginal = 0;
