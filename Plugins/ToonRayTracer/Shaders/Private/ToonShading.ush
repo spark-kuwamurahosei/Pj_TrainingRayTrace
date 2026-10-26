@@ -690,6 +690,8 @@ static float ToonCameraCrease = 0.0f;
 // 面に沿った向き（面から ToonCreaseLift だけ持ち上げた向き）へ短いレイ（ToonCreaseDistance）を飛ばし、
 // すぐ近くに面があれば、へこんだ角のそばとみなす。平らな面や外へふくらんだ面では、面に沿ったレイはどこにも当たらない
 // 今のアウトラインは輪郭や物体の境目、カメラから見た段差でしか線を引けないため、同じ物体の中の浅いしわを補う
+// 線を谷の底だけに細く入れるため、反対向きの 2 本を組にして飛ばし、両方とも近くの面に当たったときだけ線にする
+// （谷の斜面の上では、谷の底へ向かう側しか当たらないので線にならない。どちらか 1 本で線にすると、斜面まで塗られて、にじんだ太い線になる）
 // 方位角は乱数を使わずに等分する（フレームごとに回すと、線がピクセルごとにちらついてざらついたノイズになるため。2 影と同じ）
 float ComputeToonCrease(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
@@ -709,13 +711,18 @@ float ComputeToonCrease(FToonHitRecord Rec, float3 GeometricNormal, inout uint R
 	FToonOnb Onb = MakeOnb(Rec.Normal);
 	float Lift = saturate(ToonCreaseLift);
 	float Along = sqrt(max(1.0f - Lift * Lift, 0.0f));
-	uint NumSamples = clamp(ToonCreaseSamples, 1u, 16u);
+	// レイの本数の半分を、反対向きの組の数にする
+	uint NumPairs = max(clamp(ToonCreaseSamples, 1u, 16u) / 2u, 1u);
 	[loop]
-	for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
+	for (uint PairIndex = 0; PairIndex < NumPairs; ++PairIndex)
 	{
-		float Phi = 2.0f * PI * ((float)SampleIndex + 0.5f) / (float)NumSamples;
-		float3 Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * Along, sin(Phi) * Along, Lift)));
-		if (dot(Direction, GeometricNormal) > 0.0f && IsOccludedWithin(Origin, Direction, Distance))
+		float Phi = PI * ((float)PairIndex + 0.5f) / (float)NumPairs;
+		float3 Tangent = OnbTransform(Onb, float3(cos(Phi), sin(Phi), 0.0f)) * Along;
+		float3 Up = Rec.Normal * Lift;
+		float3 DirectionA = normalize(Up + Tangent);
+		float3 DirectionB = normalize(Up - Tangent);
+		if (dot(DirectionA, GeometricNormal) > 0.0f && dot(DirectionB, GeometricNormal) > 0.0f
+			&& IsOccludedWithin(Origin, DirectionA, Distance) && IsOccludedWithin(Origin, DirectionB, Distance))
 		{
 			return ToonCreaseStrength;
 		}

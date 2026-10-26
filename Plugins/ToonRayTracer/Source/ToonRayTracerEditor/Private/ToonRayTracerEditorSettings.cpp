@@ -176,8 +176,8 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	ReflectionCharacters = 1;
 	ShadowSimplify = 1;
 	ShadowSimplifyRadius = 8.0f;
-	Crease = 1;
-	CreaseDistance = 20.0f;
+	Crease = 0;
+	CreaseDistance = 60.0f;
 	CreaseLift = 0.25f;
 	CreaseSamples = 6;
 	CreaseStrength = 1.0f;
