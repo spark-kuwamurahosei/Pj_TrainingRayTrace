@@ -176,6 +176,18 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "リムライト：光が届く場所だけ", ClampMin = "0", ClampMax = "1"))
 	int32 CharacterRimShadow;
 
+	/** ガラスの物体が後ろの面に集めた光の模様を、くっきりした段階で描く。面からガラスを通る光の道すじを逆向きにたどって求める */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "コースティクス", ClampMin = "0", ClampMax = "1"))
+	int32 Caustics;
+
+	/** 1 段階ごとに足す明るさ（明るい面の色に掛ける） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "コースティクス：明るさ", ClampMin = "0.0", UIMax = "2.0"))
+	float CausticStrength;
+
+	/** ガラスが光を集める割合（直接の光に対する倍率）がこれを超えた場所から模様にする。2 段階目は、この 3 倍から */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "コースティクス：しきい値", ClampMin = "0.1", UIMax = "5.0"))
+	float CausticThreshold;
+
 	/** 鏡のような金属に映った物体にも、アウトラインを引く。となりのピクセルの映り込みの先と比べて、輪郭や段差を見つける */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "映り込みの中の線", ClampMin = "0", ClampMax = "1"))
 	int32 ReflectionOutline;

@@ -221,6 +221,10 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonCharacterRimWidth)
 		// リムライトを光が届く場所だけに入れるか、2 影（奥まった場所のさらに暗い影）
 		SHADER_PARAMETER(uint32, bToonCharacterRimShadow)
+		// トゥーンのコースティクス
+		SHADER_PARAMETER(uint32, bToonCaustics)
+		SHADER_PARAMETER(float, ToonCausticStrength)
+		SHADER_PARAMETER(float, ToonCausticThreshold)
 		// 映り込みの中の線、鏡に映ったキャラクターもトゥーンで描くか
 		SHADER_PARAMETER(uint32, bToonReflectionOutline)
 		SHADER_PARAMETER(uint32, bToonReflectionCharacters)
