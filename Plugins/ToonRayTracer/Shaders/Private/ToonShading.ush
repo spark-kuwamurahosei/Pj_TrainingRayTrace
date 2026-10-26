@@ -426,7 +426,7 @@ bool IsToonShadowRayVisible(float3 Origin, float3 Direction, bool bIgnoreBackFac
 // どれか 1 本でも光が届けば、光が届くとみなす（太いシャドウレイ）
 // 太さの 2 倍ほどより細い物（髪の毛先、細い棒など）の影は消え、大きな影は輪郭が少し内側に寄って単純な形になる
 // （ちらつく小さな影のない、セル画のくっきりした影にする。シャドウマップの影では、影の形を絵に合わせてこのように単純にできない）
-// ずらす向きはフレームごとに回し、蓄積や TSR で平均する
+// ずらす向きは決まった向きにする（フレームごとに回すと、影の縁がちらつくため）
 #define TOON_SHADOW_SIMPLIFY_SAMPLES 4
 bool IsToonShadowRayVisibleSimplified(float3 Origin, float3 Direction, bool bIgnoreBackFaces, bool bIgnoreSelf, uint IgnoreObjectId, float Rotation, float Radius)
 {
@@ -467,7 +467,8 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 	float SimplifyRadius = GetToonShadowSimplifyRadius(Rec.Material.Character);
 	bool bSimplify = SimplifyRadius > 0.0f
 		&& (ToonShadowSimplify == 2 || (ToonShadowSimplify == 1 && Rec.Material.bCharacter != 0));
-	float SimplifyRotation = bSimplify ? ToonRandomFloat(RandomState) : 0.0f;
+	// ずらす向きも決まった向きにする（フレームごとに回すと、影の縁がちらつくため）
+	float SimplifyRotation = 0.125f;
 
 	float VisibleSum = 0.0f;
 	[loop]
@@ -640,7 +641,10 @@ bool IsOccludedWithin(float3 Origin, float3 Direction, float MaxT)
 // アニメ塗りの 2 段階の影：あごの下・襟の中・髪の内側など奥まった場所に、普通の影（1 影）よりもう一段暗い影を入れる
 // 面から法線の側へコサイン分布で短いレイ（ToonDeepShadowDistance）を飛ばし、遮られた割合がしきい値を超えた場所を 2 影にする
 // 画面に映っているものしか見ない SSAO と違い、画面の外の形やキャラクター自身の体も含めて判定するので、境目が安定する
-// 方位角は等分してずらし（層化）、高さは乱数で選ぶ。フレームごとに向きが変わり、蓄積や TSR で平均されて境目がなめらかになる
+// レイの向きは乱数を使わず、決まった向き（高さは等分、方位角は黄金角ずつ回す）にする
+// フレームごとに向きを変えると、しきい値で区切る 2 影はピクセルごとに 0 と 1 が入れ替わり、TSR で平均しきれずにざらついたノイズになるため
+// 決まった向きなら、となりのピクセルも同じ向きで調べるので、結果がそろって境目が安定する
+#define TOON_GOLDEN_ANGLE 2.39996323f
 float ComputeToonDeepShadow(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
 	float Distance = GetToonDeepShadowDistance(Rec.Material.Character);
@@ -657,13 +661,12 @@ float ComputeToonDeepShadow(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 	float3 Origin = Rec.Position + GeometricNormal * ToonShadowBias;
 	FToonOnb Onb = MakeOnb(Rec.Normal);
 	uint NumSamples = clamp(ToonDeepShadowSamples, 1u, 16u);
-	float PhiOffset = ToonRandomFloat(RandomState);
 	float Blocked = 0.0f;
 	[loop]
 	for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
 	{
-		float R2 = ToonRandomFloat(RandomState);
-		float Phi = 2.0f * PI * frac(((float)SampleIndex + PhiOffset) / (float)NumSamples);
+		float R2 = ((float)SampleIndex + 0.5f) / (float)NumSamples;
+		float Phi = TOON_GOLDEN_ANGLE * (float)SampleIndex;
 		float SinTheta = sqrt(R2);
 		float3 Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, sqrt(max(1.0f - R2, 0.0f)))));
 		// 滑らかな法線とポリゴンの向きがずれて、自分の面の裏へ向かうレイは数えない（遮られていない扱い）
@@ -687,7 +690,7 @@ static float ToonCameraCrease = 0.0f;
 // 面に沿った向き（面から ToonCreaseLift だけ持ち上げた向き）へ短いレイ（ToonCreaseDistance）を飛ばし、
 // すぐ近くに面があれば、へこんだ角のそばとみなす。平らな面や外へふくらんだ面では、面に沿ったレイはどこにも当たらない
 // 今のアウトラインは輪郭や物体の境目、カメラから見た段差でしか線を引けないため、同じ物体の中の浅いしわを補う
-// 方位角は等分してずらし（層化）、フレームごとに回して、蓄積や TSR で平均する
+// 方位角は乱数を使わずに等分する（フレームごとに回すと、線がピクセルごとにちらついてざらついたノイズになるため。2 影と同じ）
 float ComputeToonCrease(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
 	float Distance = GetToonCreaseDistance(Rec.Material.Character);
@@ -695,8 +698,9 @@ float ComputeToonCrease(FToonHitRecord Rec, float3 GeometricNormal, inout uint R
 	{
 		return 0.0f;
 	}
-	// 1：キャラクターだけ。顔（鼻や唇の小さな凹凸）と目は除く
-	if (ToonCrease == 1 && (Rec.Material.bCharacter == 0 || Rec.Material.bFace != 0 || Rec.Material.bEye != 0))
+	// 1：キャラクターだけ。顔（鼻や唇の小さな凹凸）と目、髪は除く
+	// 髪は毛の束が何枚も重なっているため、面に沿ったレイがとなりの束に当たり、束のすき間がくぼみとみなされて、黒いまだらな筋になる
+	if (ToonCrease == 1 && (Rec.Material.bCharacter == 0 || Rec.Material.bFace != 0 || Rec.Material.bEye != 0 || Rec.Material.bHair != 0))
 	{
 		return 0.0f;
 	}
@@ -706,11 +710,10 @@ float ComputeToonCrease(FToonHitRecord Rec, float3 GeometricNormal, inout uint R
 	float Lift = saturate(ToonCreaseLift);
 	float Along = sqrt(max(1.0f - Lift * Lift, 0.0f));
 	uint NumSamples = clamp(ToonCreaseSamples, 1u, 16u);
-	float PhiOffset = ToonRandomFloat(RandomState);
 	[loop]
 	for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
 	{
-		float Phi = 2.0f * PI * ((float)SampleIndex + PhiOffset) / (float)NumSamples;
+		float Phi = 2.0f * PI * ((float)SampleIndex + 0.5f) / (float)NumSamples;
 		float3 Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * Along, sin(Phi) * Along, Lift)));
 		if (dot(Direction, GeometricNormal) > 0.0f && IsOccludedWithin(Origin, Direction, Distance))
 		{
