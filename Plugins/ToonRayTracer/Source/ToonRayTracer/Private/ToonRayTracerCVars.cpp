@@ -157,13 +157,13 @@ namespace ToonRayTracerCVars
 
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonCrease(
 		TEXT("r.ToonRayTracer.Toon.Crease"),
-		1,
+		0,
 		TEXT("Crease lines: ink lines in concave corners (cloth folds, collar folds, between fingers), found with short rays along the surface. 0: off, 1: characters only (not the face or eyes), 2: all surfaces"),
 		ECVF_RenderThreadSafe);
 
 	TAutoConsoleVariable<float> CVarToonRayTracerToonCreaseDistance(
 		TEXT("r.ToonRayTracer.Toon.CreaseDistance"),
-		20.0f,
+		60.0f,
 		TEXT("Crease lines: length (cm) of the rays along the surface. Roughly the width of the line"),
 		ECVF_RenderThreadSafe);
 
