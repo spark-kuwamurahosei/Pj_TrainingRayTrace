@@ -314,6 +314,21 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 // 光が届く割合（0 ～ 1）を返す。影を落とす物体から離れるほど、影の境目がぼける（半影）
 // 円錐の中の方向は、本の random_to_sphere と同じく一様に選ぶ。回転方向はサンプルごとに均等に散らし（層化）、ノイズを減らす
 // 乱数はフレームごとに変わり、蓄積や TSR で平均されてなめらかになる
+// 2 影・くぼみの線・影の形を整える太さの距離（cm）
+// キャラクターは、両目の間の距離（大きさの基準との比、またはプロファイルの倍率）に合わせた値を使う。キャラクター以外は全体の設定のまま
+float GetToonDeepShadowDistance(int Character)
+{
+	return Character >= 0 ? ToonCharacterParams3[Character].x : ToonDeepShadowDistance;
+}
+float GetToonCreaseDistance(int Character)
+{
+	return Character >= 0 ? ToonCharacterParams3[Character].y : ToonCreaseDistance;
+}
+float GetToonShadowSimplifyRadius(int Character)
+{
+	return Character >= 0 ? ToonCharacterParams3[Character].z : ToonShadowSimplifyRadius;
+}
+
 // シャドウレイ 1 本で光が届くか（自分自身を通り抜けるかどうかで使い分ける）
 bool IsToonShadowRayVisible(float3 Origin, float3 Direction, bool bIgnoreBackFaces, bool bIgnoreSelf, uint IgnoreObjectId)
 {
@@ -326,7 +341,7 @@ bool IsToonShadowRayVisible(float3 Origin, float3 Direction, bool bIgnoreBackFac
 // （ちらつく小さな影のない、セル画のくっきりした影にする。シャドウマップの影では、影の形を絵に合わせてこのように単純にできない）
 // ずらす向きはフレームごとに回し、蓄積や TSR で平均する
 #define TOON_SHADOW_SIMPLIFY_SAMPLES 4
-bool IsToonShadowRayVisibleSimplified(float3 Origin, float3 Direction, bool bIgnoreBackFaces, bool bIgnoreSelf, uint IgnoreObjectId, float Rotation)
+bool IsToonShadowRayVisibleSimplified(float3 Origin, float3 Direction, bool bIgnoreBackFaces, bool bIgnoreSelf, uint IgnoreObjectId, float Rotation, float Radius)
 {
 	if (IsToonShadowRayVisible(Origin, Direction, bIgnoreBackFaces, bIgnoreSelf, IgnoreObjectId))
 	{
@@ -337,7 +352,7 @@ bool IsToonShadowRayVisibleSimplified(float3 Origin, float3 Direction, bool bIgn
 	for (uint Index = 0; Index < TOON_SHADOW_SIMPLIFY_SAMPLES; ++Index)
 	{
 		float Phi = 2.0f * PI * ((float)Index + Rotation) / (float)TOON_SHADOW_SIMPLIFY_SAMPLES;
-		float3 Offset = OnbTransform(Onb, float3(cos(Phi), sin(Phi), 0.0f)) * ToonShadowSimplifyRadius;
+		float3 Offset = OnbTransform(Onb, float3(cos(Phi), sin(Phi), 0.0f)) * Radius;
 		if (IsToonShadowRayVisible(Origin + Offset, Direction, bIgnoreBackFaces, bIgnoreSelf, IgnoreObjectId))
 		{
 			return true;
@@ -362,7 +377,8 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 	bool bGlassTransmittance = ToonGlassShadowOpacity < 1.0f;
 
 	// 影の形を整える（1：キャラクターに落ちる影だけ、2：すべての面）
-	bool bSimplify = ToonShadowSimplifyRadius > 0.0f
+	float SimplifyRadius = GetToonShadowSimplifyRadius(Rec.Material.Character);
+	bool bSimplify = SimplifyRadius > 0.0f
 		&& (ToonShadowSimplify == 2 || (ToonShadowSimplify == 1 && Rec.Material.bCharacter != 0));
 	float SimplifyRotation = bSimplify ? ToonRandomFloat(RandomState) : 0.0f;
 
@@ -385,7 +401,7 @@ float ComputeToonShadowVisibility(FToonHitRecord Rec, float3 ShadowOrigin, bool 
 		}
 		else if (bSimplify)
 		{
-			VisibleSum += IsToonShadowRayVisibleSimplified(ShadowOrigin, Direction, bIgnoreBackFaces, bIgnoreSelf, Rec.ObjectId, SimplifyRotation) ? 1.0f : 0.0f;
+			VisibleSum += IsToonShadowRayVisibleSimplified(ShadowOrigin, Direction, bIgnoreBackFaces, bIgnoreSelf, Rec.ObjectId, SimplifyRotation, SimplifyRadius) ? 1.0f : 0.0f;
 		}
 		else
 		{
@@ -540,7 +556,8 @@ bool IsOccludedWithin(float3 Origin, float3 Direction, float MaxT)
 // 方位角は等分してずらし（層化）、高さは乱数で選ぶ。フレームごとに向きが変わり、蓄積や TSR で平均されて境目がなめらかになる
 float ComputeToonDeepShadow(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
-	if (ToonDeepShadow == 0 || ToonDeepShadowDistance <= 0.0f)
+	float Distance = GetToonDeepShadowDistance(Rec.Material.Character);
+	if (ToonDeepShadow == 0 || Distance <= 0.0f)
 	{
 		return 0.0f;
 	}
@@ -563,7 +580,7 @@ float ComputeToonDeepShadow(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 		float SinTheta = sqrt(R2);
 		float3 Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * SinTheta, sin(Phi) * SinTheta, sqrt(max(1.0f - R2, 0.0f)))));
 		// 滑らかな法線とポリゴンの向きがずれて、自分の面の裏へ向かうレイは数えない（遮られていない扱い）
-		if (dot(Direction, GeometricNormal) > 0.0f && IsOccludedWithin(Origin, Direction, ToonDeepShadowDistance))
+		if (dot(Direction, GeometricNormal) > 0.0f && IsOccludedWithin(Origin, Direction, Distance))
 		{
 			Blocked += 1.0f;
 		}
@@ -586,7 +603,8 @@ static float ToonCameraCrease = 0.0f;
 // 方位角は等分してずらし（層化）、フレームごとに回して、蓄積や TSR で平均する
 float ComputeToonCrease(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
-	if (ToonCrease == 0 || ToonCreaseStrength <= 0.0f || ToonCreaseDistance <= 0.0f)
+	float Distance = GetToonCreaseDistance(Rec.Material.Character);
+	if (ToonCrease == 0 || ToonCreaseStrength <= 0.0f || Distance <= 0.0f)
 	{
 		return 0.0f;
 	}
@@ -607,7 +625,7 @@ float ComputeToonCrease(FToonHitRecord Rec, float3 GeometricNormal, inout uint R
 	{
 		float Phi = 2.0f * PI * ((float)SampleIndex + PhiOffset) / (float)NumSamples;
 		float3 Direction = normalize(OnbTransform(Onb, float3(cos(Phi) * Along, sin(Phi) * Along, Lift)));
-		if (dot(Direction, GeometricNormal) > 0.0f && IsOccludedWithin(Origin, Direction, ToonCreaseDistance))
+		if (dot(Direction, GeometricNormal) > 0.0f && IsOccludedWithin(Origin, Direction, Distance))
 		{
 			return ToonCreaseStrength;
 		}

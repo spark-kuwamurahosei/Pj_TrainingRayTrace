@@ -90,6 +90,9 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 	const float GlobalSeeThroughDistance = FMath::Max(CVarToonRayTracerToonSeeThroughDistance.GetValueOnGameThread(), 0.0f);
 	const float GlobalEyeHighlightSearchRadius = FMath::Max(CVarToonRayTracerToonEyeHighlightSearchRadius.GetValueOnGameThread(), 0.0f);
 	const float GlobalHairShadowDistance = FMath::Max(CVarToonRayTracerToonHairShadowDistance.GetValueOnGameThread(), 0.0f);
+	const float GlobalDeepShadowDistance = FMath::Max(CVarToonRayTracerToonDeepShadowDistance.GetValueOnGameThread(), 0.01f);
+	const float GlobalCreaseDistance = FMath::Max(CVarToonRayTracerToonCreaseDistance.GetValueOnGameThread(), 0.01f);
+	const float GlobalShadowSimplifyRadius = FMath::Max(CVarToonRayTracerToonShadowSimplifyRadius.GetValueOnGameThread(), 0.0f);
 
 	for (TObjectIterator<USkeletalMeshComponent> It; It && OutFaces.Num() < FToonRayGenShader::MaxFaces; ++It)
 	{
@@ -182,6 +185,11 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 			GetWidth(Profile ? Profile->SeeThroughDistance : 0.0f, GlobalSeeThroughDistance),
 			GetWidth(Profile ? Profile->EyeHighlightSearchRadius : 0.0f, GlobalEyeHighlightSearchRadius),
 			GetWidth(Profile ? Profile->HairShadowDistance : 0.0f, GlobalHairShadowDistance));
+		Face.Params3 = FVector4f(
+			GetWidth(Profile ? Profile->DeepShadowDistance : 0.0f, GlobalDeepShadowDistance),
+			GetWidth(Profile ? Profile->CreaseDistance : 0.0f, GlobalCreaseDistance),
+			GetWidth(Profile ? Profile->ShadowSimplifyRadius : 0.0f, GlobalShadowSimplifyRadius),
+			0.0f);
 
 		// 見た目の上書きと、キャラクターの番号
 		Face.CharacterId = Character ? Character->GetCharacterId() : 0;

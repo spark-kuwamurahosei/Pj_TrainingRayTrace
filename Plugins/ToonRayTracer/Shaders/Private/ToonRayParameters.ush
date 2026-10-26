@@ -331,6 +331,8 @@ uint4 ToonCharacterSlots2[TOON_MAX_FACES];
 uint4 ToonCharacterSlots3[TOON_MAX_FACES];
 float4 ToonCharacterParams[TOON_MAX_FACES];
 float4 ToonCharacterParams2[TOON_MAX_FACES];
+// x：2 影の調べる距離（cm）、y：くぼみの線の調べる距離（cm）、z：影の形を整える太さ（cm）。キャラクターの大きさに合わせて拡大縮小済み
+float4 ToonCharacterParams3[TOON_MAX_FACES];
 // キャラクターごとの見た目（全体の設定と組み合わせ済み）。GetToonCharacterLook を参照
 float4 ToonCharacterLook0[TOON_MAX_FACES];
 float4 ToonCharacterLook1[TOON_MAX_FACES];

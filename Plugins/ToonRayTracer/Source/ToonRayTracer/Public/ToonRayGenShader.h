@@ -287,6 +287,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots3, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams2, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams3, [MaxFaces])
 		// キャラクターごとの見た目（全体の設定と組み合わせ済み）
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook0, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterLook1, [MaxFaces])
