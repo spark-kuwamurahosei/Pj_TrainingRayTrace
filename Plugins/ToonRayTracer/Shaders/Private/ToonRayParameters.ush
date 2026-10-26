@@ -226,6 +226,13 @@ float ToonCharacterRimWidth;
 // ・ToonDeepShadowBrightness：2 影の明るさ（影の色に掛ける倍率）
 // ・ToonDeepShadowLit：明るい面のくぼみを普通の影にする割合
 uint bToonCharacterRimShadow;
+// トゥーンのコースティクス
+// ・bToonCaustics：1 なら、ガラスの物体が後ろの面に集めた光の模様を描く
+// ・ToonCausticStrength：1 段階ごとに足す明るさ（明るい面の色に掛ける）
+// ・ToonCausticThreshold：ガラスが光を集める割合がこれを超えた場所を 1 段階目、3 倍を超えた場所を 2 段階目にする
+uint bToonCaustics;
+float ToonCausticStrength;
+float ToonCausticThreshold;
 // 映ったキャラクターに掛ける金属の色の割合（1 なら金属の色をそのまま掛ける）
 #define TOON_REFLECTION_CHARACTER_TINT 0.5f
 // 鏡に映ったキャラクターをトゥーンで描くピクセルの広げ幅（ピクセル）

@@ -203,6 +203,24 @@ namespace ToonRayTracerCVars
 		TEXT("With CharacterOnly, also paints characters reflected in mirror-like metal surfaces with toon shading and outlines (pixels whose reflection hits a character are drawn by the toon pass instead of the normal rendering) (1: on, 0: off)"),
 		ECVF_RenderThreadSafe);
 
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonCaustics(
+		TEXT("r.ToonRayTracer.Toon.Caustics"),
+		1,
+		TEXT("Toon caustics: bright light patterns that glass objects focus onto surfaces behind them, drawn in crisp steps. Found by tracing the light path backward from the surface through the glass (1: on, 0: off)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonCausticStrength(
+		TEXT("r.ToonRayTracer.Toon.CausticStrength"),
+		0.6f,
+		TEXT("Toon caustics: brightness added per step (multiplied by the lit color)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonCausticThreshold(
+		TEXT("r.ToonRayTracer.Toon.CausticThreshold"),
+		1.5f,
+		TEXT("Toon caustics: how much the glass must concentrate the light (ratio to direct light) to start the pattern. The second step starts at three times this value"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterRimShadow(
 		TEXT("r.ToonRayTracer.Toon.CharacterRimShadow"),
 		1,

@@ -216,6 +216,93 @@ float ToonShadowTransmittance(float3 Origin, float3 Direction, bool bIgnoreBackF
 	return Transmittance;
 }
 
+// トゥーンのコースティクス（ガラスが集めた光の模様）
+// 光源の側から光をたどる本来の方法は重いため、模様が落ちる面（Origin）から、光の道すじを逆向きにたどる
+// ・ExitToonCausticDirection：Origin から Direction へ進み、ガラスの面に当たるたびに屈折させて、すべてのガラスを出た後の向きを求める
+//   （中が空洞のガラスの球のように、面が何枚あってもよい。ガラスを 1 枚も通らない、ガラス以外の物に遮られる、
+//     ガラスの中で全反射する、などで求まらなければ false）
+#define TOON_CAUSTIC_ITERATIONS 6
+#define TOON_CAUSTIC_JACOBIAN_EPSILON 0.003f
+#define TOON_CAUSTIC_MAX_SURFACES 8
+bool ExitToonCausticDirection(float3 Origin, float3 Direction, out float3 ExitDirection)
+{
+	ExitDirection = Direction;
+	FToonRay Ray;
+	Ray.Origin = Origin;
+	Ray.Direction = Direction;
+	bool bThroughGlass = false;
+	[loop]
+	for (uint Surface = 0; Surface < TOON_CAUSTIC_MAX_SURFACES; ++Surface)
+	{
+		FToonHitRecord Rec = (FToonHitRecord)0;
+		// ポリゴンのメッシュの球でも光の模様が角ばらないよう、映り込みと同じなめらかな法線を使う
+		if (!HitAnything(Ray, TOON_RAY_TMIN, Rec, ReflectionNormalSmoothing))
+		{
+			// 空に抜けた（光源まで遮るものがない）
+			ExitDirection = Ray.Direction;
+			return bThroughGlass;
+		}
+		if (Rec.Material.Type != TOON_MATERIAL_DIELECTRIC)
+		{
+			return false;
+		}
+		// 法線はレイと逆向きにそろっている。表から入るときは 1 / 屈折率、裏から出るときは屈折率（本の dielectric と同じ）
+		float Ri = Rec.bFrontFace ? (1.0f / Rec.Material.RefractionIndex) : Rec.Material.RefractionIndex;
+		float3 Refracted = refract(Ray.Direction, Rec.Normal, Ri);
+		if (all(Refracted == 0.0f))
+		{
+			return false;
+		}
+		Ray.Origin = Rec.Position;
+		Ray.Direction = normalize(Refracted);
+		bThroughGlass = true;
+	}
+	return false;
+}
+
+// コースティクスの段階（0：なし、1、2）
+// 1. 光源の方向から始めて、ガラスを出た後の向きが光源の方向に合うよう、最初の向きを少しずつ直す（光が実際に通ってくる道すじを探す）
+// 2. 最初の向きを 2 方向へ少しずらしたときの、出た後の向きの広がり方から、ガラスが光を集める割合（直接の光に対する倍率）を求める
+//    （出た後の向きの広がりが小さいほど、広い範囲の光がこの点に集まっている）
+// 3. 集める割合をしきい値で 2 段階に区切り、トゥーンのくっきりした光の模様にする
+float ComputeToonCaustic(FToonHitRecord Rec, float3 GeometricNormal)
+{
+	if (bToonCaustics == 0 || bHasDirectionalLight == 0 || dot(GeometricNormal, ToLightDirection) <= 0.0f || Rec.Material.Type == TOON_MATERIAL_DIELECTRIC)
+	{
+		return 0.0f;
+	}
+	float3 Origin = Rec.Position + GeometricNormal * ToonShadowBias;
+	float3 Direction = ToLightDirection;
+	float3 Exit;
+	[loop]
+	for (uint Iteration = 0; Iteration < TOON_CAUSTIC_ITERATIONS; ++Iteration)
+	{
+		if (!ExitToonCausticDirection(Origin, Direction, Exit))
+		{
+			return 0.0f;
+		}
+		Direction = normalize(Direction + (ToLightDirection - Exit));
+	}
+	if (!ExitToonCausticDirection(Origin, Direction, Exit) || dot(Exit, ToLightDirection) < min(ToonSoftShadowCosAngle, cos(radians(4.0f))))
+	{
+		return 0.0f;
+	}
+
+	FToonOnb Onb = MakeOnb(Direction);
+	float3 ExitU;
+	float3 ExitV;
+	if (!ExitToonCausticDirection(Origin, normalize(Direction + Onb.U * TOON_CAUSTIC_JACOBIAN_EPSILON), ExitU)
+		|| !ExitToonCausticDirection(Origin, normalize(Direction + Onb.V * TOON_CAUSTIC_JACOBIAN_EPSILON), ExitV))
+	{
+		return 0.0f;
+	}
+	float Spread = length(cross(ExitU - Exit, ExitV - Exit)) / (TOON_CAUSTIC_JACOBIAN_EPSILON * TOON_CAUSTIC_JACOBIAN_EPSILON);
+	// 表面で少し反射する分（入るときと出るとき）を引いた、ガラスを通り抜ける光の割合
+	const float Transmission = 0.9f;
+	float Concentration = Transmission / max(Spread, 1.0e-4f);
+	return Concentration >= ToonCausticThreshold * 3.0f ? 2.0f : (Concentration >= ToonCausticThreshold ? 1.0f : 0.0f);
+}
+
 // トゥーン T6：アウトライン
 // カメラレイの上下左右に、線の太さ分だけずらした補助レイを飛ばし、次の場合に線を引く（1 なら線、0 なら線なし）
 //   ・補助レイが空に抜けた（物体の輪郭）
@@ -930,6 +1017,11 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	OutLightLevel = LightLevel;
 	float3 Color = lerp(ShadowColor, LitColor, LightLevel);
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
+	// トゥーンのコースティクス：ガラスが集めた光の模様を、段階ごとに明るい面の色で足す（カメラから見える面だけ）
+	if (bIndirect)
+	{
+		Color += LitColor * (ComputeToonCaustic(Rec, GeometricNormal) * ToonCausticStrength);
+	}
 	Color += ComputeToonRim(Rec, Ray, LightLevel);
 	// 髪の帯状のハイライト（天使の輪）：明るい面の色をさらに明るくした色で塗る（白く飛ばさず、髪の色みを残す）
 	Color = lerp(Color, LitColor * 1.6f + ToonLightColor * 0.15f, ComputeToonHairHighlight(Rec, Ray, LightLevel));

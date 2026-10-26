@@ -4,10 +4,13 @@
 #   L_ToonRT_Materials  素材の検証。メッシュごとの設定（Custom Primitive Data）の見本を並べる
 #   L_ToonRT_Character  キャラクターの検証。キャラクターを置く場所と、正面・斜め・横・見下ろしのカメラを置いた舞台
 #   L_ToonRT_Analytic   解析的な物体のシーン（r.ToonRayTracer.TraceMode 0）の検証。シーンごとに本のカメラに相当するカメラを置く
+#   L_ToonRT_Caustics   トゥーンのコースティクスの検証。ガラスの棒と球を置き、後ろから斜めに光を当てる
 #
 # 実行例（エディタのコンソール。今開いているレベルは先に保存しておく。既にあるレベルは中身を消して作り直す）:
 #   py "D:/Pj_TrainingRayTrace/Plugins/ToonRayTracer/Scripts/create_sample_levels.py"
 # 作り終えたら、実行前に開いていたレベルに戻る
+# 環境変数 TOON_SAMPLE_LEVELS に名前（Materials,Character,Analytic,Caustics）をカンマ区切りで入れると、そのレベルだけ作る
+import os
 import unreal
 
 MAP_PATH = "/ToonRayTracer/Maps"
@@ -184,8 +187,36 @@ def create_analytic_level():
     return path
 
 
+# ---- トゥーンのコースティクスの検証 ----
+def create_caustics_level():
+    path = new_level("L_ToonRT_Caustics")
+    # 光は物体の後ろ（+X）から手前（カメラの側）へ斜めに当て、ガラスの影と光の模様が手前の床に落ちるようにする
+    environment(sun_rotation=(0.0, -55.0, 180.0))
+    floor()
+    mesh("Wall_Back", CUBE, (700.0, 0.0, 200.0), (0.2, 16.0, 4.0), folder="Stage")
+
+    glass = [3, 1, 1, 1, 0, 1.5, 0, 0, 0, 1]
+    stand = [1, 0.55, 0.45, 0.35]
+    # ガラスの棒（横にした円柱）：光が 1 本のまっすぐな線に集まる
+    # 屈折率 1.5 の円柱の焦点は、中心から半径の約 1.5 倍の距離。光の向き（ピッチ -55）に沿った床までの距離がこれに近くなるよう、
+    # 半径 20cm の棒を、中心の高さ 25cm（床から 5cm 浮かせる）に置く
+    # Cylinder は直径 100cm・高さ 100cm。X 軸のまわりに 90 度回して、Y の向きに寝かせる
+    mesh("Caustic_GlassRod", CYLINDER, (250.0, -350.0, 25.0), (0.4, 0.4, 2.6), rotation=(90.0, 0.0, 0.0), data=glass, folder="Samples")
+    for side in (-1.0, 1.0):
+        mesh("Caustic_GlassRod_Stand%d" % (0 if side < 0 else 1), CUBE, (250.0, -350.0 + side * 145.0, 2.5), (0.3, 0.2, 0.05), data=stand, folder="Samples")
+    # ガラスの球（比べる用）：小さな光の点に集まる（床に置いた球では、床が焦点の近くになるため、模様は小さい）
+    mesh("Caustic_GlassSphere", SPHERE, (250.0, 150.0, 50.0), (1.0, 1.0, 1.0), data=glass, folder="Samples")
+
+    camera("Cam_Caustics", (-250.0, -100.0, 330.0), look_at(unreal.Vector(-250.0, -100.0, 330.0), unreal.Vector(230.0, -100.0, 0.0)))
+    camera("Cam_Caustics_Rod", (80.0, -350.0, 200.0), look_at(unreal.Vector(80.0, -350.0, 200.0), unreal.Vector(220.0, -350.0, 0.0)))
+    les.save_current_level()
+    return path
+
+
 original = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world().get_path_name().split(".")[0]
-created = [create_materials_level(), create_character_level(), create_analytic_level()]
+builders = {"Materials": create_materials_level, "Character": create_character_level, "Analytic": create_analytic_level, "Caustics": create_caustics_level}
+selected = [name.strip() for name in os.environ.get("TOON_SAMPLE_LEVELS", "").split(",") if name.strip()] or list(builders.keys())
+created = [builders[name]() for name in selected]
 if original and not original.startswith("/Temp/"):
     les.load_level(original)
 unreal.log("TOON_SAMPLE_LEVELS created: " + ", ".join(created))
