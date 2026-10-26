@@ -24,6 +24,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 {
 	ToonGlowSample = 0.0f;
 	ToonCameraCrease = 0.0f;
+	ToonCameraMetalTint = 1.0f;
 	float3 DebugColor;
 	if (GetToonDebugGeometryColor(CameraRay, DebugColor))
 	{
@@ -39,6 +40,8 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 	float3 Color = 0.0f;
 	// カメラから見えている面に重ねる表現（アウトライン、キャラクターのリムライト、眉毛の透け）
 	FToonCameraOverlay Overlay = GetDefaultCameraOverlay();
+	// カメラから見えている面が鏡のような金属か（映り込みの中の線を引くため）
+	bool bCameraMetal = false;
 
 	// 1本のレイから最大2本に分かれるため、処理するレイの総数にも上限を設ける
 	[loop]
@@ -77,6 +80,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 			{
 				return DebugColor;
 			}
+			bCameraMetal = Rec.Material.Type == TOON_MATERIAL_METAL;
 		}
 		else
 		{
@@ -105,7 +109,20 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 		{
 			// 普通の素材か、反射回数の上限に達した場合は、その場で塗って終わる（黒にはしない）
 			float LightLevel;
-			Color += Current.Throughput * ShadeToonOpaque(Rec, Current.Ray, GeometricNormal, RandomState, bCameraRay, LightLevel);
+			float3 Shaded = ShadeToonOpaque(Rec, Current.Ray, GeometricNormal, RandomState, bCameraRay, LightLevel);
+			// 映り込みの中の線：カメラから見えている金属に、1 回反射して映った物体
+			if (bCameraMetal && Current.Depth == 1)
+			{
+				// 映ったキャラクターには、金属の色を弱めて掛ける（色付きの金属でも、キャラクターの色が分かるように）
+				if (Rec.Material.bCharacter != 0)
+				{
+					float3 Tint = max(ToonCameraMetalTint, 1.0e-3f);
+					Shaded *= lerp(1.0f, Tint, TOON_REFLECTION_CHARACTER_TINT) / Tint;
+				}
+				float3 LineColor;
+				Shaded = lerp(Shaded, LineColor, ToonReflectedOutline(UV, CameraRay, Current.Ray, Rec, LineColor));
+			}
+			Color += Current.Throughput * Shaded;
 			if (bCameraRay)
 			{
 				ApplyToonCameraLighting(Rec, LightLevel, Overlay);
@@ -141,11 +158,62 @@ float3 RayColor(float2 UV, FToonRay Ray, inout uint RandomState)
 // Original ルック フェーズ1：画面上の UV の位置で、カメラから見えている物体をトゥーンで塗るかどうか（キャラだけトゥーンにするとき）
 // キャラクター（GetSceneMaterial の bCharacter）だけをトゥーンで塗る
 // アウトラインは手前の物体の側に引かれるため、キャラの輪郭の線もキャラのピクセルに収まる
+// 金属の色が白～灰色に近い（色みが少ない）か。銀色の鏡のような金属だけ、映ったキャラクターをトゥーンで描く
+// 緑の球のような色付きの金属は、映り込み全体に金属の色が強く掛かり、キャラクターだけトゥーンにすると周りの通常の描画の反射から浮くため、通常の描画のままにする
+bool IsNeutralMirrorColor(float3 Color)
+{
+	float MaxChannel = max(Color.r, max(Color.g, Color.b));
+	float MinChannel = min(Color.r, min(Color.g, Color.b));
+	return MaxChannel > 1.0e-3f && (MaxChannel - MinChannel) / MaxChannel <= TOON_REFLECTION_NEUTRAL_SATURATION;
+}
+
+// 鏡のような金属のピクセル（UV）で反射したレイの先がキャラクターか
+bool IsCharacterReflectedAt(float2 UV)
+{
+	FToonRay Ray = GenerateCameraRay(UV);
+	FToonHitRecord Rec = (FToonHitRecord)0;
+	if (!HitCameraVisible(Ray, UV, Rec, false))
+	{
+		return false;
+	}
+	ApplyGBufferSurface(UV, Ray, Rec);
+	if (Rec.Material.Type != TOON_MATERIAL_METAL || !IsNeutralMirrorColor(Rec.Material.Albedo))
+	{
+		return false;
+	}
+	FToonRay Reflected;
+	Reflected.Origin = Rec.Position;
+	Reflected.Direction = reflect(Ray.Direction, Rec.Normal);
+	FToonHitRecord ReflectedRec = (FToonHitRecord)0;
+	return HitAnything(Reflected, TOON_RAY_TMIN, ReflectedRec, 0.0f, false) && ReflectedRec.Material.bCharacter != 0;
+}
+
 bool IsToonTargetPixel(float2 UV)
 {
 	FToonRay Ray = GenerateCameraRay(UV);
 	FToonHitRecord Rec = (FToonHitRecord)0;
-	return HitCameraVisible(Ray, UV, Rec, false) && Rec.Material.bCharacter != 0;
+	if (!HitCameraVisible(Ray, UV, Rec, false))
+	{
+		return false;
+	}
+	if (Rec.Material.bCharacter != 0)
+	{
+		return true;
+	}
+	// 鏡に映ったキャラクター：鏡のような金属のピクセルで、反射したレイの先がキャラクターなら、トゥーンで描く
+	// （通常の描画では、鏡に映ったキャラクターは Lumen の反射になり、トゥーンの塗りや線が入らないため）
+	// 通常の描画の反射のにじみを覆うため、となりのピクセルの映り込みも調べる
+	if (bToonReflectionCharacters != 0)
+	{
+		ApplyGBufferSurface(UV, Ray, Rec);
+		if (Rec.Material.Type == TOON_MATERIAL_METAL)
+		{
+			float2 Offset = TOON_REFLECTION_TARGET_DILATE_PIXELS / (float2)ViewRectSize;
+			return IsCharacterReflectedAt(UV) || IsCharacterReflectedAt(UV + float2(Offset.x, 0.0f)) || IsCharacterReflectedAt(UV - float2(Offset.x, 0.0f))
+				|| IsCharacterReflectedAt(UV + float2(0.0f, Offset.y)) || IsCharacterReflectedAt(UV - float2(0.0f, Offset.y));
+		}
+	}
+	return false;
 }
 
 // レイトレーシングのエントリーポイント

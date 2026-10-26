@@ -176,6 +176,14 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "リムライト：光が届く場所だけ", ClampMin = "0", ClampMax = "1"))
 	int32 CharacterRimShadow;
 
+	/** 鏡のような金属に映った物体にも、アウトラインを引く。となりのピクセルの映り込みの先と比べて、輪郭や段差を見つける */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "映り込みの中の線", ClampMin = "0", ClampMax = "1"))
+	int32 ReflectionOutline;
+
+	/** キャラクターだけトゥーンにするとき、鏡のような金属に映ったキャラクターも、トゥーンの塗りと線で描く（映り込みの先がキャラクターのピクセルだけ、通常の描画の代わりにトゥーンで描く） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "鏡に映ったキャラクターもトゥーン", ClampMin = "0", ClampMax = "1"))
+	int32 ReflectionCharacters;
+
 	/** 光に垂直な方向へ「太さ」の分だけずらした点からもシャドウレイを飛ばし、どれか 1 本でも光が届けば明るい面にする。細い物（髪の毛先など）の影は消え、大きな影の輪郭は単純になる。0：なし、1：キャラクターに落ちる影だけ、2：すべての面 */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "影の形を整える", ClampMin = "0", ClampMax = "2"))
 	int32 ShadowSimplify;

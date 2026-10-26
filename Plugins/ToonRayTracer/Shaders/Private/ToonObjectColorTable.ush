@@ -28,6 +28,13 @@ uint ToonSeeThroughPartColorKey(uint InstanceId)
 	return ToonObjectColorKey(InstanceId) | 0x80000000u;
 }
 
+// キャラクターのパーツ（マテリアルスロット）ごとの色のキー：24 ビット目から 7 ビットにスロット番号 + 1 を入れる
+// 映り込みの先でキャラクターが画面外にあるとき、キャラクター全体の平均の色（1 色にくすむ）ではなく、パーツごとの色で塗るため
+uint ToonCharacterSlotColorKey(uint InstanceId, uint Slot)
+{
+	return (ToonObjectColorKey(InstanceId) & 0x00FFFFFFu) | ((min(Slot, 126u) + 1u) << 24);
+}
+
 // キーから最初に調べる要素の番号を求める
 uint ToonObjectColorHash(uint Key)
 {

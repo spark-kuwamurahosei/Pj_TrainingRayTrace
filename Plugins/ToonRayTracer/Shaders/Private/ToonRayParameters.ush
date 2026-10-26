@@ -226,6 +226,18 @@ float ToonCharacterRimWidth;
 // ・ToonDeepShadowBrightness：2 影の明るさ（影の色に掛ける倍率）
 // ・ToonDeepShadowLit：明るい面のくぼみを普通の影にする割合
 uint bToonCharacterRimShadow;
+// 映ったキャラクターに掛ける金属の色の割合（1 なら金属の色をそのまま掛ける）
+#define TOON_REFLECTION_CHARACTER_TINT 0.5f
+// 鏡に映ったキャラクターをトゥーンで描くピクセルの広げ幅（ピクセル）
+// 通常の描画の反射はぼやけていて、映ったキャラクターが一回り大きくにじむため、となりのピクセルの映り込みがキャラクターに当たるピクセルも描く
+#define TOON_REFLECTION_TARGET_DILATE_PIXELS 3.0f
+// 鏡に映ったキャラクターをトゥーンで描く金属の、色みの上限（(最大 - 最小) / 最大）。これより色の濃い金属は、通常の描画の反射のままにする
+#define TOON_REFLECTION_NEUTRAL_SATURATION 0.25f
+
+// ・bToonReflectionOutline：1 なら、鏡のような金属に映った物体にもアウトラインを引く
+// ・bToonReflectionCharacters：1 なら、キャラクターだけトゥーンにするとき、鏡のような金属に映ったキャラクターもトゥーンで描く
+uint bToonReflectionOutline;
+uint bToonReflectionCharacters;
 // 影の形を整える
 // ・ToonShadowSimplify：0 ならなし、1 ならキャラクターに落ちる影だけ、2 ならすべての面
 // ・ToonShadowSimplifyRadius：シャドウレイの太さ（cm）。光に垂直な方向へこれだけずらした点からも飛ばし、どれか 1 本でも光が届けば明るい面にする

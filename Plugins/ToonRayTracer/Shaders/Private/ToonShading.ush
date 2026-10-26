@@ -573,6 +573,9 @@ float ComputeToonDeepShadow(FToonHitRecord Rec, float3 GeometricNormal, inout ui
 	return smoothstep(ToonDeepShadowThreshold - Softness, ToonDeepShadowThreshold + Softness, Occlusion);
 }
 
+// カメラから見えている金属の映り込みに掛かる色（フレネルを含む）。映ったキャラクターでは、この色を弱めて掛ける
+static float3 ToonCameraMetalTint = 1.0f;
+
 // くぼみの線（0 ～ 1）。カメラから見える面で求め、ApplyToonCameraLighting でアウトラインに重ねる
 static float ToonCameraCrease = 0.0f;
 
@@ -1075,7 +1078,15 @@ void ShadeToonReflective(FToonPendingRay Current, FToonHitRecord Rec, float3 Geo
 	if (Rec.Material.Type == TOON_MATERIAL_METAL)
 	{
 		// 金属：くっきりした鏡面反射に、素材の色を掛ける
-		ReflectThroughput = Current.Throughput * Rec.Material.Albedo;
+		// 素材の色は正面から見たときの反射率とし、Schlick の近似で、縁（視線と面が浅い角度）に近いほど白い反射に近づける（フレネル）
+		// 色付きの金属でも、縁では映った物の色が見え、球などの立体感が出る（UE の金属の映り込みと同じ傾向）
+		float CosTheta = saturate(dot(-Current.Ray.Direction, Rec.Normal));
+		float3 Fresnel = Rec.Material.Albedo + (1.0f - Rec.Material.Albedo) * Pow5(1.0f - CosTheta);
+		ReflectThroughput = Current.Throughput * Fresnel;
+		if (Current.Depth == 0)
+		{
+			ToonCameraMetalTint = Fresnel;
+		}
 	}
 	else
 	{

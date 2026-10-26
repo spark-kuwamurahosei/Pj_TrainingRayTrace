@@ -191,6 +191,18 @@ namespace ToonRayTracerCVars
 		TEXT("When drawing before TSR with the inverse tonemap, limits the brightest channel of the toon color (display value, 0-1) to this value. The inverse tonemap makes colors near white extremely bright, so bloom makes them glow; 1 means no limit"),
 		ECVF_RenderThreadSafe);
 
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonReflectionOutline(
+		TEXT("r.ToonRayTracer.Toon.ReflectionOutline"),
+		1,
+		TEXT("Outlines inside mirror reflections: for objects seen in a mirror-like metal surface, compares the reflected hit with the reflections of neighbor pixels and draws the outline (1: on, 0: off)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonReflectionCharacters(
+		TEXT("r.ToonRayTracer.Toon.ReflectionCharacters"),
+		1,
+		TEXT("With CharacterOnly, also paints characters reflected in mirror-like metal surfaces with toon shading and outlines (pixels whose reflection hits a character are drawn by the toon pass instead of the normal rendering) (1: on, 0: off)"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterRimShadow(
 		TEXT("r.ToonRayTracer.Toon.CharacterRimShadow"),
 		1,

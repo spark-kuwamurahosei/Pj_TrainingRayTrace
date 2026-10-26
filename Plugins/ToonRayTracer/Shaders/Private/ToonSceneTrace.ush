@@ -167,6 +167,7 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 	Rec.Material.bFace = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.FaceSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
 	// 髪の帯状のハイライト：当たったパーツが髪か
 	Rec.Material.bHair = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.HairSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
+	Rec.Material.CharacterSlot = Rec.Material.bCharacter != 0 ? GetPayloadGeometryIndex(CenterPayload) : 0xFFFFFFFFu;
 	Rec.Material.bHairHighlightTexture = Rec.Material.bHair != 0 && Parts.bHairHighlightTexture ? 1u : 0u;
 
 	if (!bComputeNormal)
@@ -544,6 +545,8 @@ void RecordObjectColorAtPixel(uint2 LocalPixel)
 	// 前髪の奥に隠れた部分は GBuffer に色がないため、髪の上に塗るときにこの色を使う
 	if (GetSceneMaterial(Payload.InstanceID).bCharacter != 0)
 	{
+		// キャラクターは、パーツ（マテリアルスロット）ごとの色も記録する（画面外の映り込みで使う）
+		RecordObjectColorByKey(ToonCharacterSlotColorKey(Payload.InstanceID, GetPayloadGeometryIndex(Payload)), BaseColor, 1u);
 		FToonCharacterParts Parts = GetToonCharacterParts(Ray.At(Payload.HitT), Payload.InstanceID);
 		if (IsSlotInMask(Parts.SeeThroughSlotMask, GetPayloadGeometryIndex(Payload)))
 		{
@@ -561,7 +564,17 @@ void RecordObjectColorAtPixel(uint2 LocalPixel)
 void ApplyObjectColorFallback(inout FToonHitRecord Rec)
 {
 	float3 Color;
-	if (bUseGBufferBaseColor != 0 && FindObjectColor(Rec.ObjectId, Color))
+	if (bUseGBufferBaseColor == 0)
+	{
+		return;
+	}
+	// キャラクターは、パーツごとの色があればそれを使う（髪・肌・服などが 1 色にくすまない）
+	if (Rec.Material.CharacterSlot != 0xFFFFFFFFu && FindObjectColorByKey(ToonCharacterSlotColorKey(Rec.ObjectId, Rec.Material.CharacterSlot), Color))
+	{
+		Rec.Material.Albedo = Color;
+		return;
+	}
+	if (FindObjectColor(Rec.ObjectId, Color))
 	{
 		Rec.Material.Albedo = Color;
 	}
