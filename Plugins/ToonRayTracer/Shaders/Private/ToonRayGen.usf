@@ -23,6 +23,7 @@
 float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 {
 	ToonGlowSample = 0.0f;
+	ToonCameraCrease = 0.0f;
 	float3 DebugColor;
 	if (GetToonDebugGeometryColor(CameraRay, DebugColor))
 	{
@@ -316,6 +317,12 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	if (ShadingMode != 0 && bBeforeTSR != 0 && bToonInverseTonemap != 0)
 	{
 		float3 DisplayColor = saturate(sqrt(max(Color, 0.0f)));
+		// 白に近い色は、トーンマップの逆で極端に明るい値になり、ブルームで光って見えるため、いちばん明るいチャンネルを上限までに抑える（色みは保つ）
+		float MaxChannel = max(DisplayColor.r, max(DisplayColor.g, DisplayColor.b));
+		if (MaxChannel > ToonBeforeTSRMaxBrightness)
+		{
+			DisplayColor *= ToonBeforeTSRMaxBrightness / MaxChannel;
+		}
 		float ExposureScale = ToonEyeAdaptationExposure > 0.0f ? View.PreExposure / ToonEyeAdaptationExposure : 1.0f;
 		Color = FilmToneMapInverse(sRGBToLinear(DisplayColor)) * ExposureScale;
 

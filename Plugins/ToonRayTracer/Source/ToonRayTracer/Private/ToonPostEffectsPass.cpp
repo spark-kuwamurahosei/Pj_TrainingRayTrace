@@ -107,6 +107,7 @@ void AddToonPostEffectsPasses(FRDGBuilder& GraphBuilder, const FSceneView& View,
 	PostParameters->BloomStrength = BloomStrength;
 	PostParameters->OutputEncoding = Inputs.OutputEncoding;
 	PostParameters->ToonEyeAdaptationExposure = Inputs.EyeAdaptationExposure;
+	PostParameters->ToonBeforeTSRMaxBrightness = Inputs.MaxDisplayBrightness;
 	PostParameters->View = View.ViewUniformBuffer;
 	PostParameters->GradationStrength = GradationStrength;
 	PostParameters->GradationTopColor = FVector3f(Inputs.GradationTopColor.R, Inputs.GradationTopColor.G, Inputs.GradationTopColor.B);

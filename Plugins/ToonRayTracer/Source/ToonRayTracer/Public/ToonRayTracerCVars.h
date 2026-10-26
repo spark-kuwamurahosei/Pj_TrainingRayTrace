@@ -67,6 +67,22 @@ namespace ToonRayTracerCVars
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimStrength;
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimWidth;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterRimShadow;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonShadowSimplify;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonShadowSimplifyRadius;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonCrease;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCreaseDistance;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCreaseLift;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonCreaseSamples;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCreaseStrength;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonBeforeTSRMaxBrightness;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonDeepShadow;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowDistance;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonDeepShadowSamples;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowThreshold;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowSoftness;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowBrightness;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowLit;
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterOutlineColorScale;
 

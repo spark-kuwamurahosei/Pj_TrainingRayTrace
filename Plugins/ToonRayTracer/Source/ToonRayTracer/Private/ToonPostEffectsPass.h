@@ -19,6 +19,8 @@ struct FToonPostEffectsInputs
 	// 出力の色の形式（0：表示の値、1：トーンマップの逆をかけた値、2：線形の色）と、トーンマップで掛かる露出
 	uint32 OutputEncoding = 0;
 	float EyeAdaptationExposure = 0.0f;
+	// トーンマップの逆をかけるとき、表示の値のいちばん明るいチャンネルの上限（RayGen と同じ値）
+	float MaxDisplayBrightness = 1.0f;
 	// 画面の上端・下端で掛けるグラデーションの色
 	FLinearColor GradationTopColor = FLinearColor::White;
 	FLinearColor GradationBottomColor = FLinearColor::White;

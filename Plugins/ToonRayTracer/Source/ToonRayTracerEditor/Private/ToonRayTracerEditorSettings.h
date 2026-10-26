@@ -172,6 +172,70 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "リムライトの幅（ピクセル）", ClampMin = "0.0", UIMin = "0.0", UIMax = "10.0"))
 	float CharacterRimWidth;
 
+	/** リムを入れる点から光の方向へレイを飛ばし、壁やほかのキャラクターなどに遮られていればリムを消す（キャラクター自身は通り抜ける） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "リムライト：光が届く場所だけ", ClampMin = "0", ClampMax = "1"))
+	int32 CharacterRimShadow;
+
+	/** 光に垂直な方向へ「太さ」の分だけずらした点からもシャドウレイを飛ばし、どれか 1 本でも光が届けば明るい面にする。細い物（髪の毛先など）の影は消え、大きな影の輪郭は単純になる。0：なし、1：キャラクターに落ちる影だけ、2：すべての面 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "影の形を整える", ClampMin = "0", ClampMax = "2"))
+	int32 ShadowSimplify;
+
+	/** シャドウレイの太さ（cm）。この 2 倍ほどより細い物は影を落とさない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "影の形を整える：太さ（cm）", ClampMin = "0.0", UIMax = "30.0"))
+	float ShadowSimplifyRadius;
+
+	/** へこんだ角（服のしわ、襟の折り目、指の間など）に線を入れる。面に沿った短いレイで、すぐ近くの面を見つけて判定する。0：なし、1：キャラクターだけ（顔と目は除く）、2：すべての面 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "くぼみの線", ClampMin = "0", ClampMax = "2"))
+	int32 Crease;
+
+	/** 面に沿って飛ばす短いレイの長さ（cm）。おおよそ線の太さになる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "くぼみの線：調べる距離（cm）", ClampMin = "0.01", UIMax = "60.0"))
+	float CreaseDistance;
+
+	/** 面に沿ったレイを、面から持ち上げる角度（sin）。大きいほど深い角だけに線が入る */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "くぼみの線：レイの持ち上げ", ClampMin = "0.0", ClampMax = "0.9", UIMax = "0.9"))
+	float CreaseLift;
+
+	/** 1 ピクセルあたりのレイの本数（1 ～ 16）。向きはフレームごとに変わり、蓄積や TSR で平均される */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "くぼみの線：レイの本数", ClampMin = "1", ClampMax = "16", UIMax = "16.0"))
+	int32 CreaseSamples;
+
+	/** 線の濃さ（0 ～ 1）。色はアウトラインと同じ */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "くぼみの線：濃さ", ClampMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
+	float CreaseStrength;
+
+	/** TSR の前に描くとき、トゥーンの色（画面の値）のいちばん明るいチャンネルをこの値までに抑える。白に近い色はトーンマップの逆で極端に明るくなり、ブルームで光って見えるため。1 なら抑えない */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "TSR の前：明るさの上限", ClampMin = "0.1", ClampMax = "1.0", UIMax = "1.0"))
+	float BeforeTSRMaxBrightness;
+
+	/** 奥まった場所（あごの下、襟の中など）に、もう一段暗い影を入れる。面から短いレイを飛ばし、近くで遮られる割合で決める。0：なし、1：キャラクターだけ（顔と目は除く）、2：すべての面 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "2 影", ClampMin = "0", ClampMax = "2"))
+	int32 DeepShadow;
+
+	/** 遮られ具合を調べる短いレイの長さ（cm）。大きいほど広い範囲のくぼみが 2 影になる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "2 影：調べる距離（cm）", ClampMin = "0.01", UIMax = "100.0"))
+	float DeepShadowDistance;
+
+	/** 1 ピクセルあたりの短いレイの本数（1 ～ 16）。向きはフレームごとに変わり、蓄積や TSR で平均される */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "2 影：レイの本数", ClampMin = "1", ClampMax = "16", UIMax = "16.0"))
+	int32 DeepShadowSamples;
+
+	/** 遮られたレイの割合がこれを超えた場所を 2 影にする（0 ～ 1）。下げるほど広がる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "2 影：しきい値", ClampMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
+	float DeepShadowThreshold;
+
+	/** 2 影の境目のぼかし幅（遮られたレイの割合） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "2 影：境目のぼかし", ClampMin = "0.0", ClampMax = "1.0", UIMax = "0.5"))
+	float DeepShadowSoftness;
+
+	/** 2 影の明るさ（影の色に掛ける倍率。1 なら普通の影と同じ） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "2 影：明るさ", ClampMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
+	float DeepShadowBrightness;
+
+	/** 明るい面のくぼみ（しわの奥など）を、普通の影にする割合（0 なら明るい面は変えない） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "2 影：明るい面のくぼみを影にする", ClampMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
+	float DeepShadowLit;
+
 	/** 線を、黒ではなく素材の色にこの値を掛けた色にする。0 なら全体の線の色 */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "線の色（素材の色の倍率）", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float CharacterOutlineColorScale;

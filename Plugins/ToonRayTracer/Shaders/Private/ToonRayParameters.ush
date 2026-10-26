@@ -218,6 +218,37 @@ float3 ToonSkinShadowColor;
 // ・線の色：キャラクターの線を、黒ではなく素材の色を暗くした色にする倍率（0 なら全体の線の色）
 float ToonCharacterRimStrength;
 float ToonCharacterRimWidth;
+// ・bToonCharacterRimShadow：1 なら、キャラクターのリムライトを、光の方向へのシャドウレイ（キャラクター自身は通り抜ける）で遮られない場所だけに入れる
+// 2 影（奥まった場所のさらに暗い影）
+// ・ToonDeepShadow：0 ならなし、1 ならキャラクターだけ（顔と目は除く）、2 ならすべての面
+// ・ToonDeepShadowDistance / Samples：遮られ具合を調べる短いレイの長さ（cm）と本数
+// ・ToonDeepShadowThreshold / Softness：遮られたレイの割合がこれを超えた場所を 2 影にする。境目のぼかし幅
+// ・ToonDeepShadowBrightness：2 影の明るさ（影の色に掛ける倍率）
+// ・ToonDeepShadowLit：明るい面のくぼみを普通の影にする割合
+uint bToonCharacterRimShadow;
+// 影の形を整える
+// ・ToonShadowSimplify：0 ならなし、1 ならキャラクターに落ちる影だけ、2 ならすべての面
+// ・ToonShadowSimplifyRadius：シャドウレイの太さ（cm）。光に垂直な方向へこれだけずらした点からも飛ばし、どれか 1 本でも光が届けば明るい面にする
+// くぼみの線
+// ・ToonCrease：0 ならなし、1 ならキャラクターだけ（顔と目は除く）、2 ならすべての面
+// ・ToonCreaseDistance / Lift / Samples：面に沿った短いレイの長さ（cm）、面から持ち上げる角度（sin）、本数
+// ・ToonCreaseStrength：線の濃さ（色はアウトラインと同じ）
+// ・ToonBeforeTSRMaxBrightness：TSR の前に描くとき、トゥーンの色（画面の値）のいちばん明るいチャンネルの上限（ブルームで光りすぎないように）
+uint ToonShadowSimplify;
+float ToonShadowSimplifyRadius;
+uint ToonCrease;
+float ToonCreaseDistance;
+float ToonCreaseLift;
+uint ToonCreaseSamples;
+float ToonCreaseStrength;
+float ToonBeforeTSRMaxBrightness;
+uint ToonDeepShadow;
+float ToonDeepShadowDistance;
+uint ToonDeepShadowSamples;
+float ToonDeepShadowThreshold;
+float ToonDeepShadowSoftness;
+float ToonDeepShadowBrightness;
+float ToonDeepShadowLit;
 float ToonCharacterOutlineColorScale;
 // 眉毛の透け：キャラクターの髪の奥（ToonSeeThroughDistance cm 以内）に、Custom Primitive Data の [13] で指定したパーツ（眉毛など）があれば、
 // そのピクセルの色を ToonSeeThroughBrightness 倍に暗くした色を、ToonSeeThroughOpacity の割合で重ねる（0 なら透かさない）

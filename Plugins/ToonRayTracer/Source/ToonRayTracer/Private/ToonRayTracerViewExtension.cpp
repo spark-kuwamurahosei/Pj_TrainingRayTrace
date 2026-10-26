@@ -311,6 +311,22 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const FLinearColor ToonSkinShadowColor = ToonSkinShadowColor_RenderThread;
 	const float ToonCharacterRimStrength = FMath::Max(CVarToonRayTracerToonCharacterRimStrength.GetValueOnRenderThread(), 0.0f);
 	const float ToonCharacterRimWidth = FMath::Max(CVarToonRayTracerToonCharacterRimWidth.GetValueOnRenderThread(), 0.0f);
+	const uint32 ToonShadowSimplify = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonShadowSimplify.GetValueOnRenderThread(), 0, 2));
+	const float ToonShadowSimplifyRadius = FMath::Max(CVarToonRayTracerToonShadowSimplifyRadius.GetValueOnRenderThread(), 0.0f);
+	const uint32 ToonCrease = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonCrease.GetValueOnRenderThread(), 0, 2));
+	const float ToonCreaseDistance = FMath::Max(CVarToonRayTracerToonCreaseDistance.GetValueOnRenderThread(), 0.01f);
+	const float ToonCreaseLift = FMath::Clamp(CVarToonRayTracerToonCreaseLift.GetValueOnRenderThread(), 0.0f, 0.9f);
+	const uint32 ToonCreaseSamples = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonCreaseSamples.GetValueOnRenderThread(), 1, 16));
+	const float ToonCreaseStrength = FMath::Clamp(CVarToonRayTracerToonCreaseStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonBeforeTSRMaxBrightness = FMath::Clamp(CVarToonRayTracerToonBeforeTSRMaxBrightness.GetValueOnRenderThread(), 0.1f, 1.0f);
+	const uint32 bToonCharacterRimShadow = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonCharacterRimShadow.GetValueOnRenderThread(), 0, 1));
+	const uint32 ToonDeepShadow = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonDeepShadow.GetValueOnRenderThread(), 0, 2));
+	const float ToonDeepShadowDistance = FMath::Max(CVarToonRayTracerToonDeepShadowDistance.GetValueOnRenderThread(), 0.01f);
+	const uint32 ToonDeepShadowSamples = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonDeepShadowSamples.GetValueOnRenderThread(), 1, 16));
+	const float ToonDeepShadowThreshold = FMath::Clamp(CVarToonRayTracerToonDeepShadowThreshold.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonDeepShadowSoftness = FMath::Clamp(CVarToonRayTracerToonDeepShadowSoftness.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonDeepShadowBrightness = FMath::Clamp(CVarToonRayTracerToonDeepShadowBrightness.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonDeepShadowLit = FMath::Clamp(CVarToonRayTracerToonDeepShadowLit.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const float ToonCharacterOutlineColorScale = FMath::Max(CVarToonRayTracerToonCharacterOutlineColorScale.GetValueOnRenderThread(), 0.0f);
 	const float ToonSeeThroughOpacity = FMath::Clamp(CVarToonRayTracerToonSeeThroughOpacity.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const float ToonSeeThroughBrightness = FMath::Clamp(CVarToonRayTracerToonSeeThroughBrightness.GetValueOnRenderThread(), 0.0f, 1.0f);
@@ -405,6 +421,15 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(ToonHairHighlightJaggedSharpness), HashCombine(GetTypeHash(ToonHairHighlightSoftness), GetTypeHash(ToonHairHighlightTaper))));
 	CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(ToonHairHighlightMode), GetTypeHash(ToonHairHighlightArea)));
 	CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(ToonHairHighlightTextureStrength), GetTypeHash(ToonHairHighlightFalloff)));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonShadowSimplify));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonShadowSimplifyRadius));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCrease));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCreaseDistance));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCreaseLift));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCreaseSamples));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCreaseStrength));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonBeforeTSRMaxBrightness));
+	CharacterHash = HashCombine(CharacterHash, HashCombine(HashCombine(HashCombine(GetTypeHash(bToonCharacterRimShadow), GetTypeHash(ToonDeepShadow)), HashCombine(GetTypeHash(ToonDeepShadowDistance), GetTypeHash(ToonDeepShadowSamples))), HashCombine(HashCombine(GetTypeHash(ToonDeepShadowThreshold), GetTypeHash(ToonDeepShadowSoftness)), HashCombine(GetTypeHash(ToonDeepShadowBrightness), GetTypeHash(ToonDeepShadowLit)))));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonHairHighlightTextureColor_RenderThread));
 	for (const FToonFace& Face : Faces_RenderThread)
 	{
@@ -689,6 +714,22 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonSkinShadowColor = FVector3f(ToonSkinShadowColor.R, ToonSkinShadowColor.G, ToonSkinShadowColor.B);
 	PassParameters->ToonCharacterRimStrength = ToonCharacterRimStrength;
 	PassParameters->ToonCharacterRimWidth = ToonCharacterRimWidth;
+	PassParameters->bToonCharacterRimShadow = bToonCharacterRimShadow;
+	PassParameters->ToonShadowSimplify = ToonShadowSimplify;
+	PassParameters->ToonShadowSimplifyRadius = ToonShadowSimplifyRadius;
+	PassParameters->ToonCrease = ToonCrease;
+	PassParameters->ToonCreaseDistance = ToonCreaseDistance;
+	PassParameters->ToonCreaseLift = ToonCreaseLift;
+	PassParameters->ToonCreaseSamples = ToonCreaseSamples;
+	PassParameters->ToonCreaseStrength = ToonCreaseStrength;
+	PassParameters->ToonBeforeTSRMaxBrightness = ToonBeforeTSRMaxBrightness;
+	PassParameters->ToonDeepShadow = ToonDeepShadow;
+	PassParameters->ToonDeepShadowDistance = ToonDeepShadowDistance;
+	PassParameters->ToonDeepShadowSamples = ToonDeepShadowSamples;
+	PassParameters->ToonDeepShadowThreshold = ToonDeepShadowThreshold;
+	PassParameters->ToonDeepShadowSoftness = ToonDeepShadowSoftness;
+	PassParameters->ToonDeepShadowBrightness = ToonDeepShadowBrightness;
+	PassParameters->ToonDeepShadowLit = ToonDeepShadowLit;
 	PassParameters->ToonCharacterOutlineColorScale = ToonCharacterOutlineColorScale;
 	PassParameters->ToonSeeThroughOpacity = ToonSeeThroughOpacity;
 	PassParameters->ToonSeeThroughBrightness = ToonSeeThroughBrightness;
@@ -1039,6 +1080,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		// 出力の色の形式は、RayGen の最後の変換に合わせる
 		PostInputs.OutputEncoding = bBeforeTSR ? (PassParameters->bToonInverseTonemap != 0 ? 1u : 2u) : 0u;
 		PostInputs.EyeAdaptationExposure = PassParameters->ToonEyeAdaptationExposure;
+		PostInputs.MaxDisplayBrightness = PassParameters->ToonBeforeTSRMaxBrightness;
 		PostInputs.GradationTopColor = ToonGradationTopColor_RenderThread;
 		PostInputs.GradationBottomColor = ToonGradationBottomColor_RenderThread;
 		AddToonPostEffectsPasses(GraphBuilder, View, PostInputs);
