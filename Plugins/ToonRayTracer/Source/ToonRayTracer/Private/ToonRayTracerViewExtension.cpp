@@ -444,6 +444,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		CharacterHash = HashCombine(CharacterHash, HashCombine(
 			HashCombine(HashCombine(GetTypeHash(Face.Params.X), GetTypeHash(Face.Params.Y)), HashCombine(GetTypeHash(Face.Params.Z), GetTypeHash(Face.Params.W))),
 			HashCombine(HashCombine(GetTypeHash(Face.Params2.X), GetTypeHash(Face.Params2.Y)), HashCombine(GetTypeHash(Face.Params2.Z), GetTypeHash(Face.Params2.W)))));
+		CharacterHash = HashCombine(CharacterHash, HashCombine(HashCombine(GetTypeHash(Face.Params3.X), GetTypeHash(Face.Params3.Y)), GetTypeHash(Face.Params3.Z)));
 		CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(Face.CharacterId), GetTypeHash(Face.LookOverrideMask)));
 		CharacterHash = HashCombine(CharacterHash, HashCombine(HashCombine(GetTypeHash(Face.FaceShadowMethod), GetTypeHash(Face.FaceSDFResource)),
 			HashCombine(GetTypeHash(Face.FaceSDFScale), HashCombine(GetTypeHash(Face.FaceSDFOffsetY), GetTypeHash(Face.bFaceSDFOffsetY)))));
@@ -831,6 +832,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 			PassParameters->ToonCharacterSlots3[Index] = Face.Slots3;
 			PassParameters->ToonCharacterParams[Index] = Face.Params;
 			PassParameters->ToonCharacterParams2[Index] = Face.Params2;
+			PassParameters->ToonCharacterParams3[Index] = Face.Params3;
 			FVector4f Look[UToonCharacterProfile::NumLookVectors];
 			for (int32 Vector = 0; Vector < UToonCharacterProfile::NumLookVectors; ++Vector)
 			{

@@ -100,6 +100,8 @@ private:
 		// Params2：上まぶたの影の太さ（cm）、眉毛の透けの探す距離（cm）、瞳のハイライトの探す距離（cm）、前髪の影の探す距離（cm）
 		FVector4f Params = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
 		FVector4f Params2 = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
+		// Params3：2 影の調べる距離（cm）、くぼみの線の調べる距離（cm）、影の形を整える太さ（cm）、（空き）
+		FVector4f Params3 = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
 		// キャラクターの番号（Toon Character コンポーネントがなければ 0）
 		uint32 CharacterId = 0;
 		// 見た目の上書き（UToonCharacterProfile::GetLookOverrides を参照）。全体の設定との組み合わせはレンダースレッドで決める

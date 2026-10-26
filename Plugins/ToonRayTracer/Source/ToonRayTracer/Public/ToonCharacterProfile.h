@@ -105,6 +105,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "大きさ（両目の間の距離に対する倍率）", meta = (DisplayName = "前髪の影の探す距離", ClampMin = "0.0", UIMax = "10.0"))
 	float HairShadowDistance = 0.0f;
 
+	/** 2 影で、遮られ具合を調べる短いレイの長さ。0 なら全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "大きさ（両目の間の距離に対する倍率）", meta = (DisplayName = "2 影の調べる距離", ClampMin = "0.0", UIMax = "3.0"))
+	float DeepShadowDistance = 0.0f;
+
+	/** くぼみの線で、面に沿って飛ばすレイの長さ（おおよそ線の太さ）。0 なら全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "大きさ（両目の間の距離に対する倍率）", meta = (DisplayName = "くぼみの線の調べる距離", ClampMin = "0.0", UIMax = "2.0"))
+	float CreaseDistance = 0.0f;
+
+	/** 影の形を整えるときの、シャドウレイの太さ（この 2 倍ほどより細い物は影を落とさない）。0 なら全体の設定 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "大きさ（両目の間の距離に対する倍率）", meta = (DisplayName = "影の形を整える太さ", ClampMin = "0.0", UIMax = "1.0"))
+	float ShadowSimplifyRadius = 0.0f;
+
 	/** 眉毛の透けで、髪の奥へ眉毛を探す距離。0 なら全体の設定 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "大きさ（両目の間の距離に対する倍率）", meta = (DisplayName = "眉毛の透けの探す距離", ClampMin = "0.0", UIMax = "10.0"))
 	float SeeThroughDistance = 0.0f;
