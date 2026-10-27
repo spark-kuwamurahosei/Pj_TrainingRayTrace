@@ -221,6 +221,30 @@ namespace ToonRayTracerCVars
 		TEXT("Toon caustics: how much the glass must concentrate the light (ratio to direct light) to start the pattern. The second step starts at three times this value"),
 		ECVF_RenderThreadSafe);
 
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonEyeSeeThrough(
+		TEXT("r.ToonRayTracer.Toon.EyeSeeThrough"),
+		1,
+		TEXT("Eyes seen through the bangs: where the bangs cover the eyes, overlay the eyes semi-transparently in three tones (lines, iris, whites). The tones come from copies of the eye parts drawn into the Custom Depth stencil (r.CustomDepth is set to 3 while in use), and their colors are recorded while the eyes are visible on screen (1: on, 0: off)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonEyeSeeThroughOpacity(
+		TEXT("r.ToonRayTracer.Toon.EyeSeeThroughOpacity"),
+		0.5f,
+		TEXT("Eyes seen through the bangs: opacity of the overlaid eyes (0-1)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonEyeSeeThroughDistance(
+		TEXT("r.ToonRayTracer.Toon.EyeSeeThroughDistance"),
+		20.0f,
+		TEXT("Eyes seen through the bangs: maximum distance (cm) from the hair to the eyes behind it. Scaled to the character size in the same ratio as SeeThroughDistance. The side hair is often closer to the eyes than the bangs, so profile views are excluded by EyeSeeThroughMaxAngle, not by this distance"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonEyeSeeThroughMaxAngle(
+		TEXT("r.ToonRayTracer.Toon.EyeSeeThroughMaxAngle"),
+		60.0f,
+		TEXT("Eyes seen through the bangs: largest horizontal angle (degrees) between the face front and the camera at which the eyes are shown. They fade out over the last 15 degrees, so profile views do not show them through the side hair"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterRimShadow(
 		TEXT("r.ToonRayTracer.Toon.CharacterRimShadow"),
 		1,

@@ -409,6 +409,13 @@ float ComputeToonSeeThrough(FToonRay Ray, FToonHitRecord Rec, out uint Reason)
 			Reason = TOON_SEE_THROUGH_MISS;
 			return 0.0f;
 		}
+		// 前髪越しの目の瞳と白目（ステンシル 2・3）は、眉毛の線ではない
+		uint Stencil = LoadToonCustomStencil(ScreenUV);
+		if (Stencil == TOON_EYE_TONE_IRIS || Stencil == TOON_EYE_TONE_WHITE)
+		{
+			Reason = TOON_SEE_THROUGH_MISS;
+			return 0.0f;
+		}
 		// Translated World 空間の原点はカメラの位置なので、位置の長さがカメラからの距離になる
 		float4 CustomPosition = mul(float4(UVToNDC(ScreenUV), CustomDeviceZ, 1.0f), ClipToTranslatedWorld);
 		float Behind = length(CustomPosition.xyz / CustomPosition.w) - length(Rec.Position);
@@ -458,6 +465,88 @@ float ComputeToonSeeThrough(FToonRay Ray, FToonHitRecord Rec, out uint Reason)
 	}
 	Reason = TOON_SEE_THROUGH_TOO_MANY;
 	return 0.0f;
+}
+
+// 前髪越しの目：前髪に当たったピクセルで、Custom Depth のステンシルが目の段階（線・瞳・白目）で、その面が前髪の奥（探す距離以内）にあれば、
+// その段階（TOON_EYE_TONE_LINE / IRIS / WHITE）を返す。なければ 0
+// 前髪がかかるのは目の上側（まつ毛と瞳の暗い部分）が多いため、線の段階も、目が見えている間に記録した線の色で重ねる
+// レイトレーシングでは前髪に隠れた目のテクスチャの色が分からないため、目の複製を色の段階ごとに切り抜いて Custom Depth に描いておき、
+// その段階の色（目が見えている間に記録した色）で塗る
+// 探す距離は目用の距離（ToonEyeSeeThroughDistance）。横の髪は前髪より目に近いことが多く、距離では横の髪だけを除けない
+// 横顔では横の髪の上に目の形だけが出て不自然なため、顔の正面とカメラの水平の角度で薄くし（Fade）、大きければ重ねない
+// 前髪越しの目：髪から目の面までの間で、肌などに当たったかを調べるときに、目の面の手前で止める距離（cm）
+#define TOON_EYE_SEE_THROUGH_OCCLUSION_TOLERANCE 0.3f
+
+uint ComputeToonEyeSeeThroughTone(FToonHitRecord Rec, out float Fade)
+{
+	Fade = 0.0f;
+	if (bToonEyeSeeThrough == 0 || TraceMode == 0 || Rec.Material.bHair == 0)
+	{
+		return 0u;
+	}
+	int Face = FindToonFace(Rec.Position);
+	if (Face < 0)
+	{
+		return 0u;
+	}
+	// 顔の正面と、顔からカメラへの向き（Translated World 空間の原点がカメラ）を、顔の上下の向きを除いた水平で比べる
+	float3 Forward = ToonFaceForward[Face].xyz;
+	float3 Up = normalize(cross(Forward, ToonFaceRight[Face].xyz));
+	float3 ToCamera = -ToonFaceCenter[Face].xyz;
+	ToCamera -= Up * dot(ToCamera, Up);
+	float CosAngle = dot(normalize(ToCamera), Forward);
+	Fade = saturate((CosAngle - ToonEyeSeeThroughCosMaxAngle) / max(ToonEyeSeeThroughCosFadeAngle - ToonEyeSeeThroughCosMaxAngle, 1.0e-4f));
+	if (Fade <= 0.0f)
+	{
+		return 0u;
+	}
+	float4 ClipPosition = mul(float4(Rec.Position, 1.0f), TranslatedWorldToClip);
+	if (ClipPosition.w <= 0.0f)
+	{
+		return 0u;
+	}
+	float2 NDC = ClipPosition.xy / ClipPosition.w;
+	float2 ScreenUV = saturate(float2(NDC.x * 0.5f + 0.5f, 0.5f - NDC.y * 0.5f));
+	uint Tone = LoadToonCustomStencil(ScreenUV);
+	if (Tone != TOON_EYE_TONE_LINE && Tone != TOON_EYE_TONE_IRIS && Tone != TOON_EYE_TONE_WHITE)
+	{
+		return 0u;
+	}
+	float CustomDistance = GetToonCustomDepthDistance(ScreenUV);
+	float Behind = CustomDistance - length(Rec.Position);
+	// 眉毛の透けの距離と同じ割合で、キャラクターの大きさに合わせる
+	FToonCharacterParts Parts = GetToonCharacterParts(Rec.Position, Rec.ObjectId);
+	float EyeDistance = ToonEyeSeeThroughDistance * Parts.SeeThroughDistance / max(ToonSeeThroughDistance, 1.0e-4f);
+	if (CustomDistance <= 0.0f || Behind <= TOON_SEE_THROUGH_START_MARGIN || Behind > EyeDistance)
+	{
+		return 0u;
+	}
+
+	// Custom Depth は顔の肌との前後を比べないため、まぶたの下に隠れた目（眼球の上側など）も描かれている
+	// 前髪から目の面までをレイで調べ、顔の肌（顔のスロット）か別の物体に先に当たれば、隠れた目なので重ねない
+	// 髪・まつ毛・目など、それ以外のパーツは通り抜ける
+	FToonRay EyeRay;
+	EyeRay.Origin = 0.0f;
+	EyeRay.Direction = normalize(Rec.Position);
+	float TMin = length(Rec.Position) + TOON_RAY_TMIN;
+	float TEye = CustomDistance - TOON_EYE_SEE_THROUGH_OCCLUSION_TOLERANCE;
+	[loop]
+	for (uint Skip = 0; Skip <= TOON_SEE_THROUGH_MAX_SKIPS; ++Skip)
+	{
+		FDefaultPayload Payload;
+		if (!TraceScene(EyeRay, TMin, Payload) || Payload.HitT >= TEye)
+		{
+			return Tone;
+		}
+		uint GeometryIndex = GetPayloadGeometryIndex(Payload);
+		if (Payload.InstanceID != Rec.ObjectId
+			|| (IsSlotInMask(Parts.FaceSlotMask, GeometryIndex) && !IsSlotInMask(Parts.EyeSlotMask, GeometryIndex)))
+		{
+			return 0u;
+		}
+		TMin = Payload.HitT + TOON_RAY_TMIN;
+	}
+	return 0u;
 }
 
 // 確認用：眉毛の透けの判定結果の色

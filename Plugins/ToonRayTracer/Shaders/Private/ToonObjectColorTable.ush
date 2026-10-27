@@ -28,6 +28,12 @@ uint ToonSeeThroughPartColorKey(uint InstanceId)
 	return ToonObjectColorKey(InstanceId) | 0x80000000u;
 }
 
+// 前髪越しの目：目の段階（瞳・白目）ごとの色のキー。眉毛の透けのパーツの色のキーの、24 ビット目から段階の番号を入れる
+uint ToonEyeToneColorKey(uint InstanceId, uint Tone)
+{
+	return (ToonObjectColorKey(InstanceId) & 0x00FFFFFFu) | 0x80000000u | ((Tone & 0x7Fu) << 24);
+}
+
 // キャラクターのパーツ（マテリアルスロット）ごとの色のキー：24 ビット目から 7 ビットにスロット番号 + 1 を入れる
 // 映り込みの先でキャラクターが画面外にあるとき、キャラクター全体の平均の色（1 色にくすむ）ではなく、パーツごとの色で塗るため
 uint ToonCharacterSlotColorKey(uint InstanceId, uint Slot)

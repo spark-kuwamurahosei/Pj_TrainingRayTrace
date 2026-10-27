@@ -155,6 +155,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthTexture)
 		// 眉毛の透け：眉毛の線の形（Toon Character コンポーネントが作るメッシュの複製が描く）
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, CustomDepthTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<uint2>, CustomStencilTexture)
 		// マテリアルの発光：ベースパスの直後のシーンの色と、足す強さ（0 なら足さない）
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ToonEmissiveTexture)
 		SHADER_PARAMETER(float, ToonEmissiveStrength)
@@ -221,6 +222,12 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonCharacterRimWidth)
 		// リムライトを光が届く場所だけに入れるか、2 影（奥まった場所のさらに暗い影）
 		SHADER_PARAMETER(uint32, bToonCharacterRimShadow)
+		// 前髪越しの目
+		SHADER_PARAMETER(uint32, bToonEyeSeeThrough)
+		SHADER_PARAMETER(float, ToonEyeSeeThroughOpacity)
+		SHADER_PARAMETER(float, ToonEyeSeeThroughDistance)
+		SHADER_PARAMETER(float, ToonEyeSeeThroughCosMaxAngle)
+		SHADER_PARAMETER(float, ToonEyeSeeThroughCosFadeAngle)
 		// トゥーンのコースティクス
 		SHADER_PARAMETER(uint32, bToonCaustics)
 		SHADER_PARAMETER(float, ToonCausticStrength)

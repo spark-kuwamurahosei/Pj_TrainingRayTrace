@@ -1,13 +1,14 @@
 # プラグインの Content のアセットを、今のエンジンの版でまとめて作り直す（RebuildContent.bat から呼ぶ）
 #   T_EarthMap            import_earth_map.py
 #   M_ToonSeeThroughMask  create_see_through_mask_material.py
+#   M_ToonEyeToneMask     create_eye_tone_mask_material.py
 #   L_ToonRT_*            create_sample_levels.py
 # UE5.8 で保存したアセットは、それより前の版では読み込めないため、古い版のプロジェクトに入れたときに使う
 import os
 import unreal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = ["import_earth_map.py", "create_see_through_mask_material.py", "create_sample_levels.py"]
+SCRIPTS = ["import_earth_map.py", "create_see_through_mask_material.py", "create_eye_tone_mask_material.py", "create_sample_levels.py"]
 
 failed = []
 for name in SCRIPTS:

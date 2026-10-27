@@ -36,6 +36,9 @@ struct FToonCameraOverlay
 	float3 SeeThroughHairAlbedo;
 	// 眉毛を塗るときの、キャラクターの物体の番号（パーツの色を探す）
 	uint SeeThroughObjectId;
+	// 前髪越しの目：重ねる濃さ（0 なら重ねない）と色
+	float EyeSeeThrough;
+	float3 EyeSeeThroughColor;
 };
 
 FToonCameraOverlay GetDefaultCameraOverlay()
@@ -46,6 +49,8 @@ FToonCameraOverlay GetDefaultCameraOverlay()
 	Overlay.CharacterRim = 0.0f;
 	Overlay.CharacterReflectionRim = 0.0f;
 	Overlay.SeeThrough = 0.0f;
+	Overlay.EyeSeeThrough = 0.0f;
+	Overlay.EyeSeeThroughColor = 0.0f;
 	Overlay.SeeThroughOpacity = ToonSeeThroughOpacity;
 	Overlay.SeeThroughBrightness = ToonSeeThroughBrightness;
 	Overlay.SeeThroughColor = ToonSeeThroughColor;
@@ -108,6 +113,14 @@ bool GetToonDebugGeometryColor(FToonRay CameraRay, out float3 DebugColor)
 bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout FToonCameraOverlay Overlay, out float3 DebugColor)
 {
 	DebugColor = 0.0f;
+	// 確認用 9：Custom Depth のステンシル（前髪越しの目の段階。黒：なし、赤：線、青：瞳、白：白目、マゼンタ：それ以外の値）
+	if (bToonDebugGeometry == 9)
+	{
+		uint Stencil = LoadToonCustomStencil(UV);
+		DebugColor = Stencil == 0u ? float3(0.05f, 0.05f, 0.05f) : (Stencil == TOON_EYE_TONE_LINE ? float3(1.0f, 0.0f, 0.0f)
+			: (Stencil == TOON_EYE_TONE_IRIS ? float3(0.0f, 0.3f, 1.0f) : (Stencil == TOON_EYE_TONE_WHITE ? float3(1.0f, 1.0f, 1.0f) : float3(1.0f, 0.0f, 1.0f))));
+		return true;
+	}
 
 	// トゥーン T6：アウトライン（最後に、陰影や映り込みの上に描く）
 	if (bToonOutline != 0)
@@ -153,6 +166,22 @@ bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout
 		Overlay.SeeThroughColorBlend = Look.SeeThroughColorBlend;
 		Overlay.SeeThroughHairAlbedo = Rec.Material.Albedo;
 		Overlay.SeeThroughObjectId = Rec.ObjectId;
+		// 前髪越しの目：前髪の奥の目の段階（瞳・白目）の色を、半透明で重ねる。目は陰影を付けずに明るく描くので、光の色を掛ける
+		float EyeToneFade;
+		uint EyeTone = ComputeToonEyeSeeThroughTone(Rec, EyeToneFade);
+		float3 EyeToneColor;
+		bool bEyeToneColor = EyeTone != 0u && bUseGBufferBaseColor != 0 && FindObjectColorByKey(ToonEyeToneColorKey(Rec.ObjectId, EyeTone), EyeToneColor);
+		if (bEyeToneColor)
+		{
+			Overlay.EyeSeeThrough = saturate(ToonEyeSeeThroughOpacity) * EyeToneFade;
+			Overlay.EyeSeeThroughColor = EyeToneColor * ToonLightColor;
+		}
+		// 確認用 10：前髪越しの目の判定（緑：重ねる、黄：段階は見つかったが色がまだ記録されていない、黒：なし）
+		if (bToonDebugGeometry == 10)
+		{
+			DebugColor = bEyeToneColor ? float3(0.0f, 1.0f, 0.0f) : (EyeTone != 0u ? float3(1.0f, 1.0f, 0.0f) : float3(0.05f, 0.05f, 0.05f));
+			return true;
+		}
 		if (bToonDebugGeometry == 2)
 		{
 			DebugColor = GetDebugSeeThroughColor(SeeThroughReason);
@@ -281,6 +310,8 @@ float3 ComposeToonCameraOverlay(float3 Color, FToonCameraOverlay Overlay)
 		float3 Painted = SeeThroughColor * ToonLightColor * HairBrightness;
 		Shaded = lerp(Base, lerp(Darkened, Painted, Overlay.SeeThroughColorBlend), Overlay.SeeThrough * Overlay.SeeThroughOpacity);
 	}
+	// 前髪越しの目：眉毛の透けの上に、目の瞳と白目を半透明で重ねる（目の線は眉毛の透けと同じ仕組みで描く）
+	Shaded = lerp(Shaded, Overlay.EyeSeeThroughColor, Overlay.EyeSeeThrough);
 	// 線の上は光らせない
 	ToonGlowSample.rgb = ToonGlowSample.a > 0.0f ? Overlay.CharacterRim * (1.0f - Overlay.Outline) : 0.0f;
 	return lerp(Shaded, Overlay.OutlineColor, Overlay.Outline);

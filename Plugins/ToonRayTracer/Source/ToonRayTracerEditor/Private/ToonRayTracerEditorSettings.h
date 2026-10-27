@@ -176,6 +176,22 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "リムライト：光が届く場所だけ", ClampMin = "0", ClampMax = "1"))
 	int32 CharacterRimShadow;
 
+	/** 前髪が目にかかっている場所に、目を線・瞳・白目の 3 色で半透明に重ねる。色は、目が画面に見えている間に段階ごとに記録した色 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪越しの目", ClampMin = "0", ClampMax = "1"))
+	int32 EyeSeeThrough;
+
+	/** 前髪の上に重ねる目の濃さ（0 ～ 1） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪越しの目：濃さ", ClampMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
+	float EyeSeeThroughOpacity;
+
+	/** 髪から奥の目までの最大の距離（cm）。眉毛の透けの距離と同じ割合でキャラクターの大きさに合わせる。横の髪は前髪より目に近いことが多いため、横顔は角度で除く */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪越しの目：距離", ClampMin = "0.0", UIMax = "20.0"))
+	float EyeSeeThroughDistance;
+
+	/** 顔の正面とカメラの水平の角度（度）がこの値までなら重ねる。最後の 15° で薄くする（横顔で横の髪に目が出ないように） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "前髪越しの目：角度", ClampMin = "0.0", ClampMax = "180.0"))
+	float EyeSeeThroughMaxAngle;
+
 	/** ガラスの物体が後ろの面に集めた光の模様を、くっきりした段階で描く。面からガラスを通る光の道すじを逆向きにたどって求める */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "コースティクス", ClampMin = "0", ClampMax = "1"))
 	int32 Caustics;

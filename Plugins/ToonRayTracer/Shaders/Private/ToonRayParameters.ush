@@ -134,6 +134,8 @@ float ToonEmissiveStrength;
 Texture2D SceneDepthTexture;
 // 眉毛の透け：眉毛の線の形だけを描いた深度（Toon Character コンポーネントが作るメッシュの複製が描く。何もなければ 0）
 Texture2D CustomDepthTexture;
+// Custom Depth のステンシル（前髪越しの目の段階。Toon Character コンポーネントの複製が描く）
+Texture2D<uint2> CustomStencilTexture;
 // GBuffer 内の描画範囲（描画解像度）
 int2 GBufferViewRectMin;
 int2 GBufferViewRectSize;
@@ -226,6 +228,16 @@ float ToonCharacterRimWidth;
 // ・ToonDeepShadowBrightness：2 影の明るさ（影の色に掛ける倍率）
 // ・ToonDeepShadowLit：明るい面のくぼみを普通の影にする割合
 uint bToonCharacterRimShadow;
+// 前髪越しの目
+// ・bToonEyeSeeThrough：1 なら、前髪が目にかかっている場所に、目を線・瞳・白目の 3 色で半透明に重ねる
+// ・ToonEyeSeeThroughOpacity：重ねる目の濃さ
+// ・ToonEyeSeeThroughDistance：髪から奥の目までの最大の距離（cm。眉毛の透けの距離と同じ割合でキャラクターの大きさに合わせる）
+// ・ToonEyeSeeThroughCosMaxAngle / CosFadeAngle：顔の正面とカメラの水平の角度の cos。FadeAngle から薄くし、MaxAngle で消す
+uint bToonEyeSeeThrough;
+float ToonEyeSeeThroughOpacity;
+float ToonEyeSeeThroughDistance;
+float ToonEyeSeeThroughCosMaxAngle;
+float ToonEyeSeeThroughCosFadeAngle;
 // トゥーンのコースティクス
 // ・bToonCaustics：1 なら、ガラスの物体が後ろの面に集めた光の模様を描く
 // ・ToonCausticStrength：1 段階ごとに足す明るさ（明るい面の色に掛ける）
