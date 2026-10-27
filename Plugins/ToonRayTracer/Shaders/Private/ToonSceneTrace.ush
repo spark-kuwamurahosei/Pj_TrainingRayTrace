@@ -484,6 +484,32 @@ bool FindObjectColorByKey(uint Key, out float3 Color)
 	return false;
 }
 
+// 前髪越しの目：Custom Depth のステンシルの値（Toon Character コンポーネントの UToonCharacterComponent::EyeToneStencil* と同じ）
+#define TOON_EYE_TONE_LINE 1u
+#define TOON_EYE_TONE_IRIS 2u
+#define TOON_EYE_TONE_WHITE 3u
+// 目が見えているピクセルで色を記録するときの、Custom Depth の面とカメラのレイの当たった面の距離の許容量（cm）
+#define TOON_EYE_TONE_RECORD_TOLERANCE 2.0f
+
+uint LoadToonCustomStencil(float2 ScreenUV)
+{
+	return CustomStencilTexture.Load(int3(GetGBufferPixel(ScreenUV), 0)) STENCIL_COMPONENT_SWIZZLE;
+}
+
+// Custom Depth に描かれた面までの、カメラからの距離（cm）。何も描かれていなければ -1
+float GetToonCustomDepthDistance(float2 ScreenUV)
+{
+	// Reversed-Z のため 0 は何も描かれていない
+	float CustomDeviceZ = CustomDepthTexture.Load(int3(GetGBufferPixel(ScreenUV), 0)).r;
+	if (CustomDeviceZ <= 0.0f)
+	{
+		return -1.0f;
+	}
+	// Translated World 空間の原点はカメラの位置なので、位置の長さがカメラからの距離になる
+	float4 CustomPosition = mul(float4(UVToNDC(ScreenUV), CustomDeviceZ, 1.0f), ClipToTranslatedWorld);
+	return length(CustomPosition.xyz / CustomPosition.w);
+}
+
 // 汎用化 G4：カメラから見えた点の UE のマテリアルの色を、物体ごとの合計に足し込む（解決パスで平均にして代表色の表に入れる）
 // Weight は、平均を取るときの重み（整数。0 なら記録しない）
 void RecordObjectColorByKey(uint Key, float3 BaseColor, uint Weight)
@@ -547,6 +573,19 @@ void RecordObjectColorAtPixel(uint2 LocalPixel)
 	{
 		// キャラクターは、パーツ（マテリアルスロット）ごとの色も記録する（画面外の映り込みで使う）
 		RecordObjectColorByKey(ToonCharacterSlotColorKey(Payload.InstanceID, GetPayloadGeometryIndex(Payload)), BaseColor, 1u);
+		// 前髪越しの目：目が見えているピクセルで、線・瞳・白目の色を段階ごとに記録する（前髪に隠れた部分をこの色で塗る）
+		// Custom Depth の面がカメラのレイの当たった面と同じなら（前髪に隠れていなければ）、その目の色
+		// カメラのレイはニアプレーンから出るため、当たった点までの距離は HitT ではなく、当たった点の位置の長さ（カメラが原点）で比べる
+		if (bToonEyeSeeThrough != 0)
+		{
+			uint Tone = LoadToonCustomStencil(UV);
+			float CustomDistance = GetToonCustomDepthDistance(UV);
+			if ((Tone == TOON_EYE_TONE_LINE || Tone == TOON_EYE_TONE_IRIS || Tone == TOON_EYE_TONE_WHITE) && CustomDistance > 0.0f
+				&& abs(CustomDistance - length(Ray.At(Payload.HitT))) < TOON_EYE_TONE_RECORD_TOLERANCE)
+			{
+				RecordObjectColorByKey(ToonEyeToneColorKey(Payload.InstanceID, Tone), BaseColor, 1u);
+			}
+		}
 		FToonCharacterParts Parts = GetToonCharacterParts(Ray.At(Payload.HitT), Payload.InstanceID);
 		if (IsSlotInMask(Parts.SeeThroughSlotMask, GetPayloadGeometryIndex(Payload)))
 		{

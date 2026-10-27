@@ -324,6 +324,13 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const uint32 bToonCaustics = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonCaustics.GetValueOnRenderThread(), 0, 1));
 	const float ToonCausticStrength = FMath::Max(CVarToonRayTracerToonCausticStrength.GetValueOnRenderThread(), 0.0f);
 	const float ToonCausticThreshold = FMath::Max(CVarToonRayTracerToonCausticThreshold.GetValueOnRenderThread(), 0.1f);
+	const uint32 bToonEyeSeeThrough = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonEyeSeeThrough.GetValueOnRenderThread(), 0, 1));
+	const float ToonEyeSeeThroughOpacity = FMath::Clamp(CVarToonRayTracerToonEyeSeeThroughOpacity.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonEyeSeeThroughDistance = FMath::Max(CVarToonRayTracerToonEyeSeeThroughDistance.GetValueOnRenderThread(), 0.0f);
+	// 顔の正面とカメラの角度：MaxAngle で消え、その 15° 手前から薄くする
+	const float ToonEyeSeeThroughMaxAngle = FMath::Clamp(CVarToonRayTracerToonEyeSeeThroughMaxAngle.GetValueOnRenderThread(), 0.0f, 180.0f);
+	const float ToonEyeSeeThroughCosMaxAngle = FMath::Cos(FMath::DegreesToRadians(ToonEyeSeeThroughMaxAngle));
+	const float ToonEyeSeeThroughCosFadeAngle = FMath::Cos(FMath::DegreesToRadians(FMath::Max(ToonEyeSeeThroughMaxAngle - 15.0f, 0.0f)));
 	const uint32 bToonCharacterRimShadow = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonCharacterRimShadow.GetValueOnRenderThread(), 0, 1));
 	const uint32 ToonDeepShadow = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonDeepShadow.GetValueOnRenderThread(), 0, 2));
 	const float ToonDeepShadowDistance = FMath::Max(CVarToonRayTracerToonDeepShadowDistance.GetValueOnRenderThread(), 0.01f);
@@ -426,6 +433,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(ToonHairHighlightJaggedSharpness), HashCombine(GetTypeHash(ToonHairHighlightSoftness), GetTypeHash(ToonHairHighlightTaper))));
 	CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(ToonHairHighlightMode), GetTypeHash(ToonHairHighlightArea)));
 	CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(ToonHairHighlightTextureStrength), GetTypeHash(ToonHairHighlightFalloff)));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(bToonEyeSeeThrough));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonEyeSeeThroughOpacity));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonEyeSeeThroughDistance));
+	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonEyeSeeThroughMaxAngle));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(bToonCaustics));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCausticStrength));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCausticThreshold));
@@ -663,6 +674,8 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		PassParameters->GBufferCTexture = SceneTextureParameters->GBufferCTexture;
 		PassParameters->SceneDepthTexture = SceneTextureParameters->SceneDepthTexture;
 		PassParameters->CustomDepthTexture = SceneTextureParameters->CustomDepthTexture ? SceneTextureParameters->CustomDepthTexture : GSystemTextures.GetDepthDummy(GraphBuilder);
+		// 前髪越しの目：Custom Depth のステンシル（目の段階）。ステンシルがなければ 0 のダミー
+		PassParameters->CustomStencilTexture = SceneTextureParameters->CustomStencilTexture ? SceneTextureParameters->CustomStencilTexture : FRDGSystemTextures::Get(GraphBuilder).StencilDummySRV;
 		PassParameters->GBufferViewRectMin = GBufferViewRect.Min;
 		PassParameters->GBufferViewRectSize = GBufferViewRect.Size();
 	}
@@ -674,6 +687,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		PassParameters->GBufferCTexture = GSystemTextures.GetBlackDummy(GraphBuilder);
 		PassParameters->SceneDepthTexture = GSystemTextures.GetDepthDummy(GraphBuilder);
 		PassParameters->CustomDepthTexture = GSystemTextures.GetDepthDummy(GraphBuilder);
+		PassParameters->CustomStencilTexture = FRDGSystemTextures::Get(GraphBuilder).StencilDummySRV;
 		PassParameters->GBufferViewRectMin = FIntPoint::ZeroValue;
 		PassParameters->GBufferViewRectSize = FIntPoint(1, 1);
 	}
@@ -726,6 +740,11 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonCharacterRimStrength = ToonCharacterRimStrength;
 	PassParameters->ToonCharacterRimWidth = ToonCharacterRimWidth;
 	PassParameters->bToonCharacterRimShadow = bToonCharacterRimShadow;
+	PassParameters->bToonEyeSeeThrough = bToonEyeSeeThrough;
+	PassParameters->ToonEyeSeeThroughOpacity = ToonEyeSeeThroughOpacity;
+	PassParameters->ToonEyeSeeThroughDistance = ToonEyeSeeThroughDistance;
+	PassParameters->ToonEyeSeeThroughCosMaxAngle = ToonEyeSeeThroughCosMaxAngle;
+	PassParameters->ToonEyeSeeThroughCosFadeAngle = ToonEyeSeeThroughCosFadeAngle;
 	PassParameters->bToonCaustics = bToonCaustics;
 	PassParameters->ToonCausticStrength = ToonCausticStrength;
 	PassParameters->ToonCausticThreshold = ToonCausticThreshold;
@@ -867,7 +886,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonEyeHighlightStrength = ToonEyeHighlightStrength;
 	PassParameters->ToonEyeHighlightThreshold = ToonEyeHighlightThreshold;
 	PassParameters->ToonEyeHighlightSearchRadius = ToonEyeHighlightSearchRadius;
-	PassParameters->bToonDebugGeometry = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerDebugGeometry.GetValueOnRenderThread(), 0, 8));
+	PassParameters->bToonDebugGeometry = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerDebugGeometry.GetValueOnRenderThread(), 0, 10));
 	{
 		// double のワールド座標を float 2 つ（上位と下位）に分けて渡す（シェーダー側で MakeDFVector3 に戻す）
 		const FVector PreViewTranslationForNoise = View.ViewMatrices.GetPreViewTranslation();

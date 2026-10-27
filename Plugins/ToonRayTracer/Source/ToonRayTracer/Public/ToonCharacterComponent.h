@@ -6,6 +6,8 @@
 
 class UToonCharacterProfile;
 class USkeletalMeshComponent;
+class UMaterialInterface;
+class UMaterialInstanceDynamic;
 
 // キャラクターごとのトゥーンの設定
 // キャラクターのアクターに付けて、そのモデルのプロファイル（Toon Character Profile）を選ぶ
@@ -38,6 +40,11 @@ public:
 	// アクターのキャラクターのメッシュ（眉毛の線の形を描く複製を除いた、最初のスケルタルメッシュ）
 	static USkeletalMeshComponent* FindCharacterMesh(const AActor* Actor);
 
+	// 前髪越しの目：Custom Depth のステンシルの値（線・瞳・白目）。シェーダーの TOON_EYE_TONE_* と同じ
+	static constexpr int32 EyeToneStencilLine = 1;
+	static constexpr int32 EyeToneStencilIris = 2;
+	static constexpr int32 EyeToneStencilWhite = 3;
+
 	// 眉毛の線の形を Custom Depth に描いているか（シェーダーは前髪の奥の眉毛を、この形で見せる）
 	bool HasSeeThroughMaskMesh() const { return SeeThroughMaskMesh != nullptr; }
 	// プロファイルの内容（髪越しに見せるスロットや線のしきい値）が変わったときに、眉毛の線の形を描く複製を作り直す
@@ -56,10 +63,17 @@ private:
 	void WriteCharacterId();
 	void CreateSeeThroughMaskMesh();
 	void DestroySeeThroughMaskMesh();
+	// キャラクターのメッシュの複製を作り、Slots のスロットだけを MaskMaterial で切り抜いて、Custom Depth にステンシル StencilValue で描く
+	USkeletalMeshComponent* CreateMaskMeshCopy(USkeletalMeshComponent* Mesh, UMaterialInterface* MaskMaterial, const TSet<FName>& Slots,
+		int32 StencilValue, TFunctionRef<void(UMaterialInstanceDynamic*)> SetParameters);
 
 	uint32 CharacterId = 0;
 
 	// 眉毛の線の形だけを Custom Depth に描く、キャラクターのメッシュの複製（保存しない）
 	UPROPERTY(Transient)
 	TObjectPtr<USkeletalMeshComponent> SeeThroughMaskMesh;
+
+	// 前髪越しの目：目のスロットを瞳・白目に切り抜いて Custom Depth に描く複製（保存しない）
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<USkeletalMeshComponent>> EyeToneMeshes;
 };

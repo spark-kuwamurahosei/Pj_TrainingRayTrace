@@ -169,6 +169,10 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	CharacterRimStrength = 1.5f;
 	CharacterRimWidth = 2.5f;
 	CharacterRimShadow = 1;
+	EyeSeeThrough = 1;
+	EyeSeeThroughOpacity = 0.5f;
+	EyeSeeThroughDistance = 20.0f;
+	EyeSeeThroughMaxAngle = 60.0f;
 	Caustics = 1;
 	CausticStrength = 0.6f;
 	CausticThreshold = 1.5f;
@@ -327,6 +331,10 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"), CharacterRimStrength);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"), CharacterRimWidth);
 	SetInt(TEXT("r.ToonRayTracer.Toon.CharacterRimShadow"), CharacterRimShadow);
+	SetInt(TEXT("r.ToonRayTracer.Toon.EyeSeeThrough"), EyeSeeThrough);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.EyeSeeThroughOpacity"), EyeSeeThroughOpacity);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.EyeSeeThroughDistance"), EyeSeeThroughDistance);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.EyeSeeThroughMaxAngle"), EyeSeeThroughMaxAngle);
 	SetInt(TEXT("r.ToonRayTracer.Toon.Caustics"), Caustics);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CausticStrength"), CausticStrength);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CausticThreshold"), CausticThreshold);
@@ -492,6 +500,10 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"), CharacterRimStrength);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"), CharacterRimWidth);
 	GetInt(TEXT("r.ToonRayTracer.Toon.CharacterRimShadow"), CharacterRimShadow);
+	GetInt(TEXT("r.ToonRayTracer.Toon.EyeSeeThrough"), EyeSeeThrough);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.EyeSeeThroughOpacity"), EyeSeeThroughOpacity);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.EyeSeeThroughDistance"), EyeSeeThroughDistance);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.EyeSeeThroughMaxAngle"), EyeSeeThroughMaxAngle);
 	GetInt(TEXT("r.ToonRayTracer.Toon.Caustics"), Caustics);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CausticStrength"), CausticStrength);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CausticThreshold"), CausticThreshold);

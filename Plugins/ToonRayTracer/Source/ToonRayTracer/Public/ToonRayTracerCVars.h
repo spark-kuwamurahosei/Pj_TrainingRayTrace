@@ -68,6 +68,10 @@ namespace ToonRayTracerCVars
 
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimWidth;
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonCharacterRimShadow;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonEyeSeeThrough;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonEyeSeeThroughOpacity;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonEyeSeeThroughDistance;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonEyeSeeThroughMaxAngle;
 	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonCaustics;
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCausticStrength;
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCausticThreshold;
