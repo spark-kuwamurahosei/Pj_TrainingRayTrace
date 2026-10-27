@@ -181,6 +181,17 @@ uint ToonSoftShadowSamples;
 uint ToonSoftShadowSteps;
 // ガラスの影の濃さ（0：影なし ～ 1：不透明の物体と同じ）。シャドウレイが通り抜けたガラスの物体ごとに、光を (1 - この値) 倍にする
 float ToonGlassShadowOpacity;
+// 色の付いた影：色ガラスの影を、ガラスの色に染める割合（0 なら灰色の影）
+float ToonGlassShadowColor;
+// 色の付いた光：ポイントライトとスポットライト
+// ・ToonLocalLightPositionRadius：位置（Translated World）と光が届く半径（cm）
+// ・ToonLocalLightColor：色（線形）と、スポットライトの外側の角度の cos（ポイントライトは -1）
+// ・ToonLocalLightDirection：スポットライトの向き
+uint NumToonLocalLights;
+float ToonLocalLightStrength;
+float4 ToonLocalLightPositionRadius[TOON_MAX_LOCAL_LIGHTS];
+float4 ToonLocalLightColor[TOON_MAX_LOCAL_LIGHTS];
+float4 ToonLocalLightDirection[TOON_MAX_LOCAL_LIGHTS];
 // トゥーンの照り返し（間接光、『The Rest of Your Life』の応用）
 // ・ToonIndirectStrength：周りの面の色を足す強さ（0 なら照り返しなし）
 // ・ToonIndirectSamples：周りを調べるレイの本数

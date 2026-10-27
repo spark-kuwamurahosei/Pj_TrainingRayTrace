@@ -5,11 +5,12 @@
 #   L_ToonRT_Character  キャラクターの検証。キャラクターを置く場所と、正面・斜め・横・見下ろしのカメラを置いた舞台
 #   L_ToonRT_Analytic   解析的な物体のシーン（r.ToonRayTracer.TraceMode 0）の検証。シーンごとに本のカメラに相当するカメラを置く
 #   L_ToonRT_Caustics   トゥーンのコースティクスの検証。ガラスの棒と球を置き、後ろから斜めに光を当てる
+#   L_ToonRT_ColoredLight  色の付いた影と光の検証。赤・緑・青の色ガラスの板と、ネオンに見立てた管のそばのポイントライト・スポットライト
 #
 # 実行例（エディタのコンソール。今開いているレベルは先に保存しておく。既にあるレベルは中身を消して作り直す）:
 #   py "D:/Pj_TrainingRayTrace/Plugins/ToonRayTracer/Scripts/create_sample_levels.py"
 # 作り終えたら、実行前に開いていたレベルに戻る
-# 環境変数 TOON_SAMPLE_LEVELS に名前（Materials,Character,Analytic,Caustics）をカンマ区切りで入れると、そのレベルだけ作る
+# 環境変数 TOON_SAMPLE_LEVELS に名前（Materials,Character,Analytic,Caustics,ColoredLight）をカンマ区切りで入れると、そのレベルだけ作る
 import os
 import unreal
 
@@ -213,8 +214,54 @@ def create_caustics_level():
     return path
 
 
+# ---- 色の付いた影と光の検証 ----
+def local_light(label, light_class, location, rotation, color, radius, intensity, outer_cone=None):
+    actor = eas.spawn_actor_from_class(light_class, unreal.Vector(*location), unreal.Rotator(*rotation))
+    actor.set_actor_label(label)
+    actor.set_folder_path("Lighting")
+    component = actor.get_component_by_class(unreal.LocalLightComponent)
+    component.set_mobility(unreal.ComponentMobility.MOVABLE)
+    component.set_light_color(unreal.LinearColor(*color, 1.0))
+    component.set_intensity(intensity)
+    component.set_attenuation_radius(radius)
+    if outer_cone is not None:
+        component.set_outer_cone_angle(outer_cone)
+        component.set_inner_cone_angle(outer_cone * 0.7)
+    return actor
+
+
+def create_colored_light_level():
+    path = new_level("L_ToonRT_ColoredLight")
+    # 光は物体の後ろ（+X）から手前（カメラの側）へ斜めに当て、色ガラスの影が手前の床に落ちるようにする
+    environment(sun_rotation=(0.0, -45.0, 180.0))
+    floor()
+    mesh("Wall_Back", CUBE, (700.0, 0.0, 200.0), (0.2, 16.0, 4.0), folder="Stage")
+
+    # 色ガラスの板（厚さ 5cm、幅 100cm、高さ 150cm）。Custom Primitive Data の [1][2][3] がガラスの色
+    # [4] の 1 は平らなガラスの印（コースティクスを面の法線で求め、板の縁に白いすじが出ないようにする）
+    for index, (name, color) in enumerate((("Red", (1.0, 0.15, 0.15)), ("Green", (0.2, 1.0, 0.3)), ("Blue", (0.2, 0.4, 1.0)))):
+        mesh("ColoredGlass_" + name, CUBE, (300.0, -400.0 + index * 130.0, 75.0), (0.05, 1.0, 1.5), data=[3, color[0], color[1], color[2], 1, 1.5], folder="Samples")
+    # 無色のガラス（比べる用）
+    mesh("ColoredGlass_Clear", CUBE, (300.0, -10.0, 75.0), (0.05, 1.0, 1.5), data=[3, 0, 0, 0, 1, 1.5], folder="Samples")
+
+    # ネオンに見立てた細い管と、そのそばのピンクのポイントライト。光を受ける白い球と箱
+    mesh("Neon_Tube", CYLINDER, (250.0, 330.0, 100.0), (0.06, 0.06, 2.0), data=[1, 1.0, 0.4, 0.8], folder="Samples")
+    local_light("Neon_PointLight", unreal.PointLight, (240.0, 330.0, 100.0), (0.0, 0.0, 0.0), (1.0, 0.25, 0.7), 350.0, 20.0)
+    mesh("Lit_Sphere", SPHERE, (120.0, 230.0, 50.0), (1.0, 1.0, 1.0), folder="Samples")
+    mesh("Lit_Box", CUBE, (120.0, 440.0, 50.0), (1.0, 1.0, 1.0), folder="Samples")
+    # 水色のスポットライト（上から柱を照らす）
+    mesh("Lit_Pillar", CYLINDER, (0.0, 650.0, 100.0), (0.5, 0.5, 2.0), folder="Samples")
+    local_light("Cyan_SpotLight", unreal.SpotLight, (-150.0, 650.0, 350.0), (0.0, -50.0, 0.0), (0.2, 0.9, 1.0), 600.0, 20.0, outer_cone=25.0)
+
+    camera("Cam_ColoredLight", (-450.0, 100.0, 300.0), look_at(unreal.Vector(-450.0, 100.0, 300.0), unreal.Vector(200.0, 100.0, 50.0)))
+    camera("Cam_ColoredGlass", (-80.0, -270.0, 260.0), look_at(unreal.Vector(-80.0, -270.0, 260.0), unreal.Vector(200.0, -270.0, 0.0)))
+    camera("Cam_Neon", (-150.0, 330.0, 180.0), look_at(unreal.Vector(-150.0, 330.0, 180.0), unreal.Vector(150.0, 330.0, 60.0)))
+    les.save_current_level()
+    return path
+
+
 original = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world().get_path_name().split(".")[0]
-builders = {"Materials": create_materials_level, "Character": create_character_level, "Analytic": create_analytic_level, "Caustics": create_caustics_level}
+builders = {"Materials": create_materials_level, "Character": create_character_level, "Analytic": create_analytic_level, "Caustics": create_caustics_level, "ColoredLight": create_colored_light_level}
 selected = [name.strip() for name in os.environ.get("TOON_SAMPLE_LEVELS", "").split(",") if name.strip()] or list(builders.keys())
 created = [builders[name]() for name in selected]
 if original and not original.startswith("/Temp/"):
