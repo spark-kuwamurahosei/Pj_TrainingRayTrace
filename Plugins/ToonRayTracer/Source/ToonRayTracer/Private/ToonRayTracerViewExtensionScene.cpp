@@ -4,6 +4,8 @@
 #include "ToonCharacterComponent.h"
 #include "ToonCharacterProfile.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/LocalLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Engine/Texture2D.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
@@ -54,6 +56,46 @@ ToonRayTracerViewExtension::FToonDirectionalLight ToonRayTracerViewExtension::Fi
 		Result.bValid = true;
 	}
 	return Result;
+}
+
+// ゲームスレッドで、ビューファミリーのワールドにあるポイントライトとスポットライト（レクトライトも含む）を集める
+// 数が多いときは、光が届く範囲の端がカメラに近いものから FToonRayGenShader::MaxLocalLights 個まで
+void ToonRayTracerViewExtension::FindLocalLights(const FSceneViewFamily& ViewFamily, TArray<FToonLocalLight>& OutLights)
+{
+	OutLights.Reset();
+	const UWorld* World = ViewFamily.Scene ? ViewFamily.Scene->GetWorld() : nullptr;
+	if (!World || CVarToonRayTracerToonLocalLights.GetValueOnGameThread() == 0)
+	{
+		return;
+	}
+	const FVector ViewOrigin = ViewFamily.Views.Num() > 0 && ViewFamily.Views[0] ? ViewFamily.Views[0]->ViewMatrices.GetViewOrigin() : FVector::ZeroVector;
+
+	TArray<TPair<double, FToonLocalLight>> Candidates;
+	for (TObjectIterator<ULocalLightComponent> It; It; ++It)
+	{
+		const ULocalLightComponent* Light = *It;
+		if (Light->GetWorld() != World || !Light->IsRegistered() || !Light->IsVisible() || !Light->bAffectsWorld
+			|| Light->Intensity <= 0.0f || Light->AttenuationRadius <= 0.0f)
+		{
+			continue;
+		}
+		FToonLocalLight Local;
+		Local.Position = Light->GetComponentLocation();
+		Local.Radius = Light->AttenuationRadius;
+		const FLinearColor Color = Light->GetLightColor();
+		Local.Color = FVector3f(Color.R, Color.G, Color.B);
+		if (const USpotLightComponent* Spot = Cast<USpotLightComponent>(Light))
+		{
+			Local.Direction = FVector3f(Spot->GetDirection().GetSafeNormal());
+			Local.CosOuterCone = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(Spot->OuterConeAngle, 0.0f, 89.0f)));
+		}
+		Candidates.Add(TPair<double, FToonLocalLight>(FMath::Max(FVector::Distance(ViewOrigin, Local.Position) - Local.Radius, 0.0), Local));
+	}
+	Candidates.Sort([](const TPair<double, FToonLocalLight>& A, const TPair<double, FToonLocalLight>& B) { return A.Key < B.Key; });
+	for (int32 Index = 0; Index < FMath::Min(Candidates.Num(), FToonRayGenShader::MaxLocalLights); ++Index)
+	{
+		OutLights.Add(Candidates[Index].Value);
+	}
 }
 
 // ゲームスレッドで、ビューファミリーのワールドにあるスケルタルメッシュから、顔の位置と向きを集める

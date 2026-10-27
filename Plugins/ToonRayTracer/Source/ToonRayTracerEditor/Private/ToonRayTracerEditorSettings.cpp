@@ -276,6 +276,9 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	SoftShadowSamples = 4;
 	SoftShadowSteps = 1;
 	GlassShadowOpacity = 0.5f;
+	GlassShadowColor = 1.0f;
+	LocalLights = 1;
+	LocalLightStrength = 0.6f;
 	IndirectStrength = 0.5f;
 	IndirectSamples = 2;
 	ShadowNoiseStrength = 0.0f;
@@ -445,6 +448,9 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSamples"), SoftShadowSamples);
 	SetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"), SoftShadowSteps);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.GlassShadowOpacity"), GlassShadowOpacity);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.GlassShadowColor"), GlassShadowColor);
+	SetInt(TEXT("r.ToonRayTracer.Toon.LocalLights"), LocalLights);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.LocalLightStrength"), LocalLightStrength);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.IndirectStrength"), IndirectStrength);
 	SetInt(TEXT("r.ToonRayTracer.Toon.IndirectSamples"), IndirectSamples);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"), ShadowNoiseStrength);
@@ -635,6 +641,9 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSamples"), SoftShadowSamples);
 	GetInt(TEXT("r.ToonRayTracer.Toon.SoftShadowSteps"), SoftShadowSteps);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.GlassShadowOpacity"), GlassShadowOpacity);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.GlassShadowColor"), GlassShadowColor);
+	GetInt(TEXT("r.ToonRayTracer.Toon.LocalLights"), LocalLights);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.LocalLightStrength"), LocalLightStrength);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.IndirectStrength"), IndirectStrength);
 	GetInt(TEXT("r.ToonRayTracer.Toon.IndirectSamples"), IndirectSamples);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"), ShadowNoiseStrength);

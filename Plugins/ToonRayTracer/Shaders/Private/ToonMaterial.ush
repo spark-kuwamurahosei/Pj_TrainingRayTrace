@@ -92,8 +92,8 @@ FToonMaterial GetDefaultMaterial()
 
 // シーンのメッシュのマテリアルを、メッシュに設定された Custom Primitive Data から読む
 //   [0]: 種類（0: 未設定, 1: ランバート, 2: 金属, 3: 誘電体）
-//   [1][2][3]: 反射率 RGB（誘電体では使わない）
-//   [4]: 金属のぼけ具合（0 ～ 1）
+//   [1][2][3]: 反射率 RGB。誘電体（ガラス）では、ガラスの色（透けた先と影を染める。すべて 0 なら無色）
+//   [4]: 金属のぼけ具合（0 ～ 1）。ガラスでは、1 なら平らなガラス（コースティクスを面の法線で求める。板ガラスの縁に白いすじが出ないように）
 //   [5]: 誘電体の屈折率（未設定や 0 以下ならガラスの 1.5）
 //   [6][7][8]: トゥーンの影色 RGB（すべて 0 なら全体の影色 r.ToonRayTracer.Toon.ShadowColor を使う）
 //   [9]: トゥーンのハイライトの強さ（0 ～ 1。未設定なら出さない）
@@ -101,6 +101,18 @@ FToonMaterial GetDefaultMaterial()
 //   [11]: トゥーンの線の太さ（ピクセル。未設定ならメッシュの種類ごとの太さ、負の値なら線を引かない）
 //   [12]: キャラクターとして扱うか（正の値：扱う、負の値：扱わない。未設定ならスケルタルメッシュをキャラクターとする）
 //         キャラだけトゥーンにするときにトゥーンで塗るか、キャラクター用の影の設定を使うかに影響する
+// 平らなガラス：Custom Primitive Data の [4]（ガラスでは金属のぼけ具合を使わないため、印に使う）が 0.5 以上か
+bool IsToonFlatGlass(FToonMaterial Material)
+{
+	return Material.Type == TOON_MATERIAL_DIELECTRIC && Material.Fuzz >= 0.5f;
+}
+
+// 色の付いた影：ガラスの色（素材の色。すべて 0 なら無色のガラスとして白）
+float3 GetToonGlassColor(float3 Albedo)
+{
+	return any(Albedo > 0.0f) ? saturate(Albedo) : 1.0f;
+}
+
 FToonMaterial GetSceneMaterial(uint GPUSceneInstanceId)
 {
 	FInstanceSceneData InstanceData = ToonGetInstanceSceneData(GPUSceneInstanceId);

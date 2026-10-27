@@ -119,10 +119,28 @@ private:
 	// ゲームスレッドで、ビューファミリーのワールドにあるスケルタルメッシュから、顔の位置と向きを集める
 	static void FindFaces(const FSceneViewFamily& ViewFamily, TArray<FToonFace>& OutFaces);
 
+	// 色の付いた光：ポイントライトとスポットライト（ネオンなど光る物の近くに置いたライト）
+	struct FToonLocalLight
+	{
+		// ライトの位置（ワールド空間）と、光が届く半径（cm）
+		FVector Position = FVector::ZeroVector;
+		float Radius = 0.0f;
+		// ライトの色（線形。強さは含めない。トゥーンでは明るい面と同じく、色だけで塗る）
+		FVector3f Color = FVector3f(0.0f, 0.0f, 0.0f);
+		// スポットライトの向きと、外側の角度の cos（ポイントライトは -1）
+		FVector3f Direction = FVector3f(1.0f, 0.0f, 0.0f);
+		float CosOuterCone = -1.0f;
+	};
+
+	// ゲームスレッドで、ビューファミリーのワールドから、カメラに近いポイントライトとスポットライトを集める
+	static void FindLocalLights(const FSceneViewFamily& ViewFamily, TArray<FToonLocalLight>& OutLights);
+
 	// レンダースレッドからのみアクセスする。BeginRenderViewFamily でレンダーコマンド経由で更新される
 	FToonDirectionalLight DirectionalLight_RenderThread;
 	// 顔の影：キャラクターの顔の位置と向き
 	TArray<FToonFace> Faces_RenderThread;
+	// 色の付いた光：ポイントライトとスポットライト
+	TArray<FToonLocalLight> LocalLights_RenderThread;
 	// マテリアルの発光：ビューごとに、ベースパスの直後に写し取ったシーンの色（同じフレームのトゥーンのパスで使う）
 	TMap<const FSceneView*, FRDGTextureRef> EmissiveTextures_RenderThread;
 	// トゥーンの影色（文字列のコンソール変数をゲームスレッドで変換したもの）

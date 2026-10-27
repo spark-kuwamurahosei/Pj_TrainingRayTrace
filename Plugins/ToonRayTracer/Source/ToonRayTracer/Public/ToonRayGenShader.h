@@ -46,6 +46,8 @@ class FToonRayGenShader : public FGlobalShader
 	static constexpr int32 MaxBoxes = 4;
 	// 顔の影：シェーダーに渡せる顔（キャラクター）の最大数
 	static constexpr int32 MaxFaces = 8;
+	// 色の付いた光：同時に扱うポイントライトとスポットライトの数
+	static constexpr int32 MaxLocalLights = 8;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
@@ -189,6 +191,12 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(FVector3f, ToLightDirection)
 		SHADER_PARAMETER(FVector3f, LightColor)
 		SHADER_PARAMETER(uint32, bHasDirectionalLight)
+		// 色の付いた光：ポイントライトとスポットライト（位置（Translated World）と半径、色とスポットの外側の角度の cos、スポットの向き）
+		SHADER_PARAMETER(uint32, NumToonLocalLights)
+		SHADER_PARAMETER(float, ToonLocalLightStrength)
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonLocalLightPositionRadius, [MaxLocalLights])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonLocalLightColor, [MaxLocalLights])
+		SHADER_PARAMETER_ARRAY(FVector4f, ToonLocalLightDirection, [MaxLocalLights])
 		// トゥーン：段階数（2 or 3）、NdotL のしきい値、境目のぼかし幅、影色、明るい面のライト色
 		SHADER_PARAMETER(uint32, ToonBands)
 		SHADER_PARAMETER(float, ToonShadowThreshold)
@@ -205,6 +213,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, ToonSoftShadowSteps)
 		// ガラスの影の濃さ（1 なら不透明の物体と同じ）
 		SHADER_PARAMETER(float, ToonGlassShadowOpacity)
+		SHADER_PARAMETER(float, ToonGlassShadowColor)
 		// トゥーンの照り返し（間接光）の強さとレイの本数
 		SHADER_PARAMETER(float, ToonIndirectStrength)
 		SHADER_PARAMETER(uint32, ToonIndirectSamples)
@@ -374,6 +383,7 @@ class FToonRayGenShader : public FGlobalShader
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_QUADS"), MaxQuads);
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_BOXES"), MaxBoxes);
 		OutEnvironment.SetDefine(TEXT("TOON_MAX_FACES"), MaxFaces);
+		OutEnvironment.SetDefine(TEXT("TOON_MAX_LOCAL_LIGHTS"), MaxLocalLights);
 		// GetPrimitiveData() を Primitive ユニフォームバッファではなく GPUScene のバッファから読むようにする
 		// （未定義だとメッシュ描画用の Primitive ユニフォームバッファを参照してしまい、グローバルシェーダーではバインドできない）
 		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);

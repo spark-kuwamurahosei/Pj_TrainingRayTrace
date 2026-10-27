@@ -757,6 +757,24 @@ namespace ToonRayTracerCVars
 		TEXT("How much light glass blocks in the toon shadows (0: no shadow, 1: as dark as opaque objects). Each glass object the shadow ray passes through multiplies the light by (1 - this value)"),
 		ECVF_RenderThreadSafe);
 
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonLocalLights(
+		TEXT("r.ToonRayTracer.Toon.LocalLights"),
+		1,
+		TEXT("Colored light: light the toon surfaces with the point and spot lights (e.g. lights placed by neon signs or glowing objects) in their color, in crisp toon steps. A shadow ray to each light decides where the light reaches; full color within half the attenuation radius, half color beyond. Up to 8 lights nearest to the camera (1: on, 0: off)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonLocalLightStrength(
+		TEXT("r.ToonRayTracer.Toon.LocalLightStrength"),
+		0.6f,
+		TEXT("Colored light: brightness of the point and spot lights added to the toon surfaces (multiplied by the surface color and the light color)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonGlassShadowColor(
+		TEXT("r.ToonRayTracer.Toon.GlassShadowColor"),
+		1.0f,
+		TEXT("Colored shadows: how much a colored glass (Custom Primitive Data [1][2][3] of a glass mesh) tints its shadow and the light passing through it (0: gray shadow, 1: the glass color). Requires GlassShadowOpacity below 1"),
+		ECVF_RenderThreadSafe);
+
 	// Perlin ノイズの応用：影の境目を手描き風に揺らす
 	TAutoConsoleVariable<float> CVarToonRayTracerToonShadowNoiseStrength(
 		TEXT("r.ToonRayTracer.Toon.ShadowNoiseStrength"),

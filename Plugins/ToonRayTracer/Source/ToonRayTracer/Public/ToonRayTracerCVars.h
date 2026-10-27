@@ -260,6 +260,9 @@ namespace ToonRayTracerCVars
 
 	// ガラスの影の濃さ
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonGlassShadowOpacity;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonGlassShadowColor;
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonLocalLights;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonLocalLightStrength;
 
 	// Perlin ノイズの応用：影の境目を手描き風に揺らす
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonShadowNoiseStrength;

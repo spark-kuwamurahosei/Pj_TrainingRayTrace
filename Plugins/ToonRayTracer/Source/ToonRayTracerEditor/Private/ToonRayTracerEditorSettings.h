@@ -591,6 +591,18 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "ガラスの影の濃さ", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0", EditCondition = "bCastShadows"))
 	float GlassShadowOpacity;
 
+	/** 色の付いた影：色ガラス（ガラスのメッシュの Custom Primitive Data [1][2][3]）の影と透けた光を、ガラスの色に染める割合。0 なら灰色の影 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "色ガラスの影の色", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0", EditCondition = "bCastShadows"))
+	float GlassShadowColor;
+
+	/** 色の付いた光：ポイントライトとスポットライト（ネオンなど光る物の近くに置いたライト）の光を、ライトの色でくっきり段階で塗る。シャドウレイで光が届く範囲を決める */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "色の付いた光", ClampMin = "0", ClampMax = "1"))
+	int32 LocalLights;
+
+	/** 色の付いた光の明るさ（素材の色とライトの色に掛ける） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|影", meta = (DisplayName = "色の付いた光：明るさ", ClampMin = "0.0", UIMax = "2.0"))
+	float LocalLightStrength;
+
 	/** 照り返し（間接光）の強さ。周りの面の色を足し、赤い壁の近くが赤みを帯びるなどの照り返しを出す。0 なら照り返しなし */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|陰影", meta = (DisplayName = "照り返しの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
 	float IndirectStrength;
