@@ -357,6 +357,10 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(float, ToonOutlineWidthSkinned)
 		SHADER_PARAMETER(float, ToonOutlineThreshold)
 		SHADER_PARAMETER(float, ToonFaceOutlineTolerance)
+		SHADER_PARAMETER(uint32, bToonOutlineDepthWidth)
+		SHADER_PARAMETER(float, ToonOutlineThinScale)
+		SHADER_PARAMETER(float, ToonOutlineThickScale)
+		SHADER_PARAMETER(float, ToonOutlineDepthRange)
 		SHADER_PARAMETER(FVector3f, ToonOutlineColor)
 		// トゥーン T7：金属・ガラスで反射・屈折を追いかける回数の上限
 		SHADER_PARAMETER(uint32, ToonReflectionDepth)

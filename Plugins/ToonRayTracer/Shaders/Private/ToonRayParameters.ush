@@ -444,6 +444,12 @@ float ToonOutlineThreshold;
 // 顔の中の線：顔のパーツどうしの間では、面の折れ目の線を引かず、段差の許容量をこの倍率で広げる（唇などの小さな凹凸に線を出さない）
 float ToonFaceOutlineTolerance;
 float3 ToonOutlineColor;
+// 奥行きで太さが変わる線：1 なら、奥行きの差に応じて線の太さを変える
+// 差が小さい（接している部分・面の折れ目）と線の太さ × ToonOutlineThinScale、ToonOutlineDepthRange（cm）以上離れた輪郭は × ToonOutlineThickScale
+uint bToonOutlineDepthWidth;
+float ToonOutlineThinScale;
+float ToonOutlineThickScale;
+float ToonOutlineDepthRange;
 
 // 別の物体が「遠く手前にある（遮っている）」とみなす距離の差（補助レイをずらした量の何倍か）
 #define TOON_OUTLINE_OCCLUDER_GAP 4.0f

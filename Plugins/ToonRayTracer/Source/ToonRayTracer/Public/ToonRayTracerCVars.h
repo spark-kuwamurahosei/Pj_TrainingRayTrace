@@ -296,6 +296,12 @@ namespace ToonRayTracerCVars
 	// 唇や鼻の小さな凹凸に線が出ないようにする（見下ろす角度で、口が「ω」のような線になるのを防ぐ）。顔と首・髪の境目（輪郭）には線が残る
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonFaceOutlineTolerance;
 
+	// 奥行きで太さが変わる線：接している部分や面の折れ目は細く、背景から大きく離れた輪郭は太くする
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonOutlineDepthWidth;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineThinScale;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineThickScale;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineDepthRange;
+
 	// 文字列型のため ECVF_RenderThreadSafe は付けられない。ゲームスレッドで読んでレンダースレッドへ渡す
 	// 『The Next Week』第4章：第10章のシーンで球に貼る画像（本の earthmap.jpg）のアセットのパス
 	// 見つからなければ UV のチェッカーで代用する。文字列型のためゲームスレッドで読む

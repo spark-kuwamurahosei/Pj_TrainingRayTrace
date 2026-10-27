@@ -26,6 +26,8 @@ bool IsNeighborhoodMoving(float2 UV)
 	{
 		MaxOutlineWidth = max(MaxOutlineWidth, ToonCharacterLook1[FaceIndex].a);
 	}
+	// 奥行きで太さが変わる線では、いちばん太い線の幅まで調べる
+	MaxOutlineWidth *= bToonOutlineDepthWidth != 0 ? max(ToonOutlineThinScale, ToonOutlineThickScale) : 1.0f;
 	float Radius = bToonOutline != 0 ? ceil(MaxOutlineWidth) + 1.0f : 1.0f;
 	float2 UVStep = Radius / (float2)ViewRectSize;
 	for (int OffsetY = -1; OffsetY <= 1; ++OffsetY)
