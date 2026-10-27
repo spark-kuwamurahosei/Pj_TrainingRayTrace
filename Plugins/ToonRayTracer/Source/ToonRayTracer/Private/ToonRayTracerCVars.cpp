@@ -859,6 +859,31 @@ namespace ToonRayTracerCVars
 		TEXT("Between points that are both on the face slots, creases are not outlined and the depth step tolerance is multiplied by this value, so small bumps such as the lips get no lines. 1: same as other parts"),
 		ECVF_RenderThreadSafe);
 
+	// 奥行きで太さが変わる線：接している部分や面の折れ目は細く、背景から大きく離れた輪郭は太くする（手描きの線のような強弱）
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonOutlineDepthWidth(
+		TEXT("r.ToonRayTracer.Toon.OutlineDepthWidth"),
+		1,
+		TEXT("Vary the outline width by the depth gap: thin where parts touch or at creases, thick at silhouettes far from the background (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineThinScale(
+		TEXT("r.ToonRayTracer.Toon.OutlineThinScale"),
+		0.6f,
+		TEXT("Outline width multiplier where the depth gap is small (touching parts and creases)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineThickScale(
+		TEXT("r.ToonRayTracer.Toon.OutlineThickScale"),
+		1.0f,
+		TEXT("Outline width multiplier at silhouettes whose depth gap is OutlineDepthRange or more"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonOutlineDepthRange(
+		TEXT("r.ToonRayTracer.Toon.OutlineDepthRange"),
+		30.0f,
+		TEXT("Depth gap (cm) at which the outline reaches OutlineThickScale"),
+		ECVF_RenderThreadSafe);
+
 	// 文字列型のため ECVF_RenderThreadSafe は付けられない。ゲームスレッドで読んでレンダースレッドへ渡す
 	// 『The Next Week』第4章：第10章のシーンで球に貼る画像（本の earthmap.jpg）のアセットのパス
 	// 見つからなければ UV のチェッカーで代用する。文字列型のためゲームスレッドで読む

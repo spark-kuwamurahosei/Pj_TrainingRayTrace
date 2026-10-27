@@ -663,6 +663,22 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "顔の中の線の許容量（倍率）", ClampMin = "1.0", UIMin = "1.0", UIMax = "200.0", EditCondition = "bOutline"))
 	float FaceOutlineTolerance;
 
+	/** 奥行きで太さが変わる線：接している部分や面の折れ目は細く、背景から大きく離れた輪郭は太くする（手描きの線のような強弱） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "奥行きで線の太さを変える", EditCondition = "bOutline"))
+	bool bOutlineDepthWidth;
+
+	/** 奥行きの差が小さい部分（接している部分・面の折れ目）の線の太さの倍率 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "細い線の倍率", ClampMin = "0.0", UIMin = "0.1", UIMax = "1.0", EditCondition = "bOutline && bOutlineDepthWidth"))
+	float OutlineThinScale;
+
+	/** 背景から大きく離れた輪郭の線の太さの倍率 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "太い線の倍率", ClampMin = "0.0", UIMin = "1.0", UIMax = "4.0", EditCondition = "bOutline && bOutlineDepthWidth"))
+	float OutlineThickScale;
+
+	/** この奥行きの差（cm）以上離れた輪郭で、線がいちばん太くなる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "太い線になる奥行きの差（cm）", ClampMin = "0.0", UIMin = "1.0", UIMax = "200.0", EditCondition = "bOutline && bOutlineDepthWidth"))
+	float OutlineDepthRange;
+
 	/** 線の色 */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|アウトライン", meta = (DisplayName = "線の色", HideAlphaChannel, EditCondition = "bOutline"))
 	FLinearColor OutlineColor;

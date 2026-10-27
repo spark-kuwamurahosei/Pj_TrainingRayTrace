@@ -409,6 +409,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonOutlineWidthSkinned = FMath::Max(CVarToonRayTracerToonOutlineWidthSkinned.GetValueOnRenderThread(), 0.0f);
 	const float ToonOutlineThreshold = FMath::Max(CVarToonRayTracerToonOutlineThreshold.GetValueOnRenderThread(), 0.0f);
 	const float ToonFaceOutlineTolerance = FMath::Max(CVarToonRayTracerToonFaceOutlineTolerance.GetValueOnRenderThread(), 1.0f);
+	const bool bToonOutlineDepthWidth = CVarToonRayTracerToonOutlineDepthWidth.GetValueOnRenderThread() != 0;
+	const float ToonOutlineThinScale = FMath::Max(CVarToonRayTracerToonOutlineThinScale.GetValueOnRenderThread(), 0.0f);
+	const float ToonOutlineThickScale = FMath::Max(CVarToonRayTracerToonOutlineThickScale.GetValueOnRenderThread(), 0.0f);
+	const float ToonOutlineDepthRange = FMath::Max(CVarToonRayTracerToonOutlineDepthRange.GetValueOnRenderThread(), 0.0f);
 	const FLinearColor ToonOutlineColor = ToonOutlineColor_RenderThread;
 	const uint32 ToonReflectionDepth = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonReflectionDepth.GetValueOnRenderThread(), 0, 16));
 	const float ToonGlassEdgeStrength = FMath::Clamp(CVarToonRayTracerToonGlassEdgeStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
@@ -435,7 +439,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 		HashCombine(HashCombine(GetTypeHash(ToonRimThreshold), GetTypeHash(ToonRimStrength)), GetTypeHash(bToonRimLitSideOnly)));
 	const uint32 ToonOutlineHash = HashCombine(
 		HashCombine(HashCombine(GetTypeHash(bToonOutline), GetTypeHash(ToonOutlineWidth)), GetTypeHash(ToonOutlineWidthSkinned)),
-		HashCombine(HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonFaceOutlineTolerance)), GetTypeHash(ToonOutlineColor)), HashCombine(HashCombine(GetTypeHash(ToonReflectionDepth), HashCombine(HashCombine(GetTypeHash(ToonGlassEdgeStrength), GetTypeHash(ToonGlassEdgeWidth)), GetTypeHash(ToonGlassEdgeColor))),
+		HashCombine(HashCombine(HashCombine(HashCombine(GetTypeHash(ToonOutlineThreshold), GetTypeHash(ToonFaceOutlineTolerance)), HashCombine(HashCombine(GetTypeHash(bToonOutlineDepthWidth), GetTypeHash(ToonOutlineThinScale)), HashCombine(GetTypeHash(ToonOutlineThickScale), GetTypeHash(ToonOutlineDepthRange)))), GetTypeHash(ToonOutlineColor)), HashCombine(HashCombine(GetTypeHash(ToonReflectionDepth), HashCombine(HashCombine(GetTypeHash(ToonGlassEdgeStrength), GetTypeHash(ToonGlassEdgeWidth)), GetTypeHash(ToonGlassEdgeColor))),
 			HashCombine(HashCombine(GetTypeHash(ToonCharacterRimStrength), GetTypeHash(ToonCharacterRimWidth)), HashCombine(GetTypeHash(ToonCharacterOutlineColorScale),
 				HashCombine(HashCombine(GetTypeHash(ToonSeeThroughOpacity), GetTypeHash(ToonSeeThroughBrightness)), HashCombine(HashCombine(GetTypeHash(ToonSeeThroughDistance), GetTypeHash(ToonSeeThroughSlotMask)), HashCombine(HashCombine(HashCombine(GetTypeHash(ToonEyeSlotMask), GetTypeHash(bToonEyeUnlit)), HashCombine(HashCombine(GetTypeHash(bToonFaceShadow), GetTypeHash(ToonFaceSlotMask)), HashCombine(GetTypeHash(ToonFaceShadowCurve), HashCombine(HashCombine(GetTypeHash(ToonFaceShadowSoftness), GetTypeHash(ToonFaceShadowFrontBias)),
 					HashCombine(HashCombine(HashCombine(GetTypeHash(ToonHairShadowMode), GetTypeHash(ToonHairSlotMask)), HashCombine(GetTypeHash(ToonHairShadowWidth), GetTypeHash(ToonHairShadowLightShift))), HashCombine(GetTypeHash(ToonHairShadowDistance), GetTypeHash(ToonHairShadowStrength))))))), HashCombine(HashCombine(GetTypeHash(ToonEyeTriangleStart), GetTypeHash(ToonEyeTriangleEnd)), HashCombine(HashCombine(GetTypeHash(ToonEyeShadowDistance), GetTypeHash(ToonEyeShadowBrightness)), HashCombine(HashCombine(GetTypeHash(ToonEyeHighlightStrength), GetTypeHash(ToonEyeHighlightThreshold)), GetTypeHash(ToonEyeHighlightSearchRadius))))))))))));
@@ -931,6 +935,10 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonOutlineWidthSkinned = ToonOutlineWidthSkinned;
 	PassParameters->ToonOutlineThreshold = ToonOutlineThreshold;
 	PassParameters->ToonFaceOutlineTolerance = ToonFaceOutlineTolerance;
+	PassParameters->bToonOutlineDepthWidth = bToonOutlineDepthWidth ? 1u : 0u;
+	PassParameters->ToonOutlineThinScale = ToonOutlineThinScale;
+	PassParameters->ToonOutlineThickScale = ToonOutlineThickScale;
+	PassParameters->ToonOutlineDepthRange = ToonOutlineDepthRange;
 	PassParameters->ToonReflectionDepth = ToonReflectionDepth;
 	PassParameters->ToonGlassEdgeStrength = ToonGlassEdgeStrength;
 	PassParameters->ToonGlassEdgeWidth = ToonGlassEdgeWidth;

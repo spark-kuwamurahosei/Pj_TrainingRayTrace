@@ -328,6 +328,85 @@ float ComputeToonCaustic(FToonHitRecord Rec, float3 GeometricNormal)
 //     （視線方向で測ると、浅い角度で見たポリゴンの境目でも差が増幅され、輪郭の内側にかすれた線が出るため）
 // 遠く手前にある別の物体に当たった場合は、その物体の側で線が引かれるのでここでは引かない（線が背景側に太らない）
 // 同じ平面上にぴったり並んだ別のメッシュの継ぎ目は、どちらの平面からも距離 0 なので線を引かない
+// 奥行きで太さが変わる線（bToonOutlineDepthWidth）では、奥行きの差に応じて線の太さを変える
+// 1 方向の補助レイで線を判定する。線を引くなら true を返し、Gap に奥行きの差（cm）を返す
+// Gap は「奥行きで太さが変わる線」で使う。空に抜けた輪郭は非常に大きな値、面の折れ目は 0（物体の内側の線）
+bool ToonOutlineProbe(float2 UV, FToonRay Ray, FToonHitRecord Rec, float2 Direction, float Width, out float Gap)
+{
+	Gap = 0.0f;
+	float2 NeighborUV = UV + Direction * (Width / (float2)ViewRectSize);
+	FToonRay NeighborRay = GenerateCameraRay(NeighborUV);
+
+	// 中心の点の法線は、GBuffer の滑らかな法線（ApplyGBufferNormal 済み）を使う
+	// ポリゴンごとの法線だと、浅い角度で見た輪郭付近でばらつき、輪郭の内側にかすれた線が出るため
+	float3 CenterNormal = Rec.Normal;
+
+	// 補助レイでも面の向きが必要。カメラから直接見える点なので、GBuffer の法線に置き換えられる場合は
+	// 法線を求める補助レイを省き（負荷の大半はここ）、置き換えられない場合だけ法線まで求め直す
+	// 解析的な物体では、煙（輪郭を持たない）を無視して、その奥の物体で線を判定する
+	FToonHitRecord NeighborRec = (FToonHitRecord)0;
+	bool bNeighborHit;
+	if (TraceMode == 0)
+	{
+		bNeighborHit = HitWorld(NeighborRay, 0.0f, 1.0e8f, NeighborRec, false);
+	}
+	else
+	{
+		bNeighborHit = HitCameraVisible(NeighborRay, NeighborUV, NeighborRec, false);
+		if (bNeighborHit && !(bUseGBufferNormal != 0 && IsGBufferSamePoint(NeighborUV, NeighborRec.Position, NeighborRec.T)))
+		{
+			NeighborRec = (FToonHitRecord)0;
+			HitCameraVisible(NeighborRay, NeighborUV, NeighborRec);
+		}
+	}
+	if (!bNeighborHit)
+	{
+		Gap = 1.0e8f;
+		return true;
+	}
+	ApplyGBufferSurface(NeighborUV, NeighborRay, NeighborRec);
+
+	// 補助レイをずらした量を、中心のヒット位置での距離（cm）に換算したもの
+	float OffsetDistance = max(Rec.T * length(NeighborRay.Direction - Ray.Direction), 1.0e-3f);
+
+	// 遠く手前にある別の物体（遮っている物体）に当たった場合は、その物体の側で線が引かれるのでここでは引かない
+	// 角で接している面同士は距離の差がずらした量と同程度なので、ここでは除外しない
+	if (NeighborRec.ObjectId != Rec.ObjectId && Rec.T - NeighborRec.T > TOON_OUTLINE_OCCLUDER_GAP * OffsetDistance)
+	{
+		return false;
+	}
+
+	// 顔の中（同じキャラクターで、中心と補助レイの点の両方が顔のパーツ）は、唇や鼻の小さな凹凸に線を出さない
+	// 見下ろす角度では口のテクスチャがつぶれて見えなくなり、唇の凹凸の線だけが「ω」のように残って不自然になるため
+	// 面の折れ目では線を引かず、段差の許容量を広げる
+	// 顔と首・髪・背景の境目（あごや頬の輪郭）は、片方が顔ではないので、今までどおり線を引く
+	bool bFaceArea = NeighborRec.ObjectId == Rec.ObjectId && Rec.Material.bFace != 0 && NeighborRec.Material.bFace != 0;
+
+	// 面の折れ目
+	if (!bFaceArea && dot(CenterNormal, NeighborRec.Normal) < TOON_OUTLINE_CREASE_COS)
+	{
+		return true;
+	}
+
+	// 物体の輪郭や奥行きの段差：お互いの平面からの距離（面に垂直な方向）
+	// 同じ物体どうしは、ポリゴンの凹凸程度で線が出ないよう許容量を広げる（自分自身に隠れる部分などの本当の段差は十分大きい）
+	float3 ToNeighbor = NeighborRec.Position - Rec.Position;
+	float NeighborFromCenterPlane = abs(dot(ToNeighbor, CenterNormal));
+	float CenterFromNeighborPlane = abs(dot(ToNeighbor, NeighborRec.Normal));
+	float Tolerance = ToonOutlineThreshold * OffsetDistance * (NeighborRec.ObjectId == Rec.ObjectId ? TOON_OUTLINE_SAME_OBJECT_SCALE : 1.0f)
+		* (bFaceArea ? ToonFaceOutlineTolerance : 1.0f);
+	Gap = max(NeighborFromCenterPlane, CenterFromNeighborPlane);
+	return Gap > Tolerance;
+}
+
+// 奥行きで太さが変わる線：奥行きの差（cm）から、線の太さの倍率を決める
+// 接している部分や面の折れ目（差が小さい）は ToonOutlineThinScale、背景から大きく離れた輪郭（差が ToonOutlineDepthRange 以上）は ToonOutlineThickScale
+// 手描きの線のように、外側の輪郭は太く、内側の線は細くなる
+float GetToonOutlineDepthScale(float Gap)
+{
+	return bToonOutlineDepthWidth != 0 ? lerp(ToonOutlineThinScale, ToonOutlineThickScale, saturate(Gap / max(ToonOutlineDepthRange, 1.0e-3f))) : 1.0f;
+}
+
 float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 {
 	// 線の太さは、中心に見えている物体ごとに決める（物体の輪郭の線は、手前の物体の側に引かれる）
@@ -335,73 +414,29 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 	{
 		return 0.0f;
 	}
-	float2 OffsetUV = Rec.Material.OutlineWidth / (float2)ViewRectSize;
 	float2 Directions[4] = { float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f) };
 
-	// 中心の点の法線は、GBuffer の滑らかな法線（ApplyGBufferNormal 済み）を使う
-	// ポリゴンごとの法線だと、浅い角度で見た輪郭付近でばらつき、輪郭の内側にかすれた線が出るため
-	float3 CenterNormal = Rec.Normal;
+	// 奥行きで太さが変わる線では、まずいちばん太い線の幅で補助レイを飛ばして奥行きの差を調べ、
+	// 差から決めた太さがそれより細ければ、その太さで補助レイを飛ばし直す（線になるピクセルの候補だけ 1 本増える）
+	float BaseWidth = Rec.Material.OutlineWidth;
+	float MaxWidth = BaseWidth * (bToonOutlineDepthWidth != 0 ? max(ToonOutlineThinScale, ToonOutlineThickScale) : 1.0f);
 
 	[loop]
 	for (uint Index = 0; Index < 4; ++Index)
 	{
-		float2 NeighborUV = UV + Directions[Index] * OffsetUV;
-		FToonRay NeighborRay = GenerateCameraRay(NeighborUV);
-
-		// 補助レイでも面の向きが必要。カメラから直接見える点なので、GBuffer の法線に置き換えられる場合は
-		// 法線を求める補助レイを省き（負荷の大半はここ）、置き換えられない場合だけ法線まで求め直す
-		// 解析的な物体では、煙（輪郭を持たない）を無視して、その奥の物体で線を判定する
-		FToonHitRecord NeighborRec = (FToonHitRecord)0;
-		bool bNeighborHit;
-		if (TraceMode == 0)
-		{
-			bNeighborHit = HitWorld(NeighborRay, 0.0f, 1.0e8f, NeighborRec, false);
-		}
-		else
-		{
-			bNeighborHit = HitCameraVisible(NeighborRay, NeighborUV, NeighborRec, false);
-			if (bNeighborHit && !(bUseGBufferNormal != 0 && IsGBufferSamePoint(NeighborUV, NeighborRec.Position, NeighborRec.T)))
-			{
-				NeighborRec = (FToonHitRecord)0;
-				HitCameraVisible(NeighborRay, NeighborUV, NeighborRec);
-			}
-		}
-		if (!bNeighborHit)
-		{
-			return 1.0f;
-		}
-		ApplyGBufferSurface(NeighborUV, NeighborRay, NeighborRec);
-
-		// 補助レイをずらした量を、中心のヒット位置での距離（cm）に換算したもの
-		float OffsetDistance = max(Rec.T * length(NeighborRay.Direction - Ray.Direction), 1.0e-3f);
-
-		// 遠く手前にある別の物体（遮っている物体）に当たった場合は、その物体の側で線が引かれるのでここでは引かない
-		// 角で接している面同士は距離の差がずらした量と同程度なので、ここでは除外しない
-		if (NeighborRec.ObjectId != Rec.ObjectId && Rec.T - NeighborRec.T > TOON_OUTLINE_OCCLUDER_GAP * OffsetDistance)
+		float Gap;
+		if (!ToonOutlineProbe(UV, Ray, Rec, Directions[Index], MaxWidth, Gap))
 		{
 			continue;
 		}
-
-		// 顔の中（同じキャラクターで、中心と補助レイの点の両方が顔のパーツ）は、唇や鼻の小さな凹凸に線を出さない
-		// 見下ろす角度では口のテクスチャがつぶれて見えなくなり、唇の凹凸の線だけが「ω」のように残って不自然になるため
-		// 面の折れ目では線を引かず、段差の許容量を広げる
-		// 顔と首・髪・背景の境目（あごや頬の輪郭）は、片方が顔ではないので、今までどおり線を引く
-		bool bFaceArea = NeighborRec.ObjectId == Rec.ObjectId && Rec.Material.bFace != 0 && NeighborRec.Material.bFace != 0;
-
-		// 面の折れ目
-		if (!bFaceArea && dot(CenterNormal, NeighborRec.Normal) < TOON_OUTLINE_CREASE_COS)
+		float Width = BaseWidth * GetToonOutlineDepthScale(Gap);
+		if (Width >= MaxWidth * 0.99f)
 		{
 			return 1.0f;
 		}
-
-		// 物体の輪郭や奥行きの段差：お互いの平面からの距離（面に垂直な方向）
-		// 同じ物体どうしは、ポリゴンの凹凸程度で線が出ないよう許容量を広げる（自分自身に隠れる部分などの本当の段差は十分大きい）
-		float3 ToNeighbor = NeighborRec.Position - Rec.Position;
-		float NeighborFromCenterPlane = abs(dot(ToNeighbor, CenterNormal));
-		float CenterFromNeighborPlane = abs(dot(ToNeighbor, NeighborRec.Normal));
-		float Tolerance = ToonOutlineThreshold * OffsetDistance * (NeighborRec.ObjectId == Rec.ObjectId ? TOON_OUTLINE_SAME_OBJECT_SCALE : 1.0f)
-			* (bFaceArea ? ToonFaceOutlineTolerance : 1.0f);
-		if (max(NeighborFromCenterPlane, CenterFromNeighborPlane) > Tolerance)
+		// 細い線：その太さの位置でも線になるか（輪郭までの距離が太さ以内か）を確かめる
+		float NearGap;
+		if (ToonOutlineProbe(UV, Ray, Rec, Directions[Index], max(Width, 0.25f), NearGap))
 		{
 			return 1.0f;
 		}
