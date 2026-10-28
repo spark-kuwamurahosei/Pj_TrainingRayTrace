@@ -357,6 +357,8 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		// カメラが動いている間（蓄積をやり直したピクセル）と物体が動いている間は、サンプル数を減らして負荷を下げる
 		// TSR の前に描く場合は、ピクセル中心に 1 本だけ（TSR がジッターを使ってアンチエイリアスする）
 		uint NumSamples = bBeforeTSR != 0 ? 1u : ((HistoryFrames == 0 || bSceneMoving) ? MotionSamplesPerPixel : SamplesPerPixel);
+		// 照り返しのレイは、ピクセル全体で ToonIndirectSamples 本になるよう、サンプルに分けて飛ばす（最低 1 本）
+		ToonIndirectSamplesPerHit = max(1u, ToonIndirectSamples / max(NumSamples, 1u));
 		[loop]
 		for (uint SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
 		{
@@ -388,6 +390,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			if (SampleIndex == 0)
 			{
 				ToonPixelOutline = 0.0f;
+				ToonPixelReflectedOutline = 0.0f;
 			}
 
 			FToonRay Ray = GenerateCameraRay(UV);

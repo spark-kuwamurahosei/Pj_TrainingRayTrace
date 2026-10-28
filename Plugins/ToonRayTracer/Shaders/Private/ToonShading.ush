@@ -1040,6 +1040,11 @@ float3 GetToonSkyHue()
 // コサイン分布で選ぶので、周りの面の色をそのまま平均すれば、拡散反射で受け取る光になる（重みは 1）
 // 負荷を抑えるため、当たった面の法線は補助レイで求めず、画面に映っていれば GBuffer の法線、映っていなければ光が当たる向きとみなす
 // 色も同じく、画面に映っていれば GBuffer の色、映っていなければ物体ごとの代表色を使う。空に抜けたレイは何も足さない（空の色は SkyTint で扱う）
+// 照り返しのレイの本数（1 か所の面あたり）。0 なら ToonIndirectSamples のまま
+// RayGen が、1 ピクセルのサンプル数で ToonIndirectSamples を割った本数（最低 1 本）にする
+// ピクセル全体の本数を ToonIndirectSamples に保ち、動いている間（サンプル数が多い間）にレイが増えすぎないようにする
+static uint ToonIndirectSamplesPerHit = 0;
+
 float3 ComputeToonIndirect(FToonHitRecord Rec, float3 GeometricNormal, inout uint RandomState)
 {
 	if (ToonIndirectStrength <= 0.0f || ToonIndirectSamples == 0)
@@ -1049,8 +1054,9 @@ float3 ComputeToonIndirect(FToonHitRecord Rec, float3 GeometricNormal, inout uin
 
 	FToonOnb Onb = MakeOnb(Rec.Normal);
 	float3 Sum = 0.0f;
+	uint NumIndirectSamples = ToonIndirectSamplesPerHit > 0 ? ToonIndirectSamplesPerHit : ToonIndirectSamples;
 	[loop]
-	for (uint SampleIndex = 0; SampleIndex < ToonIndirectSamples; ++SampleIndex)
+	for (uint SampleIndex = 0; SampleIndex < NumIndirectSamples; ++SampleIndex)
 	{
 		FToonRay BounceRay;
 		BounceRay.Origin = Rec.Position + GeometricNormal * ToonShadowBias;
@@ -1101,7 +1107,7 @@ float3 ComputeToonIndirect(FToonHitRecord Rec, float3 GeometricNormal, inout uin
 		}
 		Sum += Hit.Material.Albedo * lerp(GetToonCharacterLook(Hit.Material.Character).ShadowColor, ToonLightColor, Level);
 	}
-	return Sum / (float)ToonIndirectSamples;
+	return Sum / (float)NumIndirectSamples;
 }
 
 // 髪の帯状のハイライト（天使の輪）：頭の中心を求めるときの、顔の中心（両目の中点）からの後ろと上へのずらし（顔の半分の幅を 1 とする）
