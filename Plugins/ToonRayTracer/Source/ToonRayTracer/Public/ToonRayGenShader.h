@@ -249,6 +249,10 @@ class FToonRayGenShader : public FGlobalShader
 		// 映り込みの中の線、鏡に映ったキャラクターもトゥーンで描くか
 		SHADER_PARAMETER(uint32, bToonReflectionOutline)
 		SHADER_PARAMETER(uint32, bToonReflectionCharacters)
+		// つやのある床への映り込み：有効か、強さ、映り込むラフネスの上限
+		SHADER_PARAMETER(uint32, bToonFloorReflection)
+		SHADER_PARAMETER(float, ToonFloorReflectionStrength)
+		SHADER_PARAMETER(float, ToonFloorReflectionRoughness)
 		// 影の形を整える、くぼみの線、TSR の前に描くときの明るさの上限
 		SHADER_PARAMETER(uint32, ToonShadowSimplify)
 		SHADER_PARAMETER(float, ToonShadowSimplifyRadius)

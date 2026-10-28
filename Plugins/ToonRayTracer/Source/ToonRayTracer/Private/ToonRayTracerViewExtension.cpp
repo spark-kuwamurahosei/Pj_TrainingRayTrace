@@ -332,6 +332,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	const float ToonBeforeTSRMaxBrightness = FMath::Clamp(CVarToonRayTracerToonBeforeTSRMaxBrightness.GetValueOnRenderThread(), 0.1f, 1.0f);
 	const uint32 bToonReflectionOutline = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonReflectionOutline.GetValueOnRenderThread(), 0, 1));
 	const uint32 bToonReflectionCharacters = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonReflectionCharacters.GetValueOnRenderThread(), 0, 1));
+	const uint32 bToonFloorReflection = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonFloorReflection.GetValueOnRenderThread(), 0, 1));
+	const float ToonFloorReflectionStrength = FMath::Clamp(CVarToonRayTracerToonFloorReflectionStrength.GetValueOnRenderThread(), 0.0f, 1.0f);
+	const float ToonFloorReflectionRoughness = FMath::Clamp(CVarToonRayTracerToonFloorReflectionRoughness.GetValueOnRenderThread(), 0.0f, 1.0f);
 	const uint32 bToonCaustics = static_cast<uint32>(FMath::Clamp(CVarToonRayTracerToonCaustics.GetValueOnRenderThread(), 0, 1));
 	const float ToonCausticStrength = FMath::Max(CVarToonRayTracerToonCausticStrength.GetValueOnRenderThread(), 0.0f);
 	const float ToonCausticThreshold = FMath::Max(CVarToonRayTracerToonCausticThreshold.GetValueOnRenderThread(), 0.1f);
@@ -466,6 +469,7 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCausticThreshold));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(bToonReflectionOutline));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(bToonReflectionCharacters));
+	CharacterHash = HashCombine(CharacterHash, HashCombine(GetTypeHash(bToonFloorReflection), HashCombine(GetTypeHash(ToonFloorReflectionStrength), GetTypeHash(ToonFloorReflectionRoughness))));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonShadowSimplify));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonShadowSimplifyRadius));
 	CharacterHash = HashCombine(CharacterHash, GetTypeHash(ToonCrease));
@@ -793,6 +797,9 @@ FScreenPassTexture ToonRayTracerViewExtension::RenderToonRayTracing(FRDGBuilder&
 	PassParameters->ToonCausticThreshold = ToonCausticThreshold;
 	PassParameters->bToonReflectionOutline = bToonReflectionOutline;
 	PassParameters->bToonReflectionCharacters = bToonReflectionCharacters;
+	PassParameters->bToonFloorReflection = bToonFloorReflection;
+	PassParameters->ToonFloorReflectionStrength = ToonFloorReflectionStrength;
+	PassParameters->ToonFloorReflectionRoughness = ToonFloorReflectionRoughness;
 	PassParameters->ToonShadowSimplify = ToonShadowSimplify;
 	PassParameters->ToonShadowSimplifyRadius = ToonShadowSimplifyRadius;
 	PassParameters->ToonCrease = ToonCrease;

@@ -20,9 +20,19 @@
 // 金属やガラスに当たったら、反射・屈折の先も同じトゥーンの陰影で描く（様式化された反射）
 // ノイズを出さないため、金属のぼけは使わずくっきりした鏡面反射にし、ガラスは反射と屈折をフレネル反射率で混ぜる
 // GBuffer の滑らかな法線とアウトラインは、カメラから直接見えている面にだけ使う
+// キャラクターだけトゥーンにするときの、つやのある床への映り込みか
+// 床そのものは通常の描画のまま残し、トゥーンで描いた映り込み（映ったキャラクター）だけを、最後に床の色へ重ねる
+bool IsToonFloorOverlayMode()
+{
+	return bToonCharacterOnly != 0 && TraceMode != 0 && ShadingMode == 3;
+}
+// そのサンプルで、映り込みを床の色に重ねる強さ（RayColorToon が設定する。重ねないなら 0）
+static float ToonFloorOverlaySample = 0.0f;
+
 float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 {
 	ToonGlowSample = 0.0f;
+	ToonFloorOverlaySample = 0.0f;
 	ToonCameraCrease = 0.0f;
 	ToonCameraMetalTint = 1.0f;
 	float3 DebugColor;
@@ -42,6 +52,8 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 	FToonCameraOverlay Overlay = GetDefaultCameraOverlay();
 	// カメラから見えている面が鏡のような金属か（映り込みの中の線を引くため）
 	bool bCameraMetal = false;
+	// カメラから見えている面が、つやのある床か（映り込みの強さ）
+	float CameraFloorReflection = 0.0f;
 
 	// 1本のレイから最大2本に分かれるため、処理するレイの総数にも上限を設ける
 	[loop]
@@ -81,6 +93,7 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 				return DebugColor;
 			}
 			bCameraMetal = Rec.Material.Type == TOON_MATERIAL_METAL;
+			CameraFloorReflection = GetToonFloorReflection(Rec, Current.Ray);
 		}
 		else
 		{
@@ -108,13 +121,29 @@ float3 RayColorToon(float2 UV, FToonRay CameraRay, inout uint RandomState)
 		if (!bReflective || Current.Depth >= ToonReflectionDepth)
 		{
 			// 普通の素材か、反射回数の上限に達した場合は、その場で塗って終わる（黒にはしない）
+			// つやのある床への映り込み：床の反射の方向へレイを積み、床の色と映り込みを強さで混ぜる
+			// キャラクターだけトゥーンにするときは、床は通常の描画のまま残すので、映り込みだけを描く（床の色には最後に重ねる）
+			if (bCameraRay && CameraFloorReflection > 0.0f)
+			{
+				bool bOverlay = IsToonFloorOverlayMode();
+				PushToonPendingRay(Pending, NumPending, Rec.Position, SafeNormalize(reflect(Current.Ray.Direction, Rec.Normal), Rec.Normal),
+					Current.Throughput * (bOverlay ? 1.0f : CameraFloorReflection), 1);
+				if (bOverlay)
+				{
+					Overlay = GetDefaultCameraOverlay();
+					ToonFloorOverlaySample = CameraFloorReflection;
+					continue;
+				}
+				Current.Throughput *= 1.0f - CameraFloorReflection;
+			}
+
 			float LightLevel;
 			float3 Shaded = ShadeToonOpaque(Rec, Current.Ray, GeometricNormal, RandomState, bCameraRay, LightLevel);
-			// 映り込みの中の線：カメラから見えている金属に、1 回反射して映った物体
-			if (bCameraMetal && Current.Depth == 1)
+			// 映り込みの中の線：カメラから見えている金属やつやのある床に、1 回反射して映った物体
+			if ((bCameraMetal || CameraFloorReflection > 0.0f) && Current.Depth == 1)
 			{
 				// 映ったキャラクターには、金属の色を弱めて掛ける（色付きの金属でも、キャラクターの色が分かるように）
-				if (Rec.Material.bCharacter != 0)
+				if (bCameraMetal && Rec.Material.bCharacter != 0)
 				{
 					float3 Tint = max(ToonCameraMetalTint, 1.0e-3f);
 					Shaded *= lerp(1.0f, Tint, TOON_REFLECTION_CHARACTER_TINT) / Tint;
@@ -167,7 +196,7 @@ bool IsNeutralMirrorColor(float3 Color)
 	return MaxChannel > 1.0e-3f && (MaxChannel - MinChannel) / MaxChannel <= TOON_REFLECTION_NEUTRAL_SATURATION;
 }
 
-// 鏡のような金属のピクセル（UV）で反射したレイの先がキャラクターか
+// 鏡のような金属か、つやのある床のピクセル（UV）で、反射したレイの先がキャラクターか
 bool IsCharacterReflectedAt(float2 UV)
 {
 	FToonRay Ray = GenerateCameraRay(UV);
@@ -177,7 +206,8 @@ bool IsCharacterReflectedAt(float2 UV)
 		return false;
 	}
 	ApplyGBufferSurface(UV, Ray, Rec);
-	if (Rec.Material.Type != TOON_MATERIAL_METAL || !IsNeutralMirrorColor(Rec.Material.Albedo))
+	bool bMirror = bToonReflectionCharacters != 0 && Rec.Material.Type == TOON_MATERIAL_METAL && IsNeutralMirrorColor(Rec.Material.Albedo);
+	if (!bMirror && GetToonFloorReflection(Rec, Ray) <= 0.0f)
 	{
 		return false;
 	}
@@ -203,14 +233,28 @@ bool IsToonTargetPixel(float2 UV)
 	// 鏡に映ったキャラクター：鏡のような金属のピクセルで、反射したレイの先がキャラクターなら、トゥーンで描く
 	// （通常の描画では、鏡に映ったキャラクターは Lumen の反射になり、トゥーンの塗りや線が入らないため）
 	// 通常の描画の反射のにじみを覆うため、となりのピクセルの映り込みも調べる
-	if (bToonReflectionCharacters != 0)
+	if (bToonReflectionCharacters == 0 && bToonFloorReflection == 0)
 	{
-		ApplyGBufferSurface(UV, Ray, Rec);
-		if (Rec.Material.Type == TOON_MATERIAL_METAL)
+		return false;
+	}
+	ApplyGBufferSurface(UV, Ray, Rec);
+	// つやのある床に映ったキャラクター：床の反射の先がキャラクターなら、映り込みをトゥーンで描いて床に重ねる（床はとなりを調べない）
+	bool bMirror = bToonReflectionCharacters != 0 && Rec.Material.Type == TOON_MATERIAL_METAL;
+	if (!bMirror && GetToonFloorReflection(Rec, Ray) <= 0.0f)
+	{
+		return false;
+	}
+	// TraceRay を呼ぶ箇所を増やさないよう、調べる位置をループで回し、IsCharacterReflectedAt の呼び出しを 1 か所にする
+	// （レイトレーシングのシェーダーは TraceRay を呼ぶ箇所が多いほど、ドライバーの組み立てと実行が急激に重くなり、GPU が止まることがある）
+	float2 Offset = TOON_REFLECTION_TARGET_DILATE_PIXELS / (float2)ViewRectSize;
+	float2 Offsets[5] = { float2(0.0f, 0.0f), float2(Offset.x, 0.0f), float2(-Offset.x, 0.0f), float2(0.0f, Offset.y), float2(0.0f, -Offset.y) };
+	uint NumOffsets = bMirror ? 5u : 1u;
+	[loop]
+	for (uint Index = 0; Index < NumOffsets; ++Index)
+	{
+		if (IsCharacterReflectedAt(UV + Offsets[Index]))
 		{
-			float2 Offset = TOON_REFLECTION_TARGET_DILATE_PIXELS / (float2)ViewRectSize;
-			return IsCharacterReflectedAt(UV) || IsCharacterReflectedAt(UV + float2(Offset.x, 0.0f)) || IsCharacterReflectedAt(UV - float2(Offset.x, 0.0f))
-				|| IsCharacterReflectedAt(UV + float2(0.0f, Offset.y)) || IsCharacterReflectedAt(UV - float2(0.0f, Offset.y));
+			return true;
 		}
 	}
 	return false;
@@ -231,6 +275,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	if (AccumulatedFrames > 0)
 	{
 		History = AccumulationTexture[LocalPixel];
+		// a の整数部は蓄積したフレーム数、小数部はつやのある床の映り込みを重ねる強さ（キャラクターだけトゥーンにするとき）
 		HistoryFrames = (uint)History.a;
 	}
 
@@ -287,6 +332,8 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 	}
 
 	float3 Color;
+	// つやのある床の映り込みを、通常の描画の床の色に重ねる強さ（0 なら重ねない）
+	float FloorOverlayWeight = frac(History.a);
 	if (!bSceneMoving && HistoryFrames >= MaxFrames)
 	{
 		// 蓄積数の上限に達したら、それ以上レイを飛ばさず蓄積済みの平均をそのまま表示する
@@ -305,6 +352,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		// フェーズ5：ピクセル内のランダムな位置に複数のレイを飛ばして平均する（本の第8章）
 		float3 ColorSum = 0.0f;
 		float4 GlowSum = 0.0f;
+		float FloorOverlaySum = 0.0f;
 		uint ValidSamples = 0;
 		// カメラが動いている間（蓄積をやり直したピクセル）と物体が動いている間は、サンプル数を減らして負荷を下げる
 		// TSR の前に描く場合は、ピクセル中心に 1 本だけ（TSR がジッターを使ってアンチエイリアスする）
@@ -343,6 +391,7 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			{
 				ColorSum += SampleColor;
 				GlowSum += all(isfinite(ToonGlowSample)) ? ToonGlowSample : 0.0f;
+				FloorOverlaySum += ToonFloorOverlaySample;
 				++ValidSamples;
 			}
 		}
@@ -364,7 +413,9 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 				? lerp(GlowHistory, Glow, 1.0f / (float)(PreviousFrames + 1))
 				: GlowHistory;
 		}
-		AccumulationTexture[LocalPixel] = float4(Color, (float)(PreviousFrames + 1));
+		// 床に重ねる強さはピクセルの中心で決まるので、平均したものをそのまま使う（小数部に入れるため 1 未満に抑える）
+		FloorOverlayWeight = ValidSamples > 0 ? min(FloorOverlaySum / (float)ValidSamples, 0.99f) : FloorOverlayWeight;
+		AccumulationTexture[LocalPixel] = float4(Color, (float)(PreviousFrames + 1) + FloorOverlayWeight);
 		ToonGlowTexture[LocalPixel] = Glow;
 	}
 
@@ -399,6 +450,12 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 		{
 			Color += max(ToonEmissiveTexture.Load(int3(GetGBufferPixel(CenterUV), 0)).rgb, 0.0f) * ToonEmissiveStrength;
 		}
+	}
+
+	// つやのある床への映り込み（キャラクターだけトゥーンにするとき）：トゥーンで描いた映り込みを、通常の描画の床の色に強さの分だけ重ねる
+	if (FloorOverlayWeight > 0.0f)
+	{
+		Color = lerp(SceneColorTexture.Load(int3(ViewRectMin + LocalPixel, 0)).rgb, Color, FloorOverlayWeight);
 	}
 
 	// 確認用：蓄積をやり直した理由を色で表示する

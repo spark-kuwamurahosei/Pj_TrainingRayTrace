@@ -232,6 +232,18 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "鏡に映ったキャラクターもトゥーン", ClampMin = "0", ClampMax = "1"))
 	int32 ReflectionCharacters;
 
+	/** 上を向いたつやのある面（ラフネスが小さい床）に、映った物体をトゥーンの塗りと線のまま薄く重ねる。キャラクターだけトゥーンにするときは、映ったキャラクターだけを通常の描画の床に重ねる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "つやのある床への映り込み"))
+	bool bFloorReflection;
+
+	/** 完全になめらかな床での映り込みの強さ。ラフネスが大きい床ほど弱く、浅い角度から見るほど強くなる */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "床の映り込みの強さ", ClampMin = "0.0", ClampMax = "1.0", EditCondition = "bFloorReflection"))
+	float FloorReflectionStrength;
+
+	/** ラフネスがこの値以下の床に映り込む */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "床の映り込みのラフネスの上限", ClampMin = "0.0", ClampMax = "1.0", EditCondition = "bFloorReflection"))
+	float FloorReflectionRoughness;
+
 	/** 光に垂直な方向へ「太さ」の分だけずらした点からもシャドウレイを飛ばし、どれか 1 本でも光が届けば明るい面にする。細い物（髪の毛先など）の影は消え、大きな影の輪郭は単純になる。0：なし、1：キャラクターに落ちる影だけ、2：すべての面 */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "影の形を整える", ClampMin = "0", ClampMax = "2"))
 	int32 ShadowSimplify;

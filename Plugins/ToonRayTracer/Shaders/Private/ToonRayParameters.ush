@@ -277,6 +277,12 @@ float ToonCausticThreshold;
 // ・bToonReflectionCharacters：1 なら、キャラクターだけトゥーンにするとき、鏡のような金属に映ったキャラクターもトゥーンで描く
 uint bToonReflectionOutline;
 uint bToonReflectionCharacters;
+// つやのある床への映り込み
+// ・bToonFloorReflection：1 なら、上を向いたつやのある面（GBuffer のラフネスが ToonFloorReflectionRoughness 以下）に映り込みを重ねる
+// ・ToonFloorReflectionStrength：完全になめらかな床での映り込みの強さ
+uint bToonFloorReflection;
+float ToonFloorReflectionStrength;
+float ToonFloorReflectionRoughness;
 // 影の形を整える
 // ・ToonShadowSimplify：0 ならなし、1 ならキャラクターに落ちる影だけ、2 ならすべての面
 // ・ToonShadowSimplifyRadius：シャドウレイの太さ（cm）。光に垂直な方向へこれだけずらした点からも飛ばし、どれか 1 本でも光が届けば明るい面にする
