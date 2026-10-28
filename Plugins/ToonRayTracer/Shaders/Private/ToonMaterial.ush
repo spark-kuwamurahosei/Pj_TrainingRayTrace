@@ -47,6 +47,8 @@ struct FToonMaterial
 	float HairHighlightMask;
 	// マテリアルの発光（カメラから見えている面だけ。影や光の向きに関係なく足す）
 	float3 Emissive;
+	// GBuffer のラフネス（カメラから見えている面だけ。つやのある床への映り込みに使う）。読んでいなければ 1
+	float GBufferRoughness;
 	// キャラクターごとの設定の番号（ToonCharacterLook0 などの添え字）。なければ -1
 	int Character;
 	// Original モード：ゲームのテクスチャの値（Two Sided Foliage のマテリアルの GBuffer から読む）
@@ -74,6 +76,7 @@ FToonMaterial GetDefaultMaterial()
 	Material.bCharacter = 0;
 	Material.Character = -1;
 	Material.Emissive = 0.0f;
+	Material.GBufferRoughness = 1.0f;
 	Material.bSkin = 0;
 	Material.bEye = 0;
 	Material.bNoEyelidShadow = 0;

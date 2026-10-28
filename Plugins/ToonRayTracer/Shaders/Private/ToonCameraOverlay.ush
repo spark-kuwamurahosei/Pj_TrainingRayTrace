@@ -227,7 +227,7 @@ void ApplyToonCameraLighting(FToonHitRecord Rec, float LightLevel, inout FToonCa
 // ・映り込みの先が空（何にも当たらない）なら、映った物体の輪郭
 // ・遠く手前の別の物体なら、その物体の側で線を引くのでここでは引かない
 // ・お互いの平面からの距離（段差）が、ずらした量に比べて大きければ、輪郭や奥行きの段差
-// となりが金属でなければ（鏡の縁）、映り込みの線は引かない
+// となりが金属でもつやのある床でもなければ（鏡の縁）、映り込みの線は引かない
 // OutLineColor には線の色（キャラクターなら素材の色を暗くした色）を返す
 float ToonReflectedOutline(float2 UV, FToonRay CameraRay, FToonRay ReflectedRay, FToonHitRecord Rec, out float3 OutLineColor)
 {
@@ -260,7 +260,7 @@ float ToonReflectedOutline(float2 UV, FToonRay CameraRay, FToonRay ReflectedRay,
 			continue;
 		}
 		ApplyGBufferSurface(NeighborUV, NeighborRay, Mirror);
-		if (Mirror.Material.Type != TOON_MATERIAL_METAL)
+		if (Mirror.Material.Type != TOON_MATERIAL_METAL && GetToonFloorReflection(Mirror, NeighborRay) <= 0.0f)
 		{
 			continue;
 		}

@@ -410,6 +410,8 @@ void ApplyGBufferMaterial(int2 GBufferPixel, inout FToonHitRecord Rec)
 	float3 BaseColor = GBufferCTexture.Load(int3(GBufferPixel, 0)).rgb;
 	// 髪のハイライトの形：マテリアルの Specular（GBufferB の g）。使うのは「髪のハイライトをテクスチャから描く」キャラクターの髪だけ
 	Rec.Material.HairHighlightMask = GBufferB.g;
+	// つやのある床への映り込み：GBufferB の b にはラフネスが入っている
+	Rec.Material.GBufferRoughness = GBufferB.b;
 	if (bUseGBufferBaseColor != 0)
 	{
 		Rec.Material.Albedo = BaseColor;

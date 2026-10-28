@@ -786,6 +786,23 @@ float3 ComputeToonLocalLight(FToonHitRecord Rec, float3 GeometricNormal)
 	return Sum * ToonLocalLightStrength;
 }
 
+// つやのある床への映り込みの強さ（0 なら映り込まない）
+// 上を向いた（法線の上向きの成分が TOON_FLOOR_REFLECTION_MIN_UP 以上の）普通の素材の面で、GBuffer のラフネスが上限以下の面に映り込む
+// 強さは、なめらかな床ほど強く、浅い角度から見るほど強くする（床の映り込みは、遠くの床ほどはっきり見えるため）
+// カメラから見えている面だけ（ラフネスは GBuffer から読む）
+#define TOON_FLOOR_REFLECTION_MIN_UP 0.7f
+float GetToonFloorReflection(FToonHitRecord Rec, FToonRay Ray)
+{
+	if (bToonFloorReflection == 0 || TraceMode == 0 || Rec.Material.Type != TOON_MATERIAL_DEFAULT || Rec.Material.bCharacter != 0
+		|| Rec.Normal.z < TOON_FLOOR_REFLECTION_MIN_UP || Rec.Material.GBufferRoughness > ToonFloorReflectionRoughness)
+	{
+		return 0.0f;
+	}
+	float Smoothness = saturate(1.0f - Rec.Material.GBufferRoughness / max(ToonFloorReflectionRoughness, 1.0e-3f));
+	float Grazing = Pow5(1.0f - saturate(dot(Rec.Normal, -Ray.Direction)));
+	return ToonFloorReflectionStrength * lerp(0.5f, 1.0f, Smoothness) * lerp(0.6f, 1.0f, Grazing);
+}
+
 // 耳や指の光の透け（0：透けない、0.5：透ける、1：とても薄くて強く透ける）
 // 逆光のとき、光の当たらない側から見た肌のうち、光の方向の厚みが薄い部分（耳たぶや指先）だけを、透けた光の色で塗る
 // 厚みは、光の方向へ厚みの距離だけ離れた外の点から、面の点へ向けて短いレイを飛ばして測る。反対側の面（光の側を向いた面）に当たれば薄い

@@ -183,6 +183,9 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	CausticThreshold = 1.5f;
 	ReflectionOutline = 1;
 	ReflectionCharacters = 1;
+	bFloorReflection = true;
+	FloorReflectionStrength = 0.5f;
+	FloorReflectionRoughness = 0.2f;
 	ShadowSimplify = 1;
 	ShadowSimplifyRadius = 8.0f;
 	Crease = 0;
@@ -357,6 +360,9 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CausticThreshold"), CausticThreshold);
 	SetInt(TEXT("r.ToonRayTracer.Toon.ReflectionOutline"), ReflectionOutline);
 	SetInt(TEXT("r.ToonRayTracer.Toon.ReflectionCharacters"), ReflectionCharacters);
+	SetBool(TEXT("r.ToonRayTracer.Toon.FloorReflection"), bFloorReflection);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.FloorReflectionStrength"), FloorReflectionStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.FloorReflectionRoughness"), FloorReflectionRoughness);
 	SetInt(TEXT("r.ToonRayTracer.Toon.ShadowSimplify"), ShadowSimplify);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.ShadowSimplifyRadius"), ShadowSimplifyRadius);
 	SetInt(TEXT("r.ToonRayTracer.Toon.Crease"), Crease);
@@ -538,6 +544,9 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CausticThreshold"), CausticThreshold);
 	GetInt(TEXT("r.ToonRayTracer.Toon.ReflectionOutline"), ReflectionOutline);
 	GetInt(TEXT("r.ToonRayTracer.Toon.ReflectionCharacters"), ReflectionCharacters);
+	GetBool(TEXT("r.ToonRayTracer.Toon.FloorReflection"), bFloorReflection);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.FloorReflectionStrength"), FloorReflectionStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.FloorReflectionRoughness"), FloorReflectionRoughness);
 	GetInt(TEXT("r.ToonRayTracer.Toon.ShadowSimplify"), ShadowSimplify);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.ShadowSimplifyRadius"), ShadowSimplifyRadius);
 	GetInt(TEXT("r.ToonRayTracer.Toon.Crease"), Crease);

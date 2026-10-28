@@ -234,6 +234,25 @@ namespace ToonRayTracerCVars
 		TEXT("With CharacterOnly, also paints characters reflected in mirror-like metal surfaces with toon shading and outlines (pixels whose reflection hits a character are drawn by the toon pass instead of the normal rendering) (1: on, 0: off)"),
 		ECVF_RenderThreadSafe);
 
+	// つやのある床への映り込み：上を向いたつやのある面（GBuffer のラフネスが小さい面）に、映った物体をトゥーンのまま薄く重ねる
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonFloorReflection(
+		TEXT("r.ToonRayTracer.Toon.FloorReflection"),
+		1,
+		TEXT("Floor reflection: upward-facing glossy surfaces (GBuffer roughness at or below FloorReflectionRoughness) reflect the scene with toon shading and outlines. With CharacterOnly, only reflected characters are blended over the normal rendering (1: on, 0: off)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFloorReflectionStrength(
+		TEXT("r.ToonRayTracer.Toon.FloorReflectionStrength"),
+		0.5f,
+		TEXT("Strength of the floor reflection on a perfectly smooth floor. Weaker for rougher floors, and stronger at grazing angles"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonFloorReflectionRoughness(
+		TEXT("r.ToonRayTracer.Toon.FloorReflectionRoughness"),
+		0.2f,
+		TEXT("Floors whose GBuffer roughness is at or below this value reflect"),
+		ECVF_RenderThreadSafe);
+
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonCaustics(
 		TEXT("r.ToonRayTracer.Toon.Caustics"),
 		1,
