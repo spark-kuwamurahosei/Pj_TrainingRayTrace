@@ -164,6 +164,26 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "肌の影色", HideAlphaChannel, EditCondition = "bSkin"))
 	FLinearColor SkinShadowColor;
 
+	/** 耳や指の光の透け：逆光のとき、肌の薄い部分（耳たぶや指先）だけを、赤みのある明るい色でくっきり塗る */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "耳や指の光の透け", EditCondition = "bSkin"))
+	bool bTranslucency;
+
+	/** 光の透けの強さ */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "光の透けの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0", EditCondition = "bSkin && bTranslucency"))
+	float TranslucencyStrength;
+
+	/** 光の方向の厚みがこれより薄い肌が光る（cm）。半分以下はさらに明るい段階 */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "光が透ける厚み（cm）", ClampMin = "0.0", UIMin = "0.1", UIMax = "10.0", EditCondition = "bSkin && bTranslucency"))
+	float TranslucencyThickness;
+
+	/** カメラの向きと光源の方向の角度がこの中なら、逆光とみなして透けを出す（度） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "逆光とみなす角度", ClampMin = "0.0", ClampMax = "90.0", UIMin = "0.0", UIMax = "90.0", EditCondition = "bSkin && bTranslucency"))
+	float TranslucencyAngle;
+
+	/** 透けた光の色（肌の色と光の色に掛ける） */
+	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "光の透けの色", HideAlphaChannel, EditCondition = "bSkin && bTranslucency"))
+	FLinearColor TranslucencyColor;
+
 	/** 光源の側の輪郭に、一定の幅で入れる明るい縁（リムライト）の強さ。0 なら入れない */
 	UPROPERTY(EditAnywhere, config, Category = "トゥーン|キャラクター", meta = (DisplayName = "リムライトの強さ", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
 	float CharacterRimStrength;

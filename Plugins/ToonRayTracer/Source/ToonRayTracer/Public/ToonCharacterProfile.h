@@ -52,6 +52,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "顔のスロット", GetOptions = "GetSlotNameOptions"))
 	TArray<FName> FaceSlots;
 
+	/** 肌として扱うパーツ。シェーディングモデルが Subsurface 系でないマテリアルの肌（Default Lit の体や顔の肌など）を指定する。
+	 *  肌用の影の境目と影色（肌を別の塗りにする）と、耳や指の光の透けの対象になる。空ならシェーディングモデルだけで判定する */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "肌のスロット", GetOptions = "GetSlotNameOptions"))
+	TArray<FName> SkinSlots;
+
 	/** 目の表現（陰影なし・上まぶたの影・瞳のハイライト）の対象にするパーツ。瞳の前に重なる透過のパーツも入れる。空なら全体の設定 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "パーツ", meta = (DisplayName = "目のスロット", GetOptions = "GetSlotNameOptions"))
 	TArray<FName> EyeSlots;

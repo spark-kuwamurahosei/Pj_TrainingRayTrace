@@ -167,6 +167,8 @@ bool HitScene(FToonRay Ray, float TMin, inout FToonHitRecord Rec, float SmoothDi
 	Rec.Material.bFace = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.FaceSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
 	// 髪の帯状のハイライト：当たったパーツが髪か
 	Rec.Material.bHair = Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.HairSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
+	// 肌：プロファイルの肌のスロット（シェーディングモデルが Subsurface 系の肌は、GBuffer を読むときに判定する）
+	Rec.Material.bSkin = bToonSkin != 0 && Rec.Material.bCharacter != 0 && IsSlotInMask(Parts.SkinSlotMask, GetPayloadGeometryIndex(CenterPayload)) ? 1u : 0u;
 	Rec.Material.CharacterSlot = Rec.Material.bCharacter != 0 ? GetPayloadGeometryIndex(CenterPayload) : 0xFFFFFFFFu;
 	Rec.Material.bHairHighlightTexture = Rec.Material.bHair != 0 && Parts.bHairHighlightTexture ? 1u : 0u;
 
@@ -397,7 +399,8 @@ void ApplyGBufferMaterial(int2 GBufferPixel, inout FToonHitRecord Rec)
 
 	if (bToonSkin != 0)
 	{
-		Rec.Material.bSkin = (ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE
+		Rec.Material.bSkin = (Rec.Material.bSkin != 0
+			|| ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE
 			|| ShadingModelId == TOON_SHADINGMODELID_PREINTEGRATED_SKIN
 			|| ShadingModelId == TOON_SHADINGMODELID_SUBSURFACE_PROFILE) ? 1u : 0u;
 	}

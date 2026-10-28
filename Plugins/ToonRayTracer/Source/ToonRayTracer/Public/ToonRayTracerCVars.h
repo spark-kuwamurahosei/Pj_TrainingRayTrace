@@ -63,6 +63,15 @@ namespace ToonRayTracerCVars
 
 	inline const FLinearColor DefaultToonSkinShadowColor(0.62f, 0.42f, 0.45f);
 
+	// 耳や指の光の透け：逆光のとき、肌の薄い部分だけを赤みのある明るい色でくっきり塗る
+	extern TAutoConsoleVariable<int32> CVarToonRayTracerToonTranslucency;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonTranslucencyStrength;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonTranslucencyThickness;
+	extern TAutoConsoleVariable<float> CVarToonRayTracerToonTranslucencyAngle;
+	extern TAutoConsoleVariable<FString> CVarToonRayTracerToonTranslucencyColor;
+
+	inline const FLinearColor DefaultToonTranslucencyColor(1.0f, 0.45f, 0.3f);
+
 	// Original ルック フェーズ2：キャラクターのリムライトと線の色
 	extern TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimStrength;
 

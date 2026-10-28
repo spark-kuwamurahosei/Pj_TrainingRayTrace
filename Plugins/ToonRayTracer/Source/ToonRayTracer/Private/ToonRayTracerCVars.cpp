@@ -130,6 +130,37 @@ namespace ToonRayTracerCVars
 		TEXT("Linear RGB tint multiplied with the skin color in shadow bands, as \"R,G,B\""),
 		ECVF_Default);
 
+	// 耳や指の光の透け：逆光のとき、肌の薄い部分（耳たぶや指先）だけを、赤みのある明るい色でくっきり塗る
+	TAutoConsoleVariable<int32> CVarToonRayTracerToonTranslucency(
+		TEXT("r.ToonRayTracer.Toon.Translucency"),
+		1,
+		TEXT("Backlit skin translucency: thin parts of skin (ears, fingers) facing away from the light glow with TranslucencyColor in toon steps (0: off, 1: on)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonTranslucencyStrength(
+		TEXT("r.ToonRayTracer.Toon.TranslucencyStrength"),
+		0.8f,
+		TEXT("Strength of the backlit skin translucency"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonTranslucencyThickness(
+		TEXT("r.ToonRayTracer.Toon.TranslucencyThickness"),
+		2.0f,
+		TEXT("Thickness (cm) toward the light below which skin glows. Half of it or less is the brighter step"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<float> CVarToonRayTracerToonTranslucencyAngle(
+		TEXT("r.ToonRayTracer.Toon.TranslucencyAngle"),
+		60.0f,
+		TEXT("Translucency appears when the angle between the view direction and the direction to the light is within this (degrees)"),
+		ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<FString> CVarToonRayTracerToonTranslucencyColor(
+		TEXT("r.ToonRayTracer.Toon.TranslucencyColor"),
+		TEXT("1.0,0.45,0.3"),
+		TEXT("Linear RGB color of the light passing through thin skin, multiplied with the skin color and the light color, as \"R,G,B\""),
+		ECVF_Default);
+
 	// Original ルック フェーズ2：キャラクターのリムライトと線の色
 	TAutoConsoleVariable<float> CVarToonRayTracerToonCharacterRimStrength(
 		TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"),
@@ -1035,6 +1066,6 @@ namespace ToonRayTracerCVars
 	TAutoConsoleVariable<int32> CVarToonRayTracerDebugGeometry(
 		TEXT("r.ToonRayTracer.Debug.Geometry"),
 		0,
-		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result. 3: triangles treated as the eyes (green) and the rest of the eye slot (red). 4: upper eyelid shadow result on the eyes. 5: N dot H of the eye treated as a sphere (brightness) and the highlight (red). 6: face shadow (yellow: lit, blue: shadow, magenta: no face nearby). 7 / 8: coordinates on the face shadow threshold map (R, G: coarse / fine, B: 1 inside the map), used to make the drawing template"),
+		TEXT("1: debug view of the geometry index (material slot of skeletal meshes) hit by the camera ray. 0 red, 1 green, 2 blue, 3 yellow, 4 magenta, 5 cyan, 6 white, 7 orange, 8+ gray. 2: debug view of the see-through result. 3: triangles treated as the eyes (green) and the rest of the eye slot (red). 4: upper eyelid shadow result on the eyes. 5: N dot H of the eye treated as a sphere (brightness) and the highlight (red). 6: face shadow (yellow: lit, blue: shadow, magenta: no face nearby). 7 / 8: coordinates on the face shadow threshold map (R, G: coarse / fine, B: 1 inside the map), used to make the drawing template. 11: backlit skin translucency (R: skin, G: backlit side facing away from the light, B: thin enough for the light to pass, 0.5 for the first step)"),
 		ECVF_RenderThreadSafe);
 }

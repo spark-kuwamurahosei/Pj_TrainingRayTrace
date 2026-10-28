@@ -226,6 +226,11 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER(uint32, bToonSkin)
 		SHADER_PARAMETER(float, ToonSkinShadowThreshold)
 		SHADER_PARAMETER(FVector3f, ToonSkinShadowColor)
+		// 耳や指の光の透け：強さ（0 なら無効）、光る厚み（cm）、逆光とみなす角度の cos、透けた光の色
+		SHADER_PARAMETER(float, ToonTranslucencyStrength)
+		SHADER_PARAMETER(float, ToonTranslucencyThickness)
+		SHADER_PARAMETER(float, ToonTranslucencyCosAngle)
+		SHADER_PARAMETER(FVector3f, ToonTranslucencyColor)
 		// Original ルック フェーズ2：キャラクターのリムライトの強さと幅（ピクセル）、線の色の倍率
 		SHADER_PARAMETER(float, ToonCharacterRimStrength)
 		SHADER_PARAMETER(float, ToonCharacterRimWidth)
@@ -305,6 +310,7 @@ class FToonRayGenShader : public FGlobalShader
 		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots2, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots3, [MaxFaces])
+		SHADER_PARAMETER_ARRAY(FUintVector4, ToonCharacterSlots4, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams2, [MaxFaces])
 		SHADER_PARAMETER_ARRAY(FVector4f, ToonCharacterParams3, [MaxFaces])

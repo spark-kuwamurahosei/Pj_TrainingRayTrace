@@ -114,6 +114,7 @@ void UToonCharacterProfile::FillCandidates()
 
 	// パーツ：マテリアルスロットの名前に含まれる言葉で分ける
 	FaceSlots.Reset();
+	SkinSlots.Reset();
 	EyeSlots.Reset();
 	HairSlots.Reset();
 	SeeThroughSlots.Reset();
@@ -139,7 +140,13 @@ void UToonCharacterProfile::FillCandidates()
 		{
 			FaceSlots.Add(SlotName);
 		}
+		else if (ContainsAny(Name, { TEXT("skin"), TEXT("hada"), TEXT("肌") }) || Name.EndsWith(TEXT("_sk"), ESearchCase::IgnoreCase))
+		{
+			SkinSlots.Add(SlotName);
+		}
 	}
+	// 顔の肌も肌として扱う
+	SkinSlots.Append(FaceSlots);
 
 	FillSizesFromGlobalSettings();
 	FillLookFromGlobalSettings();

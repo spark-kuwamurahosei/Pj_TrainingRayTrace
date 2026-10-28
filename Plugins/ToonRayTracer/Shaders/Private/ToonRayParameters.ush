@@ -226,6 +226,15 @@ float ToonOriginalReflectionRimStrength;
 Texture2D GBufferDTexture;
 float ToonSkinShadowThreshold;
 float3 ToonSkinShadowColor;
+// 耳や指の光の透け：逆光のとき、肌の薄い部分（耳たぶや指先）だけを、赤みのある明るい色でくっきり塗る
+// ・ToonTranslucencyStrength：強さ（0 なら無効）
+// ・ToonTranslucencyThickness：光の方向の厚みがこれより薄い肌が光る（cm）。半分以下はさらに明るい段階
+// ・ToonTranslucencyCosAngle：カメラの向きと光源の方向の角度がこの中なら逆光とみなす（cos）
+// ・ToonTranslucencyColor：透けた光の色（肌の色と光の色に掛ける）
+float ToonTranslucencyStrength;
+float ToonTranslucencyThickness;
+float ToonTranslucencyCosAngle;
+float3 ToonTranslucencyColor;
 // Original ルック フェーズ2：キャラクターのリムライトと線の色
 // ・リムライト：光源の側の輪郭に、一定の幅（ピクセル）で明るい縁を入れる強さ
 // ・線の色：キャラクターの線を、黒ではなく素材の色を暗くした色にする倍率（0 なら全体の線の色）
@@ -359,6 +368,8 @@ uint4 ToonCharacterSlots[TOON_MAX_FACES];
 uint4 ToonCharacterSlots2[TOON_MAX_FACES];
 // xy：上まぶたの影をかけないスロット
 uint4 ToonCharacterSlots3[TOON_MAX_FACES];
+// xy：肌のスロット
+uint4 ToonCharacterSlots4[TOON_MAX_FACES];
 float4 ToonCharacterParams[TOON_MAX_FACES];
 float4 ToonCharacterParams2[TOON_MAX_FACES];
 // x：2 影の調べる距離（cm）、y：くぼみの線の調べる距離（cm）、z：影の形を整える太さ（cm）。キャラクターの大きさに合わせて拡大縮小済み
