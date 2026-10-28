@@ -96,6 +96,8 @@ private:
 		FUintVector4 Slots = FUintVector4(0, 0, 0, 0);
 		FUintVector4 Slots2 = FUintVector4(0, 0, 0, 0);
 		FUintVector4 Slots3 = FUintVector4(0, 0, 0, 0);
+		// Slots4：肌のスロット（xy）
+		FUintVector4 Slots4 = FUintVector4(0, 0, 0, 0);
 		// Params：目の三角形の開始番号、終了番号、顔の境目のぼかし、前髪の影の幅（cm）
 		// Params2：上まぶたの影の太さ（cm）、眉毛の透けの探す距離（cm）、瞳のハイライトの探す距離（cm）、前髪の影の探す距離（cm）
 		FVector4f Params = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
@@ -147,6 +149,8 @@ private:
 	FLinearColor ToonShadowColor_RenderThread = FLinearColor(0.35f, 0.4f, 0.6f);
 	// 肌の影色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonSkinShadowColor_RenderThread = FLinearColor(0.62f, 0.42f, 0.45f);
+	// 耳や指の光の透けの色（文字列のコンソール変数をゲームスレッドで変換したもの）
+	FLinearColor ToonTranslucencyColor_RenderThread = FLinearColor(1.0f, 0.45f, 0.3f);
 	// トゥーンのアウトラインの色（文字列のコンソール変数をゲームスレッドで変換したもの）
 	FLinearColor ToonOutlineColor_RenderThread = FLinearColor(0.02f, 0.02f, 0.04f);
 	// ガラスの縁の色（文字列のコンソール変数をゲームスレッドで変換したもの）

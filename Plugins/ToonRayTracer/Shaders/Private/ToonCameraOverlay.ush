@@ -122,6 +122,14 @@ bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout
 		return true;
 	}
 
+	// 確認用 11：耳や指の光の透け（赤：肌、緑：逆光で光の当たらない側、青：光が透ける薄さ。0.5 は 1 段目）
+	if (bToonDebugGeometry == 11)
+	{
+		bool bBacklit = bHasDirectionalLight != 0 && dot(Ray.Direction, ToLightDirection) >= ToonTranslucencyCosAngle && dot(Rec.Normal, ToLightDirection) <= ToonShadowThreshold;
+		DebugColor = float3(Rec.Material.bSkin != 0 ? 1.0f : 0.0f, bBacklit ? 1.0f : 0.0f, ComputeToonTranslucency(Rec, Ray, Rec.Normal));
+		return true;
+	}
+
 	// トゥーン T6：アウトライン（最後に、陰影や映り込みの上に描く）
 	if (bToonOutline != 0)
 	{

@@ -17,6 +17,8 @@ struct FToonCharacterParts
 	uint2 SeeThroughSlotMask;
 	// 目のスロットの中で、上まぶたの影をかけないスロット（瞳など）
 	uint2 EyeShadowExcludeSlotMask;
+	// 肌のスロット（シェーディングモデルが Subsurface 系でない肌）
+	uint2 SkinSlotMask;
 	// 眉毛の線の形を Custom Depth に描いているか
 	bool bSeeThroughCustomDepth;
 	// 髪のハイライトをテクスチャ（髪のマテリアルの Specular）から描くか
@@ -187,6 +189,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 		Parts.HairSlotMask = Slots2.xy;
 		Parts.SeeThroughSlotMask = Slots2.zw;
 		Parts.EyeShadowExcludeSlotMask = ToonCharacterSlots3[Face].xy;
+		Parts.SkinSlotMask = ToonCharacterSlots4[Face].xy;
 		Parts.bSeeThroughCustomDepth = ToonCharacterSlots3[Face].z != 0u;
 		Parts.bHairHighlightTexture = ToonCharacterSlots3[Face].w != 0u;
 		Parts.EyeTriangleStart = (uint)round(Params.x);
@@ -205,6 +208,7 @@ FToonCharacterParts GetToonCharacterParts(float3 Position, uint GPUSceneInstance
 	Parts.EyeSlotMask = uint2(ToonEyeSlotMask, 0u);
 	Parts.HairSlotMask = uint2(ToonHairSlotMask, 0u);
 	Parts.EyeShadowExcludeSlotMask = 0u;
+	Parts.SkinSlotMask = 0u;
 	Parts.bSeeThroughCustomDepth = false;
 	Parts.bHairHighlightTexture = false;
 	FInstanceSceneData InstanceData = ToonGetInstanceSceneData(GPUSceneInstanceId);

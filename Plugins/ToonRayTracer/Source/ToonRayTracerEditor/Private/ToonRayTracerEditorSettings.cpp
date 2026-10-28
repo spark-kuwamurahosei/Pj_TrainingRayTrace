@@ -166,6 +166,11 @@ void UToonRayTracerEditorSettings::ResetToDefaults()
 	bSkin = true;
 	SkinShadowThreshold = -0.3f;
 	SkinShadowColor = FLinearColor(0.62f, 0.42f, 0.45f);
+	bTranslucency = true;
+	TranslucencyStrength = 0.8f;
+	TranslucencyThickness = 2.0f;
+	TranslucencyAngle = 60.0f;
+	TranslucencyColor = FLinearColor(1.0f, 0.45f, 0.3f);
 	CharacterRimStrength = 1.5f;
 	CharacterRimWidth = 2.5f;
 	CharacterRimShadow = 1;
@@ -335,6 +340,11 @@ void UToonRayTracerEditorSettings::ApplyToConsoleVariables() const
 	SetBool(TEXT("r.ToonRayTracer.Toon.Skin"), bSkin);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.SkinShadowThreshold"), SkinShadowThreshold);
 	SetColor(TEXT("r.ToonRayTracer.Toon.SkinShadowColor"), SkinShadowColor);
+	SetBool(TEXT("r.ToonRayTracer.Toon.Translucency"), bTranslucency);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.TranslucencyStrength"), TranslucencyStrength);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.TranslucencyThickness"), TranslucencyThickness);
+	SetFloat(TEXT("r.ToonRayTracer.Toon.TranslucencyAngle"), TranslucencyAngle);
+	SetColor(TEXT("r.ToonRayTracer.Toon.TranslucencyColor"), TranslucencyColor);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"), CharacterRimStrength);
 	SetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"), CharacterRimWidth);
 	SetInt(TEXT("r.ToonRayTracer.Toon.CharacterRimShadow"), CharacterRimShadow);
@@ -511,6 +521,11 @@ void UToonRayTracerEditorSettings::ImportFromConsoleVariables()
 	GetBool(TEXT("r.ToonRayTracer.Toon.Skin"), bSkin);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.SkinShadowThreshold"), SkinShadowThreshold);
 	GetColor(TEXT("r.ToonRayTracer.Toon.SkinShadowColor"), SkinShadowColor);
+	GetBool(TEXT("r.ToonRayTracer.Toon.Translucency"), bTranslucency);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.TranslucencyStrength"), TranslucencyStrength);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.TranslucencyThickness"), TranslucencyThickness);
+	GetFloat(TEXT("r.ToonRayTracer.Toon.TranslucencyAngle"), TranslucencyAngle);
+	GetColor(TEXT("r.ToonRayTracer.Toon.TranslucencyColor"), TranslucencyColor);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimStrength"), CharacterRimStrength);
 	GetFloat(TEXT("r.ToonRayTracer.Toon.CharacterRimWidth"), CharacterRimWidth);
 	GetInt(TEXT("r.ToonRayTracer.Toon.CharacterRimShadow"), CharacterRimShadow);

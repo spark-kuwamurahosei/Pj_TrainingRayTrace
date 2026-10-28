@@ -786,6 +786,40 @@ float3 ComputeToonLocalLight(FToonHitRecord Rec, float3 GeometricNormal)
 	return Sum * ToonLocalLightStrength;
 }
 
+// 耳や指の光の透け（0：透けない、0.5：透ける、1：とても薄くて強く透ける）
+// 逆光のとき、光の当たらない側から見た肌のうち、光の方向の厚みが薄い部分（耳たぶや指先）だけを、透けた光の色で塗る
+// 厚みは、光の方向へ厚みの距離だけ離れた外の点から、面の点へ向けて短いレイを飛ばして測る。反対側の面（光の側を向いた面）に当たれば薄い
+// （面の内側から光の方向へ飛ばすと、反対側の面には裏から当たり、片面のマテリアルでは裏の面が当たらないため）
+// 厚みの距離の半分でも当たれば、もう 1 段明るくする。反対側に抜けた先で光が遮られていれば（頭の陰の耳など）透けない
+// UE のサブサーフェスはなめらかなにじみになるが、トゥーンでは厚みで区切った、くっきりした段階で塗る
+#define TOON_TRANSLUCENCY_BIAS 0.05f
+bool IsToonThinTowardLight(float3 Position, float Thickness)
+{
+	return IsOccludedWithin(Position + ToLightDirection * Thickness, -ToLightDirection, max(Thickness - TOON_TRANSLUCENCY_BIAS, 0.0f));
+}
+float ComputeToonTranslucency(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal)
+{
+	if (TraceMode == 0 || ToonTranslucencyStrength <= 0.0f || bHasDirectionalLight == 0 || Rec.Material.bSkin == 0)
+	{
+		return 0.0f;
+	}
+	// 逆光：カメラが光源の方を向いている。光の当たる側の面は普通に明るく塗られるので、光の当たらない側の面だけ
+	if (dot(Ray.Direction, ToLightDirection) < ToonTranslucencyCosAngle || dot(Rec.Normal, ToLightDirection) > ToonShadowThreshold)
+	{
+		return 0.0f;
+	}
+	float Thickness = ToonTranslucencyThickness;
+	if (Thickness <= TOON_TRANSLUCENCY_BIAS || !IsToonThinTowardLight(Rec.Position, Thickness))
+	{
+		return 0.0f;
+	}
+	if (!IsLightVisibleInDirection(Rec.Position + ToLightDirection * Thickness, ToLightDirection, true))
+	{
+		return 0.0f;
+	}
+	return IsToonThinTowardLight(Rec.Position, Thickness * 0.5f) ? 1.0f : 0.5f;
+}
+
 // 2 影（0：普通 ～ 1：2 影）
 // アニメ塗りの 2 段階の影：あごの下・襟の中・髪の内側など奥まった場所に、普通の影（1 影）よりもう一段暗い影を入れる
 // 面から法線の側へコサイン分布で短いレイ（ToonDeepShadowDistance）を飛ばし、遮られた割合がしきい値を超えた場所を 2 影にする
@@ -1182,6 +1216,11 @@ float3 ShadeToonOpaque(FToonHitRecord Rec, FToonRay Ray, float3 GeometricNormal,
 	if (!bUnlitEye)
 	{
 		Color += Albedo * ComputeToonLocalLight(Rec, GeometricNormal);
+	}
+	// 耳や指の光の透け：逆光のとき、肌の薄い部分を透けた光の色で塗る（カメラから見える面だけ）
+	if (bIndirect)
+	{
+		Color += Albedo * ToonLightColor * ToonTranslucencyColor * (ComputeToonTranslucency(Rec, Ray, GeometricNormal) * ToonTranslucencyStrength * (1.0f - LightLevel));
 	}
 	Color = lerp(Color, ToonLightColor, ComputeToonHighlight(Rec, Ray, LightLevel));
 	// トゥーンのコースティクス：ガラスが集めた光の模様を、段階ごとに明るい面の色で足す（カメラから見える面だけ）

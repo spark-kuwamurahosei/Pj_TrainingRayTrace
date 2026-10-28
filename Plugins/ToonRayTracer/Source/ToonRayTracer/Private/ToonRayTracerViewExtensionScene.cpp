@@ -209,6 +209,9 @@ void ToonRayTracerViewExtension::FindFaces(const FSceneViewFamily& ViewFamily, T
 		// w：髪のハイライトをテクスチャ（髪のマテリアルの Specular）から描くか
 		const bool bHairHighlightFromTexture = Profile && Profile->bHairHighlightFromTexture;
 		Face.Slots3 = FUintVector4(static_cast<uint32>(EyeShadowExcludeMask), static_cast<uint32>(EyeShadowExcludeMask >> 32), bSeeThroughCustomDepth ? 1u : 0u, bHairHighlightFromTexture ? 1u : 0u);
+		// 肌のスロットも、プロファイルでだけ指定する（全体の設定はシェーディングモデルでの判定）
+		const uint64 SkinMask = GetMask(&UToonCharacterProfile::SkinSlots, 0u);
+		Face.Slots4 = FUintVector4(static_cast<uint32>(SkinMask), static_cast<uint32>(SkinMask >> 32), 0u, 0u);
 
 		// 幅や距離：プロファイルの値は両目の間の距離に対する倍率。0 なら全体の設定（cm）を、大きさの基準との比で拡大縮小する
 		const double SizeScale = ReferenceEyeDistance > 0.0 ? EyeDistance / ReferenceEyeDistance : 1.0;
