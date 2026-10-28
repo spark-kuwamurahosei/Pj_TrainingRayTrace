@@ -11,6 +11,8 @@ static float4 ToonGlowSample = 0.0f;
 // サンプルごとの線のなめらかさは、フレームをまたいだ蓄積でならす
 static bool bToonReuseOutline = false;
 static float ToonPixelOutline = 0.0f;
+// 映り込みの中の線も同じく、1 本目のサンプルで求めた値を使い回す
+static float ToonPixelReflectedOutline = 0.0f;
 
 // 確認用：ジオメトリ番号ごとの色（0 赤、1 緑、2 青、3 黄、4 マゼンタ、5 シアン、6 白、7 オレンジ、8 以上は灰色）
 float3 GetDebugGeometryColor(uint GeometryIndex)
@@ -234,30 +236,9 @@ void ApplyToonCameraLighting(FToonHitRecord Rec, float LightLevel, inout FToonCa
 	}
 }
 
-// 映り込みの中の線（0 ～ 1）：カメラから見えている鏡のような金属に映った物体（Rec）に、アウトラインを引く
-// UE のアウトラインはポストプロセスなので、映り込みの中には線が出ない。レイトレーシングなら、となりのピクセルの映り込みも同じように追いかけられる
-// となりのピクセル（線の太さだけずらしたカメラのレイ）も金属に当たっていれば、そこで反射したレイの先を、中心の映り込みの先（Rec）と比べる
-// ・映り込みの先が空（何にも当たらない）なら、映った物体の輪郭
-// ・遠く手前の別の物体なら、その物体の側で線を引くのでここでは引かない
-// ・お互いの平面からの距離（段差）が、ずらした量に比べて大きければ、輪郭や奥行きの段差
-// となりが金属でもつやのある床でもなければ（鏡の縁）、映り込みの線は引かない
-// OutLineColor には線の色（キャラクターなら素材の色を暗くした色）を返す
-float ToonReflectedOutline(float2 UV, FToonRay CameraRay, FToonRay ReflectedRay, FToonHitRecord Rec, out float3 OutLineColor)
+// 映り込みの中の線の判定（ToonReflectedOutline から、1 ピクセルに 1 回だけ呼ぶ）
+float ComputeToonReflectedOutline(float2 UV, FToonRay CameraRay, FToonRay ReflectedRay, FToonHitRecord Rec)
 {
-	OutLineColor = ToonOutlineColor;
-	if (bToonReflectionOutline == 0 || bToonOutline == 0 || Rec.Material.OutlineWidth <= 0.0f)
-	{
-		return 0.0f;
-	}
-	if (Rec.Material.bCharacter != 0)
-	{
-		FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
-		if (Look.OutlineColorScale > 0.0f)
-		{
-			OutLineColor = Rec.Material.Albedo * Look.OutlineColorScale;
-		}
-	}
-
 	float2 OffsetUV = Rec.Material.OutlineWidth / (float2)ViewRectSize;
 	float2 Directions[4] = { float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f) };
 	// カメラから鏡までの距離（ずらした量を、映り込みの先での距離に換算するため）
@@ -305,6 +286,37 @@ float ToonReflectedOutline(float2 UV, FToonRay CameraRay, FToonRay ReflectedRay,
 		}
 	}
 	return 0.0f;
+}
+
+// 映り込みの中の線（0 ～ 1）：カメラから見えている鏡のような金属に映った物体（Rec）に、アウトラインを引く
+// UE のアウトラインはポストプロセスなので、映り込みの中には線が出ない。レイトレーシングなら、となりのピクセルの映り込みも同じように追いかけられる
+// となりのピクセル（線の太さだけずらしたカメラのレイ）も金属に当たっていれば、そこで反射したレイの先を、中心の映り込みの先（Rec）と比べる
+// ・映り込みの先が空（何にも当たらない）なら、映った物体の輪郭
+// ・遠く手前の別の物体なら、その物体の側で線を引くのでここでは引かない
+// ・お互いの平面からの距離（段差）が、ずらした量に比べて大きければ、輪郭や奥行きの段差
+// となりが金属でもつやのある床でもなければ（鏡の縁）、映り込みの線は引かない
+// OutLineColor には線の色（キャラクターなら素材の色を暗くした色）を返す
+float ToonReflectedOutline(float2 UV, FToonRay CameraRay, FToonRay ReflectedRay, FToonHitRecord Rec, out float3 OutLineColor)
+{
+	OutLineColor = ToonOutlineColor;
+	if (bToonReflectionOutline == 0 || bToonOutline == 0 || Rec.Material.OutlineWidth <= 0.0f)
+	{
+		return 0.0f;
+	}
+	if (Rec.Material.bCharacter != 0)
+	{
+		FToonCharacterLook Look = GetToonCharacterLook(Rec.Material.Character);
+		if (Look.OutlineColorScale > 0.0f)
+		{
+			OutLineColor = Rec.Material.Albedo * Look.OutlineColorScale;
+		}
+	}
+	// 補助レイが重いため、1 ピクセルに 1 回だけ判定し、2 本目以降のサンプルでは 1 本目の値を使う
+	if (!bToonReuseOutline)
+	{
+		ToonPixelReflectedOutline = ComputeToonReflectedOutline(UV, CameraRay, ReflectedRay, Rec);
+	}
+	return ToonPixelReflectedOutline;
 }
 
 // 塗った色（Color）に、カメラから見えている面の表現を重ねる（キャラクターのリムライト、眉毛の透け、アウトライン）
