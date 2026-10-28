@@ -6,6 +6,11 @@
 // Original モードの仕上げのぼかし（ToonPostEffects.usf）に渡す、このサンプルの値
 // rgb：光の側のリムの色（Bloom の元）、a：カメラから見えている面がOriginal モードのキャラクターなら 1、その目なら 2
 static float4 ToonGlowSample = 0.0f;
+// アウトラインは 1 ピクセルに 1 回だけ判定する（補助レイが重いため）
+// 1 本目のサンプルで求めた値を ToonPixelOutline に覚え、2 本目以降のサンプル（bToonReuseOutline）ではそれを使う
+// サンプルごとの線のなめらかさは、フレームをまたいだ蓄積でならす
+static bool bToonReuseOutline = false;
+static float ToonPixelOutline = 0.0f;
 
 // 確認用：ジオメトリ番号ごとの色（0 赤、1 緑、2 青、3 黄、4 マゼンタ、5 シアン、6 白、7 オレンジ、8 以上は灰色）
 float3 GetDebugGeometryColor(uint GeometryIndex)
@@ -134,14 +139,22 @@ bool ComputeToonCameraOverlay(float2 UV, FToonRay Ray, FToonHitRecord Rec, inout
 	if (bToonOutline != 0)
 	{
 		// 煙に当たった場合は、煙を無視したその奥の物体で線を判定する（シーン全体を包む霧の中でも線を引くため）
-		FToonHitRecord OutlineRec = Rec;
-		bool bOutlineHit = true;
-		if (Rec.Material.Type == TOON_MATERIAL_VOLUME)
+		if (bToonReuseOutline)
 		{
-			OutlineRec = (FToonHitRecord)0;
-			bOutlineHit = HitWorld(Ray, 0.0f, 1.0e8f, OutlineRec, false);
+			Overlay.Outline = ToonPixelOutline;
 		}
-		Overlay.Outline = bOutlineHit ? ToonOutline(UV, Ray, OutlineRec) : 0.0f;
+		else
+		{
+			FToonHitRecord OutlineRec = Rec;
+			bool bOutlineHit = true;
+			if (Rec.Material.Type == TOON_MATERIAL_VOLUME)
+			{
+				OutlineRec = (FToonHitRecord)0;
+				bOutlineHit = HitWorld(Ray, 0.0f, 1.0e8f, OutlineRec, false);
+			}
+			Overlay.Outline = bOutlineHit ? ToonOutline(UV, Ray, OutlineRec) : 0.0f;
+			ToonPixelOutline = Overlay.Outline;
+		}
 	}
 
 	// Original ルック フェーズ2：キャラクターの線の色とリムライト（どちらも素材の色に合わせる）

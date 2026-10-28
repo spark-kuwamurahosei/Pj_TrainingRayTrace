@@ -383,6 +383,13 @@ RAY_TRACING_ENTRY_RAYGEN(ToonRayGenMain)
 			// 動く物体は時刻ごとに違う位置で当たり、サンプルとフレームの蓄積で平均されて、移動ブラーになる
 			SampleTime = ToonRandomFloat(RandomState);
 
+			// アウトラインは 1 本目のサンプルでだけ判定し、2 本目以降はその値を使う
+			bToonReuseOutline = SampleIndex > 0;
+			if (SampleIndex == 0)
+			{
+				ToonPixelOutline = 0.0f;
+			}
+
 			FToonRay Ray = GenerateCameraRay(UV);
 			float3 SampleColor = RayColor(UV, Ray, RandomState);
 

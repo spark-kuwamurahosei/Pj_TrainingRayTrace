@@ -331,6 +331,30 @@ float ComputeToonCaustic(FToonHitRecord Rec, float3 GeometricNormal)
 // 奥行きで太さが変わる線（bToonOutlineDepthWidth）では、奥行きの差に応じて線の太さを変える
 // 1 方向の補助レイで線を判定する。線を引くなら true を返し、Gap に奥行きの差（cm）を返す
 // Gap は「奥行きで太さが変わる線」で使う。空に抜けた輪郭は非常に大きな値、面の折れ目は 0（物体の内側の線）
+// となりのピクセルで GBuffer に描かれている点の位置（Translated World）と、カメラの側に向けた法線
+// 空（何も描かれていない）や画面の外なら false
+bool ReadToonGBufferSurface(float2 UV, float3 RayDirection, out float3 Position, out float3 Normal)
+{
+	Position = 0.0f;
+	Normal = 0.0f;
+	if (any(UV < 0.0f) || any(UV > 1.0f))
+	{
+		return false;
+	}
+	int2 GBufferPixel = GetGBufferPixel(UV);
+	float DeviceZ = SceneDepthTexture.Load(int3(GBufferPixel, 0)).r;
+	float3 Encoded = GBufferATexture.Load(int3(GBufferPixel, 0)).rgb * 2.0f - 1.0f;
+	if (DeviceZ <= 0.0f || dot(Encoded, Encoded) < 1.0e-4f)
+	{
+		return false;
+	}
+	float4 ClipPosition = mul(float4(UVToNDC(UV), DeviceZ, 1.0f), ClipToTranslatedWorld);
+	Position = ClipPosition.xyz / ClipPosition.w;
+	Normal = normalize(Encoded);
+	Normal = dot(Normal, RayDirection) < 0.0f ? Normal : -Normal;
+	return true;
+}
+
 bool ToonOutlineProbe(float2 UV, FToonRay Ray, FToonHitRecord Rec, float2 Direction, float Width, out float Gap)
 {
 	Gap = 0.0f;
@@ -340,6 +364,26 @@ bool ToonOutlineProbe(float2 UV, FToonRay Ray, FToonHitRecord Rec, float2 Direct
 	// 中心の点の法線は、GBuffer の滑らかな法線（ApplyGBufferNormal 済み）を使う
 	// ポリゴンごとの法線だと、浅い角度で見た輪郭付近でばらつき、輪郭の内側にかすれた線が出るため
 	float3 CenterNormal = Rec.Normal;
+
+	// 補助レイを飛ばす前に、GBuffer に描かれているとなりの点で判定する（負荷の大半は補助レイのため）
+	// となりの点が中心の平面に続いていて（段差がずらした量のしきい値以内）、面の向きの差も小さければ、線は引かない
+	// 下のレイでの判定でいちばん厳しい条件（別の物体どうし・顔以外）と同じしきい値なので、レイなら線が引かれる場所を見落とさない
+	// 空との境目、段差、面の折れ目、画面の外では、今までどおり補助レイで確かめる
+	if (TraceMode != 0 && bUseGBufferNormal != 0)
+	{
+		float3 GBufferPosition;
+		float3 GBufferNormal;
+		if (ReadToonGBufferSurface(NeighborUV, NeighborRay.Direction, GBufferPosition, GBufferNormal))
+		{
+			float3 ToGBuffer = GBufferPosition - Rec.Position;
+			float GBufferGap = max(abs(dot(ToGBuffer, CenterNormal)), abs(dot(ToGBuffer, GBufferNormal)));
+			float GBufferOffsetDistance = max(Rec.T * length(NeighborRay.Direction - Ray.Direction), 1.0e-3f);
+			if (dot(CenterNormal, GBufferNormal) >= TOON_OUTLINE_CREASE_COS && GBufferGap <= ToonOutlineThreshold * GBufferOffsetDistance)
+			{
+				return false;
+			}
+		}
+	}
 
 	// 補助レイでも面の向きが必要。カメラから直接見える点なので、GBuffer の法線に置き換えられる場合は
 	// 法線を求める補助レイを省き（負荷の大半はここ）、置き換えられない場合だけ法線まで求め直す
