@@ -188,13 +188,13 @@ namespace ToonRayTracerCVars
 
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonCrease(
 		TEXT("r.ToonRayTracer.Toon.Crease"),
-		0,
+		1,
 		TEXT("Crease lines: ink lines in concave corners (cloth folds, collar folds, between fingers), found with short rays along the surface. 0: off, 1: characters only (not the face or eyes), 2: all surfaces"),
 		ECVF_RenderThreadSafe);
 
 	TAutoConsoleVariable<float> CVarToonRayTracerToonCreaseDistance(
 		TEXT("r.ToonRayTracer.Toon.CreaseDistance"),
-		60.0f,
+		20.0f,
 		TEXT("Crease lines: length (cm) of the rays along the surface. Roughly the width of the line"),
 		ECVF_RenderThreadSafe);
 
@@ -237,7 +237,7 @@ namespace ToonRayTracerCVars
 	// つやのある床への映り込み：上を向いたつやのある面（GBuffer のラフネスが小さい面）に、映った物体をトゥーンのまま薄く重ねる
 	TAutoConsoleVariable<int32> CVarToonRayTracerToonFloorReflection(
 		TEXT("r.ToonRayTracer.Toon.FloorReflection"),
-		1,
+		0,
 		TEXT("Floor reflection: upward-facing glossy surfaces (GBuffer roughness at or below FloorReflectionRoughness) reflect the scene with toon shading and outlines. With CharacterOnly, only reflected characters are blended over the normal rendering (1: on, 0: off)"),
 		ECVF_RenderThreadSafe);
 
@@ -309,7 +309,7 @@ namespace ToonRayTracerCVars
 
 	TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowDistance(
 		TEXT("r.ToonRayTracer.Toon.DeepShadowDistance"),
-		40.0f,
+		10.0f,
 		TEXT("Second shadow: length (cm) of the short rays that check how recessed the surface is"),
 		ECVF_RenderThreadSafe);
 
@@ -339,7 +339,7 @@ namespace ToonRayTracerCVars
 
 	TAutoConsoleVariable<float> CVarToonRayTracerToonDeepShadowLit(
 		TEXT("r.ToonRayTracer.Toon.DeepShadowLit"),
-		1.0f,
+		0.0f,
 		TEXT("Second shadow: how much recessed places on the lit side become the normal shadow (0: the lit side is unchanged, 1: recessed places on the lit side are shadowed)"),
 		ECVF_RenderThreadSafe);
 
@@ -393,7 +393,7 @@ namespace ToonRayTracerCVars
 	// Original モード：仕上げに、キャラクターをぼかして重ねる（Diffusion Filter・Soft Focus・Bloom）
 	TAutoConsoleVariable<float> CVarToonRayTracerToonOriginalDiffusionStrength(
 		TEXT("r.ToonRayTracer.Toon.OriginalDiffusionStrength"),
-		0.8f,
+		0.6f,
 		TEXT("Diffusion filter in the Original mode (0-1): the blurred \"color x color x light color\" of the character is screened over the multiplied color, keeping the lighter of it and the original. 0: off"),
 		ECVF_RenderThreadSafe);
 
