@@ -389,18 +389,25 @@ bool ToonOutlineProbe(float2 UV, FToonRay Ray, FToonHitRecord Rec, float2 Direct
 	// 法線を求める補助レイを省き（負荷の大半はここ）、置き換えられない場合だけ法線まで求め直す
 	// 解析的な物体では、煙（輪郭を持たない）を無視して、その奥の物体で線を判定する
 	FToonHitRecord NeighborRec = (FToonHitRecord)0;
-	bool bNeighborHit;
+	bool bNeighborHit = false;
 	if (TraceMode == 0)
 	{
 		bNeighborHit = HitWorld(NeighborRay, 0.0f, 1.0e8f, NeighborRec, false);
 	}
 	else
 	{
-		bNeighborHit = HitCameraVisible(NeighborRay, NeighborUV, NeighborRec, false);
-		if (bNeighborHit && !(bUseGBufferNormal != 0 && IsGBufferSamePoint(NeighborUV, NeighborRec.Position, NeighborRec.T)))
+		// HitCameraVisible は 1 か所からだけ呼ぶ（TraceRay を呼ぶ箇所が増えると、レイトレーシングのパイプラインが大きくなり GPU が止まりやすくなる）
+		// 1 回目は法線を求めずに飛ばし、GBuffer の法線に置き換えられない場合だけ、2 回目で法線まで求め直す
+		[loop]
+		for (uint Attempt = 0; Attempt < 2; ++Attempt)
 		{
 			NeighborRec = (FToonHitRecord)0;
-			HitCameraVisible(NeighborRay, NeighborUV, NeighborRec);
+			bool bHit = HitCameraVisible(NeighborRay, NeighborUV, NeighborRec, Attempt > 0);
+			bNeighborHit = Attempt == 0 ? bHit : bNeighborHit;
+			if (!bNeighborHit || Attempt > 0 || (bUseGBufferNormal != 0 && IsGBufferSamePoint(NeighborUV, NeighborRec.Position, NeighborRec.T)))
+			{
+				break;
+			}
 		}
 	}
 	if (!bNeighborHit)
@@ -458,19 +465,37 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 	{
 		return 0.0f;
 	}
-	float2 Directions[4] = { float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f) };
-
 	// 奥行きで太さが変わる線では、まずいちばん太い線の幅で補助レイを飛ばして奥行きの差を調べ、
 	// 差から決めた太さがそれより細ければ、その太さで補助レイを飛ばし直す（線になるピクセルの候補だけ 1 本増える）
 	float BaseWidth = Rec.Material.OutlineWidth;
 	float MaxWidth = BaseWidth * (bToonOutlineDepthWidth != 0 ? max(ToonOutlineThinScale, ToonOutlineThickScale) : 1.0f);
 
+	// ToonOutlineProbe は 1 か所からだけ呼ぶ（中で TraceRay を呼ぶため、呼ぶ箇所が増えると GPU が止まりやすくなる）
+	// 上下左右の 4 方向それぞれで、太い幅の判定と、必要なら細い幅での判定し直しを、1 つのループで順に行う
+	uint Index = 0;
+	bool bNarrow = false;
+	float ProbeWidth = MaxWidth;
 	[loop]
-	for (uint Index = 0; Index < 4; ++Index)
+	for (uint Step = 0; Step < 8 && Index < 4; ++Step)
 	{
+		float2 Direction = Index < 2 ? float2(Index == 0 ? 1.0f : -1.0f, 0.0f) : float2(0.0f, Index == 2 ? 1.0f : -1.0f);
 		float Gap;
-		if (!ToonOutlineProbe(UV, Ray, Rec, Directions[Index], MaxWidth, Gap))
+		bool bLine = ToonOutlineProbe(UV, Ray, Rec, Direction, ProbeWidth, Gap);
+		if (bNarrow)
 		{
+			// 細い線：その太さの位置でも線になるか（輪郭までの距離が太さ以内か）を確かめた結果
+			if (bLine)
+			{
+				return 1.0f;
+			}
+			bNarrow = false;
+			ProbeWidth = MaxWidth;
+			++Index;
+			continue;
+		}
+		if (!bLine)
+		{
+			++Index;
 			continue;
 		}
 		float Width = BaseWidth * GetToonOutlineDepthScale(Gap);
@@ -478,12 +503,8 @@ float ToonOutline(float2 UV, FToonRay Ray, FToonHitRecord Rec)
 		{
 			return 1.0f;
 		}
-		// 細い線：その太さの位置でも線になるか（輪郭までの距離が太さ以内か）を確かめる
-		float NearGap;
-		if (ToonOutlineProbe(UV, Ray, Rec, Directions[Index], max(Width, 0.25f), NearGap))
-		{
-			return 1.0f;
-		}
+		bNarrow = true;
+		ProbeWidth = max(Width, 0.25f);
 	}
 
 	return 0.0f;
